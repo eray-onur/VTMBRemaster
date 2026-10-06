@@ -26,7 +26,7 @@ What works today:
 | Model geometry (`.mdl` v2531, `.vtx` v107) | Verified against all 4,255 models of the Steam release; animations not yet |
 | Maps (`.bsp` v17: faces, displacements, static props, entities, pakfile) | Verified against all 101 maps of the Steam release |
 | `openbl-cli` inspection tool | Working |
-| Renderer: window, input, Vulkan 1.3 backend, `openbl-viewer` | Phase 1 started; draws a textured test cube |
+| Renderer: window, input, Vulkan 1.3 backend, `openbl-viewer` | Draws map world geometry with textures and lightmaps; no sky, water or props yet |
 
 ## Building
 
@@ -77,8 +77,13 @@ openbl-cli bsp export sm_pier_1 pier.obj                # world geometry to OBJ
 ## Using openbl-viewer
 
 ```sh
-openbl-viewer [--game DIR] [--screenshot out.png [--frames N]] [--validation] [--no-vsync]
+openbl-viewer --map ch_lotus_1                        # fly through a map, starting at the player start
+openbl-viewer --map sm_pier_1 --pos 3700 -700 -230 --angles -5 0 --screenshot pier.png
+openbl-viewer [--game DIR] [--map NAME] [--pos X Y Z] [--angles PITCH YAW] [--light-scale F]
+              [--fullbright] [--screenshot out.png [--frames N]] [--validation] [--no-vsync]
 ```
+
+Without `--map`, the viewer shows a textured test cube.
 
 Controls: hold the right mouse button to look around, **WASD** to move, **E**/**Q** to go up and down, **Shift** to move faster, the mouse wheel to change speed, **Esc** to quit.
 

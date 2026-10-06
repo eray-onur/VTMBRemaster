@@ -175,13 +175,19 @@ BspFile parse_bsp(std::span<const std::byte> data);
 std::vector<BspEntity> parse_bsp_entities(std::string_view text);
 
 // Triangulated geometry for one face: positions, texture UVs (normalized by
-// the texdata size) and displacement alpha. Displacements are tessellated.
+// the texdata size), lightmap coordinates and displacement alpha.
+// Displacements are tessellated.
 struct BspFaceMesh {
     std::vector<Vec3> positions;
     std::vector<std::array<float, 2>> uvs;
+    // In luxels, relative to the face's lightmap: 0..lightmap_size (inclusive).
+    std::vector<std::array<float, 2>> lightmap_uvs;
     std::vector<float> alphas;
     std::vector<std::uint32_t> indices;
 };
+
+// Decodes one ColorRGBExp32 luxel (r, g, b, signed exponent) to linear RGB.
+std::array<float, 3> decode_rgbe(const std::byte* luxel);
 BspFaceMesh build_face_mesh(const BspFile& bsp, std::size_t face_index);
 
 } // namespace openbl::formats

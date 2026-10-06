@@ -34,6 +34,7 @@ std::size_t format_image_size(Format format, std::uint32_t width, std::uint32_t 
     case Format::RGBA8_sRGB:
     case Format::BGRA8_UNorm:
     case Format::BGRA8_sRGB:
+    case Format::R32_Float:
     case Format::D32_Float:
         return pixels * 4;
     case Format::RG32_Float:

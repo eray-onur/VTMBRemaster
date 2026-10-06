@@ -1,16 +1,21 @@
 // openbl-viewer: renders game assets with the OpenBL renderer.
 //
-// Step 1 test scene: a textured cube, to prove the window, input, Vulkan
-// backend and texture uploads end to end.
+//   openbl-viewer --map sm_pier_1     fly through a map
+//   openbl-viewer                     textured test cube
 
 #include "camera.hpp"
 
+#include "openbl/formats/bsp.hpp"
 #include "openbl/formats/image_write.hpp"
 #include "openbl/formats/path.hpp"
 #include "openbl/formats/tth.hpp"
 #include "openbl/formats/vtf.hpp"
+#include "openbl/formats/zip.hpp"
 #include "openbl/platform/window.hpp"
+#include "openbl/render/asset_source.hpp"
+#include "openbl/render/material_system.hpp"
 #include "openbl/render/texture_upload.hpp"
+#include "openbl/render/world_renderer.hpp"
 #include "openbl/rhi/vulkan.hpp"
 #include "openbl/vfs/game_filesystem.hpp"
 
@@ -18,13 +23,16 @@
 #include "openbl_textured_vs.h"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -32,8 +40,18 @@ using namespace openbl;
 
 namespace {
 
+constexpr const char* kUsage =
+    "usage: openbl-viewer [--game DIR] [--map NAME] [--pos X Y Z] [--angles PITCH YAW]\n"
+    "                     [--light-scale F] [--fullbright] [--screenshot out.png [--frames N]]\n"
+    "                     [--validation] [--no-vsync]";
+
 struct Options {
     std::optional<std::filesystem::path> game_dir;
+    std::optional<std::string> map;
+    std::optional<glm::vec3> position;
+    std::optional<glm::vec2> angles; // pitch, yaw
+    float light_scale = 2.3f;
+    bool fullbright = false;
     std::optional<std::filesystem::path> screenshot;
     int frames = 0; // With --screenshot: frames to render before capturing.
     bool validation = false;
@@ -49,12 +67,29 @@ Options parse_args(int argc, char** argv) {
         const std::string a = argv[i];
         auto next = [&]() -> std::string {
             if (i + 1 >= argc) {
-                throw std::runtime_error("missing value for " + a);
+                throw std::runtime_error("missing value for " + a + "\n" + kUsage);
             }
             return argv[++i];
         };
         if (a == "--game") {
             o.game_dir = next();
+        } else if (a == "--map") {
+            o.map = next();
+        } else if (a == "--pos") {
+            glm::vec3 p;
+            p.x = std::stof(next());
+            p.y = std::stof(next());
+            p.z = std::stof(next());
+            o.position = p;
+        } else if (a == "--angles") {
+            glm::vec2 v;
+            v.x = std::stof(next());
+            v.y = std::stof(next());
+            o.angles = v;
+        } else if (a == "--light-scale") {
+            o.light_scale = std::stof(next());
+        } else if (a == "--fullbright") {
+            o.fullbright = true;
         } else if (a == "--screenshot") {
             o.screenshot = next();
         } else if (a == "--frames") {
@@ -64,87 +99,191 @@ Options parse_args(int argc, char** argv) {
         } else if (a == "--no-vsync") {
             o.vsync = false;
         } else {
-            throw std::runtime_error("unknown argument " + a +
-                                     "\nusage: openbl-viewer [--game DIR] [--screenshot out.png [--frames N]] "
-                                     "[--validation] [--no-vsync]");
+            throw std::runtime_error("unknown argument " + a + "\n" + kUsage);
         }
+    }
+    if (o.map && !o.game_dir) {
+        throw std::runtime_error("--map needs game data: pass --game DIR or set OPENBL_GAME_DIR");
     }
     return o;
 }
 
-struct Vertex {
-    float position[3];
-    float uv[2];
+std::array<float, 16> to_array(const glm::mat4& m) {
+    std::array<float, 16> out;
+    std::memcpy(out.data(), glm::value_ptr(m), sizeof(out));
+    return out;
+}
+
+class Scene {
+public:
+    virtual ~Scene() = default;
+    virtual void draw(rhi::CommandList& cmd, const glm::mat4& view_projection) = 0;
 };
 
-// A 128-unit cube standing on z = 0.
-void build_cube(std::vector<Vertex>& vertices, std::vector<std::uint32_t>& indices) {
-    const glm::vec3 normals[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
-    for (const glm::vec3& n : normals) {
-        const glm::vec3 up = std::abs(n.z) > 0.5f ? glm::vec3(0, 1, 0) : glm::vec3(0, 0, 1);
-        const glm::vec3 right = glm::cross(up, n);
-        const auto base = static_cast<std::uint32_t>(vertices.size());
-        const float corners[4][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
-        for (const auto& c : corners) {
-            const glm::vec3 p = (n + right * c[0] + up * c[1]) * 64.0f + glm::vec3(0, 0, 64);
-            vertices.push_back({{p.x, p.y, p.z}, {(c[0] + 1) * 0.5f, 1.0f - (c[1] + 1) * 0.5f}});
+// --- Test cube -------------------------------------------------------------
+
+class CubeScene final : public Scene {
+public:
+    CubeScene(rhi::Device& device, const vfs::GameFileSystem* gfs) {
+        if (gfs) {
+            const render::AssetSource assets(*gfs);
+            if (auto tth = assets.read("materials/brick/bradwllb.tth")) {
+                const auto ttz = assets.read("materials/brick/bradwllb.ttz");
+                auto vtf = formats::assemble_vtf(*tth, ttz ? std::optional(std::span<const std::byte>(*ttz)) : std::nullopt);
+                texture_ = render::upload_vtf(device, formats::VtfTexture::parse(std::move(vtf.data)));
+            }
         }
-        indices.insert(indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
-    }
-}
-
-std::unique_ptr<rhi::Texture> load_game_texture(rhi::Device& device, const vfs::GameFileSystem& gfs,
-                                                const std::string& path) {
-    const auto tth = gfs.read(path + ".tth");
-    if (!tth) {
-        return nullptr;
-    }
-    const auto ttz = gfs.read(path + ".ttz");
-    auto assembled = formats::assemble_vtf(*tth, ttz ? std::optional(std::span<const std::byte>(*ttz)) : std::nullopt);
-    return render::upload_vtf(device, formats::VtfTexture::parse(std::move(assembled.data)));
-}
-
-int run(const Options& options) {
-    platform::Window window({"OpenBL Viewer"});
-    auto device = rhi::create_vulkan_device(window, {options.validation, options.vsync});
-    const auto info = device->info();
-    std::cout << "renderer: " << info.backend << " on " << info.adapter << "\n";
-    window.set_title("OpenBL Viewer - " + info.adapter);
-
-    {
-        std::unique_ptr<rhi::Texture> texture;
-        if (options.game_dir) {
-            const vfs::GameFileSystem gfs(*options.game_dir);
-            texture = load_game_texture(*device, gfs, "materials/brick/bradwllb");
-        }
-        if (!texture) {
+        if (!texture_) {
             std::cout << "game data not available; using a checkerboard texture\n";
-            texture = render::create_checker_texture(*device);
+            texture_ = render::create_checker_texture(device);
         }
-
         std::vector<Vertex> vertices;
-        std::vector<std::uint32_t> indices;
-        build_cube(vertices, indices);
-        const auto vbuf = device->create_buffer({vertices.size() * sizeof(Vertex), rhi::BufferUsage::Vertex},
-                                                std::as_bytes(std::span(vertices)));
-        const auto ibuf = device->create_buffer({indices.size() * sizeof(std::uint32_t), rhi::BufferUsage::Index},
-                                                std::as_bytes(std::span(indices)));
-
+        const glm::vec3 normals[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+        for (const glm::vec3& n : normals) {
+            const glm::vec3 up = std::abs(n.z) > 0.5f ? glm::vec3(0, 1, 0) : glm::vec3(0, 0, 1);
+            const glm::vec3 right = glm::cross(up, n);
+            const auto base = static_cast<std::uint32_t>(vertices.size());
+            const float corners[4][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
+            for (const auto& c : corners) {
+                const glm::vec3 p = (n + right * c[0] + up * c[1]) * 64.0f + glm::vec3(0, 0, 64);
+                vertices.push_back({{p.x, p.y, p.z}, {(c[0] + 1) * 0.5f, 1.0f - (c[1] + 1) * 0.5f}});
+            }
+            indices_.insert(indices_.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+        }
+        vbuf_ = device.create_buffer({vertices.size() * sizeof(Vertex), rhi::BufferUsage::Vertex},
+                                     std::as_bytes(std::span(vertices)));
+        ibuf_ = device.create_buffer({indices_.size() * sizeof(std::uint32_t), rhi::BufferUsage::Index},
+                                     std::as_bytes(std::span(indices_)));
         rhi::PipelineDesc pd;
         pd.vertex.spirv = openbl_textured_vs;
         pd.pixel.spirv = openbl_textured_ps;
         pd.vertex_stride = sizeof(Vertex);
         pd.attributes = {{0, rhi::Format::RGB32_Float, 0}, {1, rhi::Format::RG32_Float, 12}};
         pd.cull = rhi::CullMode::None;
-        const auto pipeline = device->create_pipeline(pd);
-        const auto sampler = device->create_sampler({});
-        const rhi::Texture* textures[] = {texture.get()};
-        const auto bind_group = device->create_bind_group(*pipeline, *sampler, textures);
+        pipeline_ = device.create_pipeline(pd);
+        sampler_ = device.create_sampler({});
+        const rhi::Texture* textures[] = {texture_.get()};
+        bind_group_ = device.create_bind_group(*pipeline_, *sampler_, textures);
+    }
 
+    void draw(rhi::CommandList& cmd, const glm::mat4& vp) override {
+        cmd.set_pipeline(*pipeline_);
+        cmd.set_bind_group(*bind_group_);
+        cmd.set_vertex_buffer(*vbuf_);
+        cmd.set_index_buffer(*ibuf_);
+        cmd.push_constants(&vp, sizeof(vp));
+        cmd.draw_indexed(static_cast<std::uint32_t>(indices_.size()));
+    }
+
+private:
+    struct Vertex {
+        float position[3];
+        float uv[2];
+    };
+    std::vector<std::uint32_t> indices_;
+    std::unique_ptr<rhi::Texture> texture_;
+    std::unique_ptr<rhi::Buffer> vbuf_, ibuf_;
+    std::unique_ptr<rhi::Pipeline> pipeline_;
+    std::unique_ptr<rhi::Sampler> sampler_;
+    std::unique_ptr<rhi::BindGroup> bind_group_;
+};
+
+// --- Map --------------------------------------------------------------------
+
+class MapScene final : public Scene {
+public:
+    MapScene(rhi::Device& device, const vfs::GameFileSystem& gfs, const std::string& name, const Options& options)
+        : settings_{options.light_scale, options.fullbright} {
+        std::string path = formats::normalize_game_path(name);
+        if (!path.starts_with("maps/")) {
+            path.insert(0, "maps/");
+        }
+        if (!path.ends_with(".bsp")) {
+            path += ".bsp";
+        }
+        const auto data = gfs.read(path);
+        if (!data) {
+            throw std::runtime_error("map not found: " + path);
+        }
+        const auto start = std::chrono::steady_clock::now();
+        bsp_ = formats::parse_bsp(*data);
+        pak_ = std::make_unique<formats::ZipArchive>(bsp_.pakfile);
+        assets_ = std::make_unique<render::AssetSource>(gfs, pak_.get());
+        materials_ = std::make_unique<render::MaterialSystem>(device, *assets_);
+        world_ = std::make_unique<render::WorldRenderer>(device, *materials_, bsp_);
+        const auto& s = world_->stats();
+        std::cout << path << ": " << s.faces << " faces, " << s.triangles << " triangles, " << s.batches
+                  << " batches, lightmap " << s.lightmap_width << "x" << s.lightmap_height << ", "
+                  << s.missing_materials << " missing materials, " << materials_->missing_textures()
+                  << " missing textures, " << s.skipped_faces << " faces skipped; loaded in "
+                  << std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count() << " s\n";
+    }
+
+    // Player start, or the middle of the world bounds.
+    void place_camera(viewer::Camera& camera) const {
+        for (const auto& e : bsp_.entities) {
+            auto cls = e.find("classname");
+            if (cls == e.end() || cls->second != "info_player_start") {
+                continue;
+            }
+            if (auto o = e.find("origin"); o != e.end()) {
+                std::istringstream(o->second) >> camera.position.x >> camera.position.y >> camera.position.z;
+                camera.position.z += 64.0f; // eye height
+            }
+            if (auto a = e.find("angles"); a != e.end()) {
+                std::istringstream(a->second) >> camera.pitch >> camera.yaw;
+            }
+            return;
+        }
+        const auto& world = bsp_.models.at(0);
+        for (int k = 0; k < 3; ++k) {
+            camera.position[k] = (world.mins[k] + world.maxs[k]) * 0.5f;
+        }
+    }
+
+    void draw(rhi::CommandList& cmd, const glm::mat4& vp) override { world_->draw(cmd, to_array(vp), settings_); }
+
+private:
+    render::WorldDrawSettings settings_;
+    formats::BspFile bsp_;
+    std::unique_ptr<formats::ZipArchive> pak_;
+    std::unique_ptr<render::AssetSource> assets_;
+    std::unique_ptr<render::MaterialSystem> materials_;
+    std::unique_ptr<render::WorldRenderer> world_;
+};
+
+int run(const Options& options) {
+    platform::Window window({"OpenBL Viewer"});
+    auto device = rhi::create_vulkan_device(window, {options.validation, options.vsync});
+    const auto info = device->info();
+    std::cout << "renderer: " << info.backend << " on " << info.adapter << "\n";
+
+    {
+        std::unique_ptr<vfs::GameFileSystem> gfs;
+        if (options.game_dir) {
+            gfs = std::make_unique<vfs::GameFileSystem>(*options.game_dir);
+        }
         viewer::Camera camera;
-        camera.position = {-260.0f, -140.0f, 180.0f};
-        camera.yaw = 28.0f;
-        camera.pitch = -22.0f;
+        std::unique_ptr<Scene> scene;
+        if (options.map) {
+            auto map = std::make_unique<MapScene>(*device, *gfs, *options.map, options);
+            map->place_camera(camera);
+            scene = std::move(map);
+            window.set_title("OpenBL Viewer - " + *options.map + " - " + info.adapter);
+        } else {
+            scene = std::make_unique<CubeScene>(*device, gfs.get());
+            camera.position = {-260.0f, -140.0f, 180.0f};
+            camera.yaw = 28.0f;
+            camera.pitch = -22.0f;
+            window.set_title("OpenBL Viewer - " + info.adapter);
+        }
+        if (options.position) {
+            camera.position = *options.position;
+        }
+        if (options.angles) {
+            camera.pitch = options.angles->x;
+            camera.yaw = options.angles->y;
+        }
 
         auto last = std::chrono::steady_clock::now();
         int frame = 0;
@@ -166,13 +305,7 @@ int run(const Options& options) {
                 continue;
             }
             const float aspect = static_cast<float>(device->frame_width()) / static_cast<float>(device->frame_height());
-            const glm::mat4 mvp = camera.projection(aspect) * camera.view();
-            cmd->set_pipeline(*pipeline);
-            cmd->set_bind_group(*bind_group);
-            cmd->set_vertex_buffer(*vbuf);
-            cmd->set_index_buffer(*ibuf);
-            cmd->push_constants(&mvp, sizeof(mvp));
-            cmd->draw_indexed(static_cast<std::uint32_t>(indices.size()));
+            scene->draw(*cmd, camera.projection(aspect) * camera.view());
             device->end_frame();
 
             if (capture) {
@@ -182,7 +315,8 @@ int run(const Options& options) {
                 }
                 formats::write_png(*options.screenshot, image->rgba, image->width, image->height);
                 std::cout << "wrote " << options.screenshot->string() << " (" << image->width << "x" << image->height
-                          << ")\n";
+                          << ") at pos " << camera.position.x << " " << camera.position.y << " " << camera.position.z
+                          << " angles " << camera.pitch << " " << camera.yaw << "\n";
                 break;
             }
             ++frame;

@@ -1,0 +1,324 @@
+#include "openbl/render/world_renderer.hpp"
+
+#include "openbl_world_ps.h"
+#include "openbl_world_vs.h"
+
+#include <algorithm>
+#include <bit>
+#include <cmath>
+#include <cstring>
+#include <map>
+#include <sstream>
+#include <string>
+
+namespace openbl::render {
+
+namespace {
+
+using formats::BspFace;
+using formats::BspFile;
+
+struct Vertex {
+    float position[3];
+    float uv[2];
+    float lightmap_uv[2];
+    float blend;
+};
+
+struct PushConstants {
+    float mvp[16];
+    float alpha_ref;
+    float light_scale;
+    std::uint32_t flags;
+    float padding;
+};
+static_assert(sizeof(PushConstants) == 80);
+
+constexpr std::uint32_t kAlphaTest = 1;
+constexpr std::uint32_t kBlendLayers = 2;
+constexpr std::uint32_t kUnlit = 4;
+constexpr std::uint32_t kSelfIllum = 8;
+constexpr std::uint32_t kTranslucent = 16;
+
+// Source polygons are wound clockwise seen from the front, and stay clockwise
+// in Vulkan framebuffer space with our Y-flipped projection (verified visually
+// on ch_lotus_1: the opposite setting culls the walls facing the camera).
+constexpr bool kFrontCounterClockwise = false;
+
+std::uint16_t to_half(float f) {
+    const std::uint32_t bits = std::bit_cast<std::uint32_t>(std::min(f, 65504.0f));
+    const std::uint32_t sign = (bits >> 16) & 0x8000;
+    const std::int32_t exponent = static_cast<std::int32_t>((bits >> 23) & 0xFF) - 127 + 15;
+    std::uint32_t mantissa = bits & 0x7FFFFF;
+    if (exponent <= 0) {
+        if (exponent < -10) {
+            return static_cast<std::uint16_t>(sign);
+        }
+        mantissa = (mantissa | 0x800000) >> (1 - exponent);
+        return static_cast<std::uint16_t>(sign | (mantissa >> 13));
+    }
+    if (exponent >= 31) {
+        return static_cast<std::uint16_t>(sign | 0x7BFF);
+    }
+    return static_cast<std::uint16_t>(sign | (static_cast<std::uint32_t>(exponent) << 10) | (mantissa >> 13));
+}
+
+bool face_drawn(const BspFile& bsp, const BspFace& face) {
+    using namespace formats::surf_flags;
+    return (bsp.texinfos[face.texinfo].flags & (NoDraw | Sky | Sky2D | Trigger | Skip | Hint)) == 0 &&
+           bsp.texinfos[face.texinfo].texdata >= 0;
+}
+
+bool face_has_lightmap(const BspFile& bsp, const BspFace& face) {
+    return face.light_offset >= 0 && face.style_count() > 0 &&
+           (bsp.texinfos[face.texinfo].flags & formats::surf_flags::NoLight) == 0;
+}
+
+// A brush model instance: the world (model 0) or a brush entity at its origin.
+struct ModelInstance {
+    std::size_t model = 0;
+    formats::Vec3 origin{};
+};
+
+std::vector<ModelInstance> model_instances(const BspFile& bsp) {
+    std::vector<ModelInstance> out{{0, {}}};
+    for (const auto& e : bsp.entities) {
+        auto model = e.find("model");
+        if (model == e.end() || model->second.size() < 2 || model->second[0] != '*') {
+            continue;
+        }
+        const std::size_t index = std::strtoul(model->second.c_str() + 1, nullptr, 10);
+        if (index == 0 || index >= bsp.models.size()) {
+            continue;
+        }
+        ModelInstance inst{index, {}};
+        if (auto origin = e.find("origin"); origin != e.end()) {
+            std::istringstream(origin->second) >> inst.origin[0] >> inst.origin[1] >> inst.origin[2];
+        }
+        out.push_back(inst);
+    }
+    return out;
+}
+
+} // namespace
+
+WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, const BspFile& bsp) : device_(device) {
+    std::vector<std::array<float, 2>> lightmap_offsets;
+    build_lightmap_atlas(bsp, lightmap_offsets);
+    const float inv_w = 1.0f / static_cast<float>(stats_.lightmap_width);
+    const float inv_h = 1.0f / static_cast<float>(stats_.lightmap_height);
+
+    // Group faces by material so each material is one draw.
+    struct FaceRef {
+        std::size_t face;
+        formats::Vec3 origin;
+    };
+    std::map<std::string, std::vector<FaceRef>> by_material;
+    for (const ModelInstance& inst : model_instances(bsp)) {
+        const auto& model = bsp.models[inst.model];
+        for (std::int32_t i = 0; i < model.num_faces; ++i) {
+            const std::size_t f = static_cast<std::size_t>(model.first_face + i);
+            if (!face_drawn(bsp, bsp.faces[f])) {
+                ++stats_.skipped_faces;
+                continue;
+            }
+            const auto texdata = static_cast<std::size_t>(bsp.texinfos[bsp.faces[f].texinfo].texdata);
+            by_material[bsp.texdatas[texdata].material].push_back({f, inst.origin});
+        }
+    }
+
+    std::vector<Vertex> vertices;
+    std::vector<std::uint32_t> indices;
+    for (const auto& [name, faces] : by_material) {
+        const RenderMaterial& mat = materials.material(name);
+        stats_.missing_materials += mat.missing;
+        if (mat.skip) {
+            stats_.skipped_faces += faces.size();
+            continue;
+        }
+        Batch batch;
+        batch.material = &mat;
+        batch.first_index = static_cast<std::uint32_t>(indices.size());
+        for (const FaceRef& ref : faces) {
+            const BspFace& face = bsp.faces[ref.face];
+            const auto mesh = formats::build_face_mesh(bsp, ref.face);
+            const bool lit = face_has_lightmap(bsp, face);
+            const auto base = static_cast<std::uint32_t>(vertices.size());
+            for (std::size_t v = 0; v < mesh.positions.size(); ++v) {
+                Vertex out{};
+                for (int k = 0; k < 3; ++k) {
+                    out.position[k] = mesh.positions[v][k] + ref.origin[k];
+                }
+                out.uv[0] = mesh.uvs[v][0];
+                out.uv[1] = mesh.uvs[v][1];
+                if (lit) {
+                    // Clamp to the face's luxels so bilinear filtering never reads a neighbour.
+                    const float s = std::clamp(mesh.lightmap_uvs[v][0], 0.0f, static_cast<float>(face.lightmap_size[0]));
+                    const float t = std::clamp(mesh.lightmap_uvs[v][1], 0.0f, static_cast<float>(face.lightmap_size[1]));
+                    out.lightmap_uv[0] = (lightmap_offsets[ref.face][0] + s + 0.5f) * inv_w;
+                    out.lightmap_uv[1] = (lightmap_offsets[ref.face][1] + t + 0.5f) * inv_h;
+                } else {
+                    out.lightmap_uv[0] = white_luxel_[0] * inv_w;
+                    out.lightmap_uv[1] = white_luxel_[1] * inv_h;
+                }
+                out.blend = mesh.alphas[v];
+                vertices.push_back(out);
+            }
+            for (std::uint32_t idx : mesh.indices) {
+                indices.push_back(base + idx);
+            }
+            ++stats_.faces;
+        }
+        batch.index_count = static_cast<std::uint32_t>(indices.size()) - batch.first_index;
+        stats_.triangles += batch.index_count / 3;
+        (mat.translucent ? translucent_ : opaque_).push_back(std::move(batch));
+    }
+    stats_.batches = opaque_.size() + translucent_.size();
+
+    if (!vertices.empty()) {
+        vertices_ = device.create_buffer({vertices.size() * sizeof(Vertex), rhi::BufferUsage::Vertex},
+                                         std::as_bytes(std::span(vertices)));
+        indices_ = device.create_buffer({indices.size() * sizeof(std::uint32_t), rhi::BufferUsage::Index},
+                                        std::as_bytes(std::span(indices)));
+    }
+
+    rhi::PipelineDesc pd;
+    pd.vertex.spirv = openbl_world_vs;
+    pd.pixel.spirv = openbl_world_ps;
+    pd.vertex_stride = sizeof(Vertex);
+    pd.attributes = {{0, rhi::Format::RGB32_Float, 0},
+                     {1, rhi::Format::RG32_Float, 12},
+                     {2, rhi::Format::RG32_Float, 20},
+                     {3, rhi::Format::R32_Float, 28}};
+    pd.texture_count = 3;
+    pd.push_constant_size = sizeof(PushConstants);
+    pd.front_counter_clockwise = kFrontCounterClockwise;
+    const rhi::BlendMode blends[] = {rhi::BlendMode::Opaque, rhi::BlendMode::Alpha, rhi::BlendMode::Additive};
+    for (std::size_t b = 0; b < 3; ++b) {
+        for (std::size_t c = 0; c < 2; ++c) {
+            pd.blend = blends[b];
+            pd.depth_write = b == 0;
+            pd.cull = c == 0 ? rhi::CullMode::Back : rhi::CullMode::None;
+            pipelines_[b][c] = device.create_pipeline(pd);
+        }
+    }
+
+    sampler_ = device.create_sampler({});
+    for (auto* list : {&opaque_, &translucent_}) {
+        for (Batch& batch : *list) {
+            const rhi::Texture* textures[] = {batch.material->base, batch.material->base2, lightmap_.get()};
+            batch.bind_group = device.create_bind_group(*pipelines_[0][0], *sampler_, textures);
+        }
+    }
+}
+
+WorldRenderer::~WorldRenderer() = default;
+
+void WorldRenderer::build_lightmap_atlas(const BspFile& bsp, std::vector<std::array<float, 2>>& offsets) {
+    offsets.assign(bsp.faces.size(), {0, 0});
+    struct Rect {
+        std::size_t face;
+        std::uint32_t w, h;
+    };
+    std::vector<Rect> rects;
+    std::uint64_t area = 0;
+    for (std::size_t f = 0; f < bsp.faces.size(); ++f) {
+        const BspFace& face = bsp.faces[f];
+        if (!face_has_lightmap(bsp, face)) {
+            continue;
+        }
+        const auto w = static_cast<std::uint32_t>(face.lightmap_size[0] + 1);
+        const auto h = static_cast<std::uint32_t>(face.lightmap_size[1] + 1);
+        rects.push_back({f, w, h});
+        area += std::uint64_t{w + 1} * (h + 1);
+    }
+    std::sort(rects.begin(), rects.end(), [](const Rect& a, const Rect& b) { return a.h > b.h; });
+
+    const std::uint32_t width = area > 1500u * 1500u ? 4096 : 2048;
+    // Shelf packing with a 1-luxel gap; a 2x2 white block for unlit faces comes first.
+    std::uint32_t x = 3, y = 0, shelf = 2;
+    std::vector<std::array<std::uint32_t, 2>> placed(rects.size());
+    for (std::size_t i = 0; i < rects.size(); ++i) {
+        if (x + rects[i].w > width) {
+            x = 0;
+            y += shelf + 1;
+            shelf = 0;
+        }
+        placed[i] = {x, y};
+        x += rects[i].w + 1;
+        shelf = std::max(shelf, rects[i].h);
+    }
+    const std::uint32_t height = std::max<std::uint32_t>(4, (y + shelf + 4) & ~3u);
+    stats_.lightmap_width = width;
+    stats_.lightmap_height = height;
+
+    std::vector<std::uint16_t> pixels(std::size_t{width} * height * 4, 0);
+    const std::uint16_t one = to_half(1.0f);
+    for (std::uint32_t py = 0; py < 2; ++py) {
+        for (std::uint32_t px = 0; px < 2; ++px) {
+            const std::size_t o = (std::size_t{py} * width + px) * 4;
+            pixels[o] = pixels[o + 1] = pixels[o + 2] = pixels[o + 3] = one;
+        }
+    }
+    white_luxel_ = {1.0f, 1.0f};
+
+    for (std::size_t i = 0; i < rects.size(); ++i) {
+        const BspFace& face = bsp.faces[rects[i].face];
+        offsets[rects[i].face] = {static_cast<float>(placed[i][0]), static_cast<float>(placed[i][1])};
+        const std::byte* src = bsp.lighting.data() + face.light_offset;
+        for (std::uint32_t ly = 0; ly < rects[i].h; ++ly) {
+            for (std::uint32_t lx = 0; lx < rects[i].w; ++lx) {
+                const auto rgb = formats::decode_rgbe(src + (std::size_t{ly} * rects[i].w + lx) * 4);
+                const std::size_t o = ((std::size_t{placed[i][1]} + ly) * width + placed[i][0] + lx) * 4;
+                pixels[o] = to_half(rgb[0]);
+                pixels[o + 1] = to_half(rgb[1]);
+                pixels[o + 2] = to_half(rgb[2]);
+                pixels[o + 3] = one;
+            }
+        }
+    }
+    const std::span<const std::byte> mip = std::as_bytes(std::span(pixels));
+    lightmap_ = device_.create_texture({width, height, 1, rhi::Format::RGBA16_Float}, std::span(&mip, 1));
+}
+
+const rhi::Pipeline& WorldRenderer::pipeline_for(const RenderMaterial& m) const {
+    const std::size_t blend = !m.translucent ? 0 : (m.additive ? 2 : 1);
+    return *pipelines_[blend][m.no_cull ? 1 : 0];
+}
+
+void WorldRenderer::draw_batches(rhi::CommandList& cmd, const std::vector<Batch>& batches,
+                                 const std::array<float, 16>& vp, const WorldDrawSettings& settings) {
+    const rhi::Pipeline* bound = nullptr;
+    PushConstants pc{};
+    std::memcpy(pc.mvp, vp.data(), sizeof(pc.mvp));
+    pc.light_scale = settings.light_scale;
+    for (const Batch& batch : batches) {
+        const RenderMaterial& m = *batch.material;
+        const rhi::Pipeline& pipeline = pipeline_for(m);
+        if (&pipeline != bound) {
+            cmd.set_pipeline(pipeline);
+            bound = &pipeline;
+        }
+        pc.alpha_ref = m.alpha_ref;
+        pc.flags = (m.alpha_test ? kAlphaTest : 0) | (m.blend_layers ? kBlendLayers : 0) |
+                   ((m.unlit || settings.fullbright) ? kUnlit : 0) | (m.self_illum ? kSelfIllum : 0) |
+                   (m.translucent ? kTranslucent : 0);
+        cmd.set_bind_group(*batch.bind_group);
+        cmd.push_constants(&pc, sizeof(pc));
+        cmd.draw_indexed(batch.index_count, batch.first_index);
+    }
+}
+
+void WorldRenderer::draw(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
+                         const WorldDrawSettings& settings) {
+    if (!vertices_) {
+        return;
+    }
+    cmd.set_pipeline(*pipelines_[0][0]);
+    cmd.set_vertex_buffer(*vertices_);
+    cmd.set_index_buffer(*indices_);
+    draw_batches(cmd, opaque_, view_projection, settings);
+    draw_batches(cmd, translucent_, view_projection, settings);
+}
+
+} // namespace openbl::render

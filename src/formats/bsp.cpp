@@ -334,7 +334,20 @@ std::array<float, 2> texture_uv(const BspFile& bsp, const BspTexInfo& ti, const 
     return {(p[0] * s[0] + p[1] * s[1] + p[2] * s[2] + s[3]) / w, (p[0] * t[0] + p[1] * t[1] + p[2] * t[2] + t[3]) / h};
 }
 
+std::array<float, 2> lightmap_uv(const BspFace& face, const BspTexInfo& ti, const Vec3& p) {
+    const auto& s = ti.lightmap_vecs[0];
+    const auto& t = ti.lightmap_vecs[1];
+    return {p[0] * s[0] + p[1] * s[1] + p[2] * s[2] + s[3] - static_cast<float>(face.lightmap_mins[0]),
+            p[0] * t[0] + p[1] * t[1] + p[2] * t[2] + t[3] - static_cast<float>(face.lightmap_mins[1])};
+}
+
 } // namespace
+
+std::array<float, 3> decode_rgbe(const std::byte* luxel) {
+    const float scale = std::ldexp(1.0f, static_cast<std::int8_t>(luxel[3])) / 255.0f;
+    return {static_cast<float>(luxel[0]) * scale, static_cast<float>(luxel[1]) * scale,
+            static_cast<float>(luxel[2]) * scale};
+}
 
 std::size_t BspFace::style_count() const {
     std::size_t n = 0;
@@ -428,6 +441,7 @@ BspFaceMesh build_face_mesh(const BspFile& bsp, std::size_t face_index) {
         for (const Vec3& p : polygon) {
             mesh.positions.push_back(p);
             mesh.uvs.push_back(texture_uv(bsp, ti, p));
+            mesh.lightmap_uvs.push_back(lightmap_uv(face, ti, p));
             mesh.alphas.push_back(0.0f);
         }
         for (std::uint32_t i = 2; i < polygon.size(); ++i) {
@@ -469,6 +483,7 @@ BspFaceMesh build_face_mesh(const BspFile& bsp, std::size_t face_index) {
             mesh.positions.push_back({base[0] + dv.vector[0] * dv.distance, base[1] + dv.vector[1] * dv.distance,
                                       base[2] + dv.vector[2] * dv.distance});
             mesh.uvs.push_back(texture_uv(bsp, ti, base));
+            mesh.lightmap_uvs.push_back(lightmap_uv(face, ti, base));
             mesh.alphas.push_back(dv.alpha / 255.0f);
         }
     }

@@ -33,6 +33,14 @@ struct Material {
 // are recovered from and listed in Material::diagnostics.
 Material parse_vmt(std::string_view text);
 
+// Patch materials ("patch" shader, used by map pakfiles) name a base material
+// with "include" and add or override parameters in "insert"/"replace" blocks.
+bool is_vmt_patch(const Material& material);
+// Game path of the material a patch includes, e.g. "materials/glass/glass01.vmt".
+std::string vmt_patch_include(const Material& patch);
+// The base material with the patch's parameters applied.
+Material apply_vmt_patch(const Material& base, const Material& patch);
+
 // Game path of a texture referenced from a material, without extension.
 std::string material_texture_path(std::string_view value);
 

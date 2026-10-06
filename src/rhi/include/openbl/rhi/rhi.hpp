@@ -27,6 +27,7 @@ enum class Format : std::uint8_t {
     BC2_sRGB,
     BC3_UNorm,
     BC3_sRGB,
+    R32_Float,
     RG32_Float,
     RGB32_Float,
     RGBA32_Float,

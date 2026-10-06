@@ -43,6 +43,7 @@ VkFormat to_vk(Format f) {
     case Format::BC2_sRGB: return VK_FORMAT_BC2_SRGB_BLOCK;
     case Format::BC3_UNorm: return VK_FORMAT_BC3_UNORM_BLOCK;
     case Format::BC3_sRGB: return VK_FORMAT_BC3_SRGB_BLOCK;
+    case Format::R32_Float: return VK_FORMAT_R32_SFLOAT;
     case Format::RG32_Float: return VK_FORMAT_R32G32_SFLOAT;
     case Format::RGB32_Float: return VK_FORMAT_R32G32B32_SFLOAT;
     case Format::RGBA32_Float: return VK_FORMAT_R32G32B32A32_SFLOAT;

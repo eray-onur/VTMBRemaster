@@ -49,6 +49,41 @@ std::string material_texture_path(std::string_view value) {
     return path;
 }
 
+bool is_vmt_patch(const Material& material) {
+    return material.shader == "patch";
+}
+
+std::string vmt_patch_include(const Material& patch) {
+    auto include = patch.param("include");
+    if (!include) {
+        throw FormatError("patch material has no include");
+    }
+    std::string path = normalize_game_path(*include);
+    if (!path.starts_with("materials/")) {
+        path.insert(0, "materials/");
+    }
+    if (!path.ends_with(".vmt")) {
+        path += ".vmt";
+    }
+    return path;
+}
+
+Material apply_vmt_patch(const Material& base, const Material& patch) {
+    Material out = base;
+    for (const KvNode& block : patch.sub_blocks) {
+        if (!iequals(block.key, "insert") && !iequals(block.key, "replace")) {
+            continue;
+        }
+        for (const KvNode& child : block.children) {
+            if (!child.is_block) {
+                out.params[to_lower(child.key)] = child.value;
+            }
+        }
+    }
+    out.diagnostics.insert(out.diagnostics.end(), patch.diagnostics.begin(), patch.diagnostics.end());
+    return out;
+}
+
 Material parse_vmt(std::string_view text) {
     KvDocument doc = parse_keyvalues(text);
     if (doc.roots.empty() || !doc.roots.front().is_block) {

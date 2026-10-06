@@ -31,7 +31,10 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Viewer with free-fly camera and screenshot capture (draws a textured test cube)
 - [ ] Direct3D 12 backend (shaders are already HLSL; add DXC for DXIL)
 - [ ] Run the renderer clean under the Khronos validation layer
-- [ ] Load any map: world geometry, lightmaps, static props
+- [x] Map world geometry and brush entities, textured, with baked lightmaps (style 0)
+- [x] Materials: patch materials, pakfile overrides, alpha test, translucency, self-illumination, two-layer blends
+- [ ] Skybox, water, static props, light styles, translucent sorting, cubemap reflections
+- [ ] Confirm the lightmap brightness (overbright scale 2.3) against original-game screenshots
 - [ ] Skinned and animated models
 - [ ] Free-fly viewer on Windows and Linux
 
