@@ -12,6 +12,7 @@ add_executable(openbl_tests
     test_ain.cpp
     test_bsp.cpp
     test_dlg.cpp
+    test_expressions.cpp
     test_path.cpp
     test_vpk.cpp
     test_game_filesystem.cpp
