@@ -5,8 +5,10 @@ add_library(openbl_formats
     image_read.cpp
     image_write.cpp
     keyvalues.cpp
+    lip.cpp
     mdl.cpp
     path.cpp
+    text_encoding.cpp
     tth.cpp
     vmt.cpp
     vpk.cpp

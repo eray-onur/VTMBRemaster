@@ -17,6 +17,7 @@ add_executable(openbl_tests
     test_image_decode.cpp
     test_image_io.cpp
     test_keyvalues.cpp
+    test_lip.cpp
     test_mdl.cpp
     test_tth.cpp
     test_vmt.cpp
