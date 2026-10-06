@@ -9,6 +9,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+# No C++20 modules are used; scanning for them makes Ninja see a cycle in SDL's precompiled header.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR "OpenBL is 64-bit only.")
@@ -16,6 +18,7 @@ endif()
 
 option(OPENBL_BUILD_TESTS "Build unit tests" ON)
 option(OPENBL_BUILD_TOOLS "Build command-line tools" ON)
+option(OPENBL_BUILD_VIEWER "Build the renderer and viewer (fetches SDL3, Vulkan headers, glslang, ...)" ON)
 option(OPENBL_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 
 # Shared compile options for all first-party targets.
@@ -34,6 +37,7 @@ else()
 endif()
 
 include(cmake/Dependencies.cmake)
+include(cmake/Shaders.cmake)
 
 add_subdirectory(src)
 

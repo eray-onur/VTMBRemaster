@@ -39,6 +39,15 @@ Bloodlines' game logic is largely written in Python and ships in the game data. 
 
 The renderer talks to a thin rendering hardware interface (RHI) with two backends: Vulkan (Windows and Linux) and Direct3D 12 (Windows). The original look is reproduced first. Modern lighting is added as optional render paths, never by changing the defaults.
 
+**Current shape** (`src/rhi/include/openbl/rhi/rhi.hpp`):
+
+- **Objects:** buffers, textures, samplers, pipelines, bind groups and one command list per frame.
+- **Resource layout:** every pipeline uses the same one. Set 0 holds a sampler at binding 0 and N textures at bindings 1..N. That maps to a Vulkan descriptor set or a D3D12 descriptor table.
+- **Per-draw data** goes in push constants (root constants in D3D12).
+- **Shaders are written in HLSL** (`shaders/`). glslang compiles them to SPIR-V at build time; DXC will produce DXIL for D3D12 from the same source.
+- **Vulkan 1.3 backend:** dynamic rendering, synchronization2, two frames in flight, and memory through VMA. Resources are destroyed only once the GPU has finished every frame that might use them.
+- **Captures:** `request_capture()` and `take_capture()` read back the frame, which the parity tests will build on.
+
 ### 5. Game paths are canonical
 
 All game paths are normalized: lowercase, `/` separators (`formats::normalize_game_path`). This matches the shipped archives, and makes lookups behave the same on case-sensitive filesystems.

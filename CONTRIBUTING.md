@@ -16,7 +16,11 @@
 cmake/         Third-party dependencies (pinned and hash-checked)
 src/formats/   Readers and writers for game file formats (no engine dependencies; zlib only)
 src/vfs/       Merged view of loose files and VPK archives
-tools/         Command-line tools (openbl-cli)
+src/platform/  Window and input (SDL3)
+src/rhi/       Rendering hardware interface and its Vulkan backend
+src/render/    Renderer building blocks (texture uploads, ...)
+shaders/       HLSL shaders, compiled at build time
+tools/         Command-line tools (openbl-cli) and the viewer (openbl-viewer)
 tests/         doctest unit tests and integration tests
 docs/          Roadmap, architecture, legal policy, format specs
 ```

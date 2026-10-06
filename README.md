@@ -26,10 +26,16 @@ What works today:
 | Model geometry (`.mdl` v2531, `.vtx` v107) | Verified against all 4,255 models of the Steam release; animations not yet |
 | Maps (`.bsp` v17: faces, displacements, static props, entities, pakfile) | Verified against all 101 maps of the Steam release |
 | `openbl-cli` inspection tool | Working |
+| Renderer: window, input, Vulkan 1.3 backend, `openbl-viewer` | Phase 1 started; draws a textured test cube |
 
 ## Building
 
-Requirements: CMake 3.25+, Ninja, and a C++20 compiler (MSVC 19.40+, Clang 17+ or GCC 13+). Builds are 64-bit only. The first configure downloads pinned versions of zlib and doctest. To link the system zlib instead, pass `-DOPENBL_USE_SYSTEM_ZLIB=ON`.
+Requirements: CMake 3.25+, Ninja, and a C++20 compiler (MSVC 19.40+, Clang 17+ or GCC 13+). Builds are 64-bit only. To run the viewer you need a GPU and driver with Vulkan 1.3; the Vulkan SDK is **not** required.
+
+The first configure downloads pinned versions of the dependencies: zlib and doctest, plus SDL3, the Vulkan headers, volk, Vulkan Memory Allocator, GLM and glslang for the renderer. glslang is used only at build time, to compile the HLSL shaders in `shaders/` to SPIR-V. Useful options:
+
+- `-DOPENBL_BUILD_VIEWER=OFF` builds only the format libraries and the CLI, without any renderer dependencies.
+- `-DOPENBL_USE_SYSTEM_ZLIB=ON` links the system zlib instead of building it.
 
 On Windows, open a *x64 Native Tools* prompt for Visual Studio, then run:
 
@@ -67,6 +73,16 @@ openbl-cli mdl export character/npc/common/cop/cop cop.obj  # geometry to OBJ (L
 openbl-cli bsp info sm_pier_1                           # faces, props, materials, entity classes
 openbl-cli bsp export sm_pier_1 pier.obj                # world geometry to OBJ
 ```
+
+## Using openbl-viewer
+
+```sh
+openbl-viewer [--game DIR] [--screenshot out.png [--frames N]] [--validation] [--no-vsync]
+```
+
+Controls: hold the right mouse button to look around, **WASD** to move, **E**/**Q** to go up and down, **Shift** to move faster, the mouse wheel to change speed, **Esc** to quit.
+
+`--screenshot` renders N frames, saves the back buffer as a PNG, and exits. It's the basis for automated image comparisons. `--validation` enables the Khronos validation layer, if it's installed (it ships with the Vulkan SDK).
 
 ## Contributing
 

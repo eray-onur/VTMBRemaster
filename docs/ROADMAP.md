@@ -26,7 +26,11 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 
 ## Phase 1: rendering and map viewer
 
-- [ ] Rendering hardware interface (RHI) with Vulkan and Direct3D 12 backends
+- [x] Window and input (SDL3)
+- [x] Rendering hardware interface (RHI) with a Vulkan 1.3 backend
+- [x] Viewer with free-fly camera and screenshot capture (draws a textured test cube)
+- [ ] Direct3D 12 backend (shaders are already HLSL; add DXC for DXIL)
+- [ ] Run the renderer clean under the Khronos validation layer
 - [ ] Load any map: world geometry, lightmaps, static props
 - [ ] Skinned and animated models
 - [ ] Free-fly viewer on Windows and Linux

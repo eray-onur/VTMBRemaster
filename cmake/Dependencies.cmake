@@ -32,3 +32,65 @@ else()
     endif()
     add_library(ZLIB::ZLIB ALIAS openbl_zlib)
 endif()
+
+if(NOT OPENBL_BUILD_VIEWER)
+    return()
+endif()
+
+# --- Renderer and viewer dependencies (all GPLv3-compatible licenses) ---
+
+# SDL3 (zlib license): window, input, Vulkan surface creation.
+set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+set(SDL_STATIC ON CACHE BOOL "" FORCE)
+set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(SDL3
+    GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+    GIT_TAG release-3.4.18
+    GIT_SHALLOW TRUE
+    SYSTEM)
+
+# Vulkan headers (Apache-2.0) and volk (MIT) to load Vulkan at runtime; no SDK needed.
+FetchContent_Declare(VulkanHeaders
+    GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git
+    GIT_TAG vulkan-sdk-1.4.363.0
+    GIT_SHALLOW TRUE
+    SYSTEM)
+FetchContent_Declare(volk
+    GIT_REPOSITORY https://github.com/zeux/volk.git
+    GIT_TAG vulkan-sdk-1.4.363.0
+    GIT_SHALLOW TRUE
+    SYSTEM)
+
+# Header-only libraries; their own CMake projects are skipped.
+FetchContent_Declare(vma
+    GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+    GIT_TAG v3.4.0
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR openbl-no-cmake)
+FetchContent_Declare(glm
+    GIT_REPOSITORY https://github.com/g-truc/glm.git
+    GIT_TAG 1.0.3
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR openbl-no-cmake)
+
+# glslang (BSD/Apache): used only at build time to compile HLSL shaders to SPIR-V.
+set(ENABLE_OPT OFF CACHE BOOL "" FORCE)
+set(GLSLANG_TESTS OFF CACHE BOOL "" FORCE)
+set(GLSLANG_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+set(ENABLE_SPVREMAPPER OFF CACHE BOOL "" FORCE)
+set(ENABLE_HLSL ON CACHE BOOL "" FORCE)
+FetchContent_Declare(glslang
+    GIT_REPOSITORY https://github.com/KhronosGroup/glslang.git
+    GIT_TAG vulkan-sdk-1.4.363.0
+    GIT_SHALLOW TRUE
+    SYSTEM)
+
+FetchContent_MakeAvailable(SDL3 VulkanHeaders volk vma glm glslang)
+
+add_library(openbl_vma INTERFACE)
+target_include_directories(openbl_vma SYSTEM INTERFACE ${vma_SOURCE_DIR}/include)
+
+add_library(openbl_glm INTERFACE)
+target_include_directories(openbl_glm SYSTEM INTERFACE ${glm_SOURCE_DIR})
+target_compile_definitions(openbl_glm INTERFACE GLM_FORCE_DEPTH_ZERO_TO_ONE GLM_FORCE_RADIANS GLM_ENABLE_EXPERIMENTAL)
