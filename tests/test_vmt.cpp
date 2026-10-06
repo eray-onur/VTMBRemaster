@@ -33,6 +33,21 @@ TEST_CASE("VMT parse") {
     CHECK(mat.diagnostics.empty());
 }
 
+TEST_CASE("VMT patch materials") {
+    const auto base = parse_vmt("\"LightmappedGeneric\" { \"$basetexture\" \"glass/glass01\" \"$envmap\" \"env_cubemap\" }");
+    const auto patch = parse_vmt("\"patch\" { \"include\" \"GLASS/GLASS01\" "
+                                 "\"insert\" { \"$envmap\" \"maps/x/c1_2_3\" \"$translucent\" \"1\" } }");
+    CHECK_FALSE(is_vmt_patch(base));
+    REQUIRE(is_vmt_patch(patch));
+    CHECK(vmt_patch_include(patch) == "materials/glass/glass01.vmt");
+    const auto merged = apply_vmt_patch(base, patch);
+    CHECK(merged.shader == "lightmappedgeneric");
+    CHECK(merged.param("$basetexture") == "glass/glass01");
+    CHECK(merged.param("$envmap") == "maps/x/c1_2_3");
+    CHECK(merged.param("$translucent") == "1");
+    CHECK_THROWS_AS(vmt_patch_include(parse_vmt("\"patch\" { }")), FormatError);
+}
+
 TEST_CASE("VMT without a shader block") {
     CHECK_THROWS_AS(parse_vmt(""), FormatError);
     CHECK_THROWS_AS(parse_vmt("\"VertexLitGeneric\"\n}\n\"$basetexture\" \"x\"\n}"), FormatError);

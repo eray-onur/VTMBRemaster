@@ -302,6 +302,21 @@ TEST_CASE("BSP face meshes") {
     CHECK(disp.uvs[4][0] == doctest::Approx(0.25f));
 }
 
+TEST_CASE("BSP lightmap coordinates and RGBE") {
+    const auto bsp = parse_bsp(build_bsp());
+    const auto quad = build_face_mesh(bsp, 0);
+    // 1 luxel per 16 units, mins 0: corner (64, 64) is luxel (4, 4).
+    CHECK(quad.lightmap_uvs[2][0] == doctest::Approx(4.0f));
+    CHECK(quad.lightmap_uvs[2][1] == doctest::Approx(4.0f));
+    CHECK(quad.lightmap_uvs[0][0] == doctest::Approx(0.0f));
+
+    const std::byte luxel[4] = {std::byte{255}, std::byte{128}, std::byte{0}, std::byte{0xFF}}; // exponent -1
+    const auto rgb = decode_rgbe(luxel);
+    CHECK(rgb[0] == doctest::Approx(0.5f));
+    CHECK(rgb[1] == doctest::Approx(128.0f / 255.0f / 2.0f));
+    CHECK(rgb[2] == 0.0f);
+}
+
 TEST_CASE("BSP rejects malformed files") {
     auto data = build_bsp();
     SUBCASE("signature") {
