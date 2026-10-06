@@ -976,7 +976,7 @@ constexpr FormatStatus kFormats[] = {
     {".vtx", "parsed", "model triangle strips"},
     {".bsp", "parsed", "maps (partial: brushes, visibility, cubemaps, detail props, overlays)"},
     {".tga", "parsed", "particle and font images"},
-    {".phy", "todo", "physics collision"},
+    {".phy", "parsed", "collision models"},
     {".lip", "parsed", "lip-sync: words, phonemes, captions"},
     {".vcd", "parsed", "choreography scenes"},
     {".txt", "parsed", "KeyValues tables, expression tables, localisation (todo: titles, sentences, dsp presets, credits, experience table)"},

@@ -19,7 +19,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Animations: root facing convention; unknown sequence fields (+620, +660 block, +752…)
 - [x] Models: hitboxes, attachments, flex controllers and rules, mesh flexes (which vertices), mouths, IK chains, surface property
 - [ ] Models: flex vertex delta encoding; packed normal tables for quantized vertices; eyeball data
-- [ ] Physics: `.phy`
+- [x] Physics: `.phy` solids, convex pieces (bounding-tree walk), model-space conversion, text block
+- [ ] Physics: ragdoll constraint semantics; collision for map brushes (with the BSP work)
 - [x] Maps: `.bsp` v17 geometry, faces, displacements, lightmap data, static props, entities, pakfile
 - [x] Maps: BSP nodes and leafs (line-of-sight traces), world lights
 - [ ] Maps: visibility (PVS), brushes and brush sides, cubemaps, detail props, physics collision, overlays/decals
