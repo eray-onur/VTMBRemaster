@@ -33,8 +33,11 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Run the renderer clean under the Khronos validation layer
 - [x] Map world geometry and brush entities, textured, with baked lightmaps (style 0)
 - [x] Materials: patch materials, pakfile overrides, alpha test, translucency, self-illumination, two-layer blends
-- [ ] Skybox, water, static props, light styles, translucent sorting, cubemap reflections
+- [x] Static props and `prop_*` entities (LOD 0, default body group, skins)
+- [ ] Prop lighting from world lights and ambient cubes (currently the floor lightmap below each prop)
+- [ ] Skybox, water, light styles, translucent sorting, cubemap reflections, prop fade distances
 - [ ] Confirm the lightmap brightness (overbright scale 2.3) against original-game screenshots
+- [x] Static models in maps
 - [ ] Skinned and animated models
 - [ ] Free-fly viewer on Windows and Linux
 

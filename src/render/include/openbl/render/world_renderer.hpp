@@ -34,8 +34,13 @@ public:
     WorldRenderer(rhi::Device& device, MaterialSystem& materials, const formats::BspFile& bsp);
     ~WorldRenderer();
 
-    // `view_projection` is a column-major 4x4 matrix.
+    // `view_projection` is a column-major 4x4 matrix. draw() runs both passes;
+    // callers mixing in other geometry draw all opaque passes before translucent ones.
     void draw(rhi::CommandList& cmd, const std::array<float, 16>& view_projection, const WorldDrawSettings& settings);
+    void draw_opaque(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
+                     const WorldDrawSettings& settings);
+    void draw_translucent(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
+                          const WorldDrawSettings& settings);
 
     const WorldStats& stats() const { return stats_; }
 

@@ -311,6 +311,12 @@ void WorldRenderer::draw_batches(rhi::CommandList& cmd, const std::vector<Batch>
 
 void WorldRenderer::draw(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
                          const WorldDrawSettings& settings) {
+    draw_opaque(cmd, view_projection, settings);
+    draw_translucent(cmd, view_projection, settings);
+}
+
+void WorldRenderer::draw_opaque(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
+                                const WorldDrawSettings& settings) {
     if (!vertices_) {
         return;
     }
@@ -318,6 +324,16 @@ void WorldRenderer::draw(rhi::CommandList& cmd, const std::array<float, 16>& vie
     cmd.set_vertex_buffer(*vertices_);
     cmd.set_index_buffer(*indices_);
     draw_batches(cmd, opaque_, view_projection, settings);
+}
+
+void WorldRenderer::draw_translucent(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
+                                     const WorldDrawSettings& settings) {
+    if (!vertices_) {
+        return;
+    }
+    cmd.set_pipeline(*pipelines_[0][0]);
+    cmd.set_vertex_buffer(*vertices_);
+    cmd.set_index_buffer(*indices_);
     draw_batches(cmd, translucent_, view_projection, settings);
 }
 

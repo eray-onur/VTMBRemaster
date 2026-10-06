@@ -26,7 +26,7 @@ What works today:
 | Model geometry (`.mdl` v2531, `.vtx` v107) | Verified against all 4,255 models of the Steam release; animations not yet |
 | Maps (`.bsp` v17: faces, displacements, static props, entities, pakfile) | Verified against all 101 maps of the Steam release |
 | `openbl-cli` inspection tool | Working |
-| Renderer: window, input, Vulkan 1.3 backend, `openbl-viewer` | Draws map world geometry with textures and lightmaps; no sky, water or props yet |
+| Renderer: window, input, Vulkan 1.3 backend, `openbl-viewer` | Draws maps with textures, lightmaps and props; no sky or water yet |
 
 ## Building
 

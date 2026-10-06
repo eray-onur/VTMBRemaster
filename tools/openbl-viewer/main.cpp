@@ -15,6 +15,7 @@
 #include "openbl/render/asset_source.hpp"
 #include "openbl/render/material_system.hpp"
 #include "openbl/render/texture_upload.hpp"
+#include "openbl/render/prop_renderer.hpp"
 #include "openbl/render/world_renderer.hpp"
 #include "openbl/rhi/vulkan.hpp"
 #include "openbl/vfs/game_filesystem.hpp"
@@ -42,7 +43,7 @@ namespace {
 
 constexpr const char* kUsage =
     "usage: openbl-viewer [--game DIR] [--map NAME] [--pos X Y Z] [--angles PITCH YAW]\n"
-    "                     [--light-scale F] [--fullbright] [--screenshot out.png [--frames N]]\n"
+    "                     [--light-scale F] [--fullbright] [--no-props] [--screenshot out.png [--frames N]]\n"
     "                     [--validation] [--no-vsync]";
 
 struct Options {
@@ -52,6 +53,7 @@ struct Options {
     std::optional<glm::vec2> angles; // pitch, yaw
     float light_scale = 2.3f;
     bool fullbright = false;
+    bool props = true;
     std::optional<std::filesystem::path> screenshot;
     int frames = 0; // With --screenshot: frames to render before capturing.
     bool validation = false;
@@ -90,6 +92,8 @@ Options parse_args(int argc, char** argv) {
             o.light_scale = std::stof(next());
         } else if (a == "--fullbright") {
             o.fullbright = true;
+        } else if (a == "--no-props") {
+            o.props = false;
         } else if (a == "--screenshot") {
             o.screenshot = next();
         } else if (a == "--frames") {
@@ -211,12 +215,22 @@ public:
         assets_ = std::make_unique<render::AssetSource>(gfs, pak_.get());
         materials_ = std::make_unique<render::MaterialSystem>(device, *assets_);
         world_ = std::make_unique<render::WorldRenderer>(device, *materials_, bsp_);
+        if (options.props) {
+            props_ = std::make_unique<render::PropRenderer>(device, *materials_, *assets_, bsp_);
+        }
         const auto& s = world_->stats();
         std::cout << path << ": " << s.faces << " faces, " << s.triangles << " triangles, " << s.batches
                   << " batches, lightmap " << s.lightmap_width << "x" << s.lightmap_height << ", "
                   << s.missing_materials << " missing materials, " << materials_->missing_textures()
-                  << " missing textures, " << s.skipped_faces << " faces skipped; loaded in "
-                  << std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count() << " s\n";
+                  << " missing textures, " << s.skipped_faces << " faces skipped\n";
+        if (props_) {
+            const auto& p = props_->stats();
+            std::cout << "props: " << p.instances << " instances of " << p.models << " models ("
+                      << p.missing_models << " missing, " << p.triangles << " triangles), "
+                      << p.unprobed_instances << " without floor lighting\n";
+        }
+        std::cout << "loaded in " << std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count()
+                  << " s\n";
     }
 
     // Player start, or the middle of the world bounds.
@@ -241,7 +255,18 @@ public:
         }
     }
 
-    void draw(rhi::CommandList& cmd, const glm::mat4& vp) override { world_->draw(cmd, to_array(vp), settings_); }
+    void draw(rhi::CommandList& cmd, const glm::mat4& vp) override {
+        const auto m = to_array(vp);
+        const render::PropDrawSettings prop_settings{settings_.light_scale, settings_.fullbright};
+        world_->draw_opaque(cmd, m, settings_);
+        if (props_) {
+            props_->draw_opaque(cmd, m, prop_settings);
+        }
+        world_->draw_translucent(cmd, m, settings_);
+        if (props_) {
+            props_->draw_translucent(cmd, m, prop_settings);
+        }
+    }
 
 private:
     render::WorldDrawSettings settings_;
@@ -250,6 +275,7 @@ private:
     std::unique_ptr<render::AssetSource> assets_;
     std::unique_ptr<render::MaterialSystem> materials_;
     std::unique_ptr<render::WorldRenderer> world_;
+    std::unique_ptr<render::PropRenderer> props_;
 };
 
 int run(const Options& options) {
