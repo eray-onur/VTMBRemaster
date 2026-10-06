@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.25)
 project(OpenBL
     VERSION 0.0.1
     DESCRIPTION "Open-source engine reimplementation compatible with Bloodlines game data"
-    LANGUAGES CXX)
+    LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -32,6 +32,8 @@ else()
         target_compile_options(openbl_options INTERFACE -Werror)
     endif()
 endif()
+
+include(cmake/Dependencies.cmake)
 
 add_subdirectory(src)
 

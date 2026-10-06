@@ -8,7 +8,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 
 - [x] VPK archives (`packNNN.vpk`), including the directory-index variant
 - [x] Virtual filesystem with loose-file and pack override order
-- [ ] Texture formats: `.tth`/`.ttz` (Troika texture header and data), `.vtf`, `.tga`
+- [x] Textures: `.tth`/`.ttz` pairs and embedded VTF 7.1, with DXT/RGB decoding to RGBA8
+- [ ] Loose `.tga` images (UI, fonts)
 - [ ] Materials: `.vmt`
 - [ ] Models: `.mdl`, `.vtx`, `.vvd` (if present), `.phy`
 - [ ] Maps: `.bsp` (Bloodlines variant), `.ain` (AI node graphs)

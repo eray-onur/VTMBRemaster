@@ -1,25 +1,22 @@
 #include "openbl/formats/vpk.hpp"
 
+#include "binary_reader.hpp"
 #include "openbl/formats/error.hpp"
 #include "openbl/formats/path.hpp"
 
-#include <cstring>
 #include <limits>
 
 namespace openbl::formats {
 
 namespace {
 
+using detail::load_u32;
+
 // Footer: u32 entry_count, u32 directory_offset, u8 kind. Little-endian.
 constexpr std::uint64_t kFooterSize = 9;
 // Fixed part of a directory entry: u32 name_length + u32 offset + u32 size.
 constexpr std::uint64_t kEntryFixedSize = 12;
 constexpr std::uint32_t kMaxNameLength = 4096;
-
-std::uint32_t load_u32(const std::byte* p) {
-    return static_cast<std::uint32_t>(p[0]) | (static_cast<std::uint32_t>(p[1]) << 8) |
-           (static_cast<std::uint32_t>(p[2]) << 16) | (static_cast<std::uint32_t>(p[3]) << 24);
-}
 
 void store_u32(std::vector<std::byte>& out, std::uint32_t v) {
     for (int i = 0; i < 4; ++i) {

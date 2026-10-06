@@ -13,7 +13,8 @@
 ## Repository layout
 
 ```
-src/formats/   Readers and writers for game file formats (no dependencies beyond the standard library)
+cmake/         Third-party dependencies (pinned and hash-checked)
+src/formats/   Readers and writers for game file formats (no engine dependencies; zlib only)
 src/vfs/       Merged view of loose files and VPK archives
 tools/         Command-line tools (openbl-cli)
 tests/         doctest unit tests and integration tests

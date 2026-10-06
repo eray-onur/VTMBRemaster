@@ -11,8 +11,11 @@ add_executable(openbl_tests
     main.cpp
     test_path.cpp
     test_vpk.cpp
-    test_game_filesystem.cpp)
-target_link_libraries(openbl_tests PRIVATE openbl::formats openbl::vfs doctest::doctest openbl_options)
+    test_game_filesystem.cpp
+    test_image_decode.cpp
+    test_tth.cpp
+    test_vtf.cpp)
+target_link_libraries(openbl_tests PRIVATE openbl::formats openbl::vfs doctest::doctest ZLIB::ZLIB openbl_options)
 # Include real std headers instead of doctest's forward declarations, which newer MSVC rejects.
 target_compile_definitions(openbl_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
 

@@ -12,7 +12,7 @@
       "name": "windows-msvc",
       "hidden": true,
       "inherits": "base",
-      "cacheVariables": { "CMAKE_CXX_COMPILER": "cl" },
+      "cacheVariables": { "CMAKE_C_COMPILER": "cl", "CMAKE_CXX_COMPILER": "cl" },
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
     },
     {
