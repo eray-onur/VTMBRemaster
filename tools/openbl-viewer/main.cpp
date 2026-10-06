@@ -122,7 +122,8 @@ std::array<float, 16> to_array(const glm::mat4& m) {
 class Scene {
 public:
     virtual ~Scene() = default;
-    virtual void draw(rhi::CommandList& cmd, const glm::mat4& projection, const glm::mat4& view) = 0;
+    virtual void draw(rhi::CommandList& cmd, const glm::mat4& projection, const glm::mat4& view,
+                      const viewer::Camera& camera, float time) = 0;
 };
 
 // --- Test cube -------------------------------------------------------------
@@ -171,7 +172,8 @@ public:
         bind_group_ = device.create_bind_group(*pipeline_, *sampler_, textures);
     }
 
-    void draw(rhi::CommandList& cmd, const glm::mat4& projection, const glm::mat4& view) override {
+    void draw(rhi::CommandList& cmd, const glm::mat4& projection, const glm::mat4& view, const viewer::Camera&,
+              float) override {
         const glm::mat4 vp = projection * view;
         cmd.set_pipeline(*pipeline_);
         cmd.set_bind_group(*bind_group_);
@@ -264,7 +266,10 @@ public:
         }
     }
 
-    void draw(rhi::CommandList& cmd, const glm::mat4& projection, const glm::mat4& view) override {
+    void draw(rhi::CommandList& cmd, const glm::mat4& projection, const glm::mat4& view, const viewer::Camera& camera,
+              float time) override {
+        settings_.camera_position = {camera.position.x, camera.position.y, camera.position.z};
+        settings_.time = time;
         if (sky_) {
             sky_->draw(cmd, to_array(projection * glm::mat4(glm::mat3(view))));
         }
@@ -324,7 +329,8 @@ int run(const Options& options) {
             camera.yaw = options.angles->y;
         }
 
-        auto last = std::chrono::steady_clock::now();
+        const auto start_time = std::chrono::steady_clock::now();
+        auto last = start_time;
         int frame = 0;
         while (window.poll_events()) {
             const auto now = std::chrono::steady_clock::now();
@@ -344,7 +350,8 @@ int run(const Options& options) {
                 continue;
             }
             const float aspect = static_cast<float>(device->frame_width()) / static_cast<float>(device->frame_height());
-            scene->draw(*cmd, camera.projection(aspect), camera.view());
+            const float time = std::chrono::duration<float>(now - start_time).count();
+            scene->draw(*cmd, camera.projection(aspect), camera.view(), camera, time);
             device->end_frame();
 
             if (capture) {

@@ -7,8 +7,11 @@
 #include "openbl/formats/vtf.hpp"
 #include "openbl/render/texture_upload.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <sstream>
 
 namespace openbl::render {
 
@@ -40,13 +43,37 @@ std::optional<formats::Material> read_material(const AssetSource& assets, const 
 
 } // namespace
 
+std::optional<std::array<float, 3>> parse_vmt_color(std::string_view value) {
+    if (value.size() < 2) {
+        return std::nullopt;
+    }
+    const bool bytes = value.front() == '{';
+    if (!bytes && value.front() != '[') {
+        return std::nullopt;
+    }
+    std::array<float, 3> c{};
+    std::istringstream in(std::string(value.substr(1)));
+    for (float& f : c) {
+        if (!(in >> f)) {
+            return std::nullopt;
+        }
+        f = bytes ? f / 255.0f : f;
+    }
+    return c;
+}
+
 MaterialSystem::MaterialSystem(rhi::Device& device, const AssetSource& assets)
-    : device_(device), assets_(assets), checker_(create_checker_texture(device)) {}
+    : device_(device), assets_(assets), checker_(create_checker_texture(device)) {
+    const std::uint8_t flat[4] = {128, 128, 255, 255};
+    const std::span<const std::byte> mip = std::as_bytes(std::span(flat));
+    flat_normal_ = device.create_texture({1, 1, 1, rhi::Format::RGBA8_UNorm}, std::span(&mip, 1));
+}
 
 MaterialSystem::~MaterialSystem() = default;
 
-const rhi::Texture* MaterialSystem::texture(const std::string& path) {
-    auto it = textures_.find(path);
+const rhi::Texture* MaterialSystem::texture(const std::string& path, bool srgb) {
+    const std::string key = srgb ? path : path + "#linear";
+    auto it = textures_.find(key);
     if (it != textures_.end()) {
         return it->second.get();
     }
@@ -56,9 +83,9 @@ const rhi::Texture* MaterialSystem::texture(const std::string& path) {
             const auto ttz = assets_.read(path + ".ttz");
             auto assembled =
                 formats::assemble_vtf(*tth, ttz ? std::optional(std::span<const std::byte>(*ttz)) : std::nullopt);
-            tex = upload_vtf(device_, formats::VtfTexture::parse(std::move(assembled.data)));
+            tex = upload_vtf(device_, formats::VtfTexture::parse(std::move(assembled.data)), srgb);
         } else if (auto vtf = assets_.read(path + ".vtf")) {
-            tex = upload_vtf(device_, formats::VtfTexture::parse(std::move(*vtf)));
+            tex = upload_vtf(device_, formats::VtfTexture::parse(std::move(*vtf)), srgb);
         }
     } catch (const formats::FormatError& e) {
         std::fprintf(stderr, "texture %s: %s\n", path.c_str(), e.what());
@@ -66,7 +93,7 @@ const rhi::Texture* MaterialSystem::texture(const std::string& path) {
     if (!tex) {
         ++missing_textures_;
     }
-    return textures_.emplace(path, std::move(tex)).first->second.get();
+    return textures_.emplace(key, std::move(tex)).first->second.get();
 }
 
 const RenderMaterial& MaterialSystem::material(std::string_view name) {
@@ -116,7 +143,30 @@ RenderMaterial MaterialSystem::load(const std::string& name) {
     out.self_illum = flag(*mat, "$selfillum");
     out.no_cull = flag(*mat, "$nocull");
     out.unlit = out.shader.starts_with("unlitgeneric") || out.shader == "sprite";
-    out.skip = out.shader == "water" || out.shader == "waterwarp";
+    out.water = out.shader == "water" || out.shader == "waterwarp";
+    if (out.water) {
+        out.translucent = true;
+        out.no_cull = true;
+        out.normal_map = flat_normal_.get();
+        if (auto path = mat->texture_path("$normalmap")) {
+            if (const auto* t = texture(*path, false)) {
+                out.normal_map = t;
+            }
+        }
+        // Material colours are authored in gamma space; the shader works in linear.
+        auto linear = [](std::array<float, 3> c) {
+            for (float& f : c) {
+                f = std::pow(std::max(f, 0.0f), 2.2f);
+            }
+            return c;
+        };
+        if (auto c = mat->param("$fogcolor"); c && parse_vmt_color(*c)) {
+            out.fog_color = linear(*parse_vmt_color(*c));
+        }
+        if (auto c = mat->param("$reflecttint"); c && parse_vmt_color(*c)) {
+            out.reflect_tint = linear(*parse_vmt_color(*c));
+        }
+    }
     // Tool materials are compiled into the map but never drawn.
     for (const char* tool : {"%compilenodraw", "%compiletrigger", "%compileclip", "%compileplayerclip",
                              "%compilenpcclip", "%compileinvisible", "%compilehint", "%compileskip",

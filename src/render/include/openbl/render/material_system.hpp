@@ -3,7 +3,9 @@
 #include "openbl/render/asset_source.hpp"
 #include "openbl/rhi/rhi.hpp"
 
+#include <array>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -24,9 +26,18 @@ struct RenderMaterial {
     bool self_illum = false; // Base alpha masks full-bright areas.
     bool unlit = false;      // Ignores lightmaps (UnlitGeneric and friends).
     bool no_cull = false;
-    bool skip = false;       // Not drawn by this renderer yet (e.g. water).
+    bool skip = false;       // Never drawn (tool materials).
     bool missing = false;    // The .vmt could not be found or parsed.
+
+    // Water shader parameters (linear RGB).
+    bool water = false;
+    const rhi::Texture* normal_map = nullptr; // Linear; a flat normal if missing.
+    std::array<float, 3> fog_color{0.05f, 0.06f, 0.06f};
+    std::array<float, 3> reflect_tint{1.0f, 1.0f, 1.0f};
 };
+
+// Parses a Source colour parameter: "{r g b}" in 0-255 or "[r g b]" in 0-1.
+std::optional<std::array<float, 3>> parse_vmt_color(std::string_view value);
 
 class MaterialSystem {
 public:
@@ -36,7 +47,8 @@ public:
     // `name` is relative to materials/, without extension. Results are cached.
     const RenderMaterial& material(std::string_view name);
     // `path` is a texture game path without extension, e.g. materials/brick/wall. Null if missing.
-    const rhi::Texture* texture(const std::string& path);
+    // Colour textures are sRGB; data textures (normal maps) must pass srgb = false.
+    const rhi::Texture* texture(const std::string& path, bool srgb = true);
 
     std::size_t missing_textures() const { return missing_textures_; }
 
@@ -46,6 +58,7 @@ private:
     rhi::Device& device_;
     const AssetSource& assets_;
     std::unique_ptr<rhi::Texture> checker_;
+    std::unique_ptr<rhi::Texture> flat_normal_;
     std::unordered_map<std::string, std::unique_ptr<rhi::Texture>> textures_; // Null entries cache misses.
     std::unordered_map<std::string, RenderMaterial> materials_;
     std::size_t missing_textures_ = 0;

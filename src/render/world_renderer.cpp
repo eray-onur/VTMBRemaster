@@ -1,5 +1,7 @@
 #include "openbl/render/world_renderer.hpp"
 
+#include "openbl_water_ps.h"
+#include "openbl_water_vs.h"
 #include "openbl_world_ps.h"
 #include "openbl_world_vs.h"
 
@@ -33,6 +35,17 @@ struct PushConstants {
     float padding;
 };
 static_assert(sizeof(PushConstants) == 80);
+
+struct WaterPushConstants {
+    float mvp[16];
+    float camera_time[4];
+    float fog_color[4];
+    float reflect_tint[4];
+};
+static_assert(sizeof(WaterPushConstants) == 112);
+
+// Water opacity; the original refracts what is below instead.
+constexpr float kWaterOpacity = 0.85f;
 
 constexpr std::uint32_t kAlphaTest = 1;
 constexpr std::uint32_t kBlendLayers = 2;
@@ -171,9 +184,9 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
         }
         batch.index_count = static_cast<std::uint32_t>(indices.size()) - batch.first_index;
         stats_.triangles += batch.index_count / 3;
-        (mat.translucent ? translucent_ : opaque_).push_back(std::move(batch));
+        (mat.water ? water_ : mat.translucent ? translucent_ : opaque_).push_back(std::move(batch));
     }
-    stats_.batches = opaque_.size() + translucent_.size();
+    stats_.batches = opaque_.size() + translucent_.size() + water_.size();
 
     if (!vertices.empty()) {
         vertices_ = device.create_buffer({vertices.size() * sizeof(Vertex), rhi::BufferUsage::Vertex},
@@ -203,12 +216,28 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
         }
     }
 
+    rhi::PipelineDesc wd;
+    wd.vertex.spirv = openbl_water_vs;
+    wd.pixel.spirv = openbl_water_ps;
+    wd.vertex_stride = sizeof(Vertex);
+    wd.attributes = {{0, rhi::Format::RGB32_Float, 0}, {1, rhi::Format::RG32_Float, 12}};
+    wd.texture_count = 1;
+    wd.push_constant_size = sizeof(WaterPushConstants);
+    wd.cull = rhi::CullMode::None;
+    wd.blend = rhi::BlendMode::Alpha;
+    wd.depth_write = false;
+    water_pipeline_ = device.create_pipeline(wd);
+
     sampler_ = device.create_sampler({});
     for (auto* list : {&opaque_, &translucent_}) {
         for (Batch& batch : *list) {
             const rhi::Texture* textures[] = {batch.material->base, batch.material->base2, lightmap_.get()};
             batch.bind_group = device.create_bind_group(*pipelines_[0][0], *sampler_, textures);
         }
+    }
+    for (Batch& batch : water_) {
+        const rhi::Texture* textures[] = {batch.material->normal_map};
+        batch.bind_group = device.create_bind_group(*water_pipeline_, *sampler_, textures);
     }
 }
 
@@ -334,7 +363,33 @@ void WorldRenderer::draw_translucent(rhi::CommandList& cmd, const std::array<flo
     cmd.set_pipeline(*pipelines_[0][0]);
     cmd.set_vertex_buffer(*vertices_);
     cmd.set_index_buffer(*indices_);
+    draw_water(cmd, view_projection, settings);
     draw_batches(cmd, translucent_, view_projection, settings);
+}
+
+void WorldRenderer::draw_water(rhi::CommandList& cmd, const std::array<float, 16>& vp,
+                               const WorldDrawSettings& settings) {
+    if (water_.empty()) {
+        return;
+    }
+    cmd.set_pipeline(*water_pipeline_);
+    WaterPushConstants pc{};
+    std::memcpy(pc.mvp, vp.data(), sizeof(pc.mvp));
+    for (int k = 0; k < 3; ++k) {
+        pc.camera_time[k] = settings.camera_position[static_cast<std::size_t>(k)];
+    }
+    pc.camera_time[3] = settings.time;
+    for (const Batch& batch : water_) {
+        const RenderMaterial& m = *batch.material;
+        for (std::size_t k = 0; k < 3; ++k) {
+            pc.fog_color[k] = m.fog_color[k];
+            pc.reflect_tint[k] = m.reflect_tint[k];
+        }
+        pc.fog_color[3] = kWaterOpacity;
+        cmd.set_bind_group(*batch.bind_group);
+        cmd.push_constants(&pc, sizeof(pc));
+        cmd.draw_indexed(batch.index_count, batch.first_index);
+    }
 }
 
 } // namespace openbl::render

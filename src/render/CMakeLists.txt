@@ -16,3 +16,5 @@ openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/prop.hlsl vert vs_
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/prop.hlsl frag ps_main openbl_prop_ps)
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/textured.hlsl vert vs_main openbl_textured_vs)
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/textured.hlsl frag ps_main openbl_textured_ps)
+openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/water.hlsl vert vs_main openbl_water_vs)
+openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/water.hlsl frag ps_main openbl_water_ps)

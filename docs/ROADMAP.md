@@ -36,7 +36,9 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Static props and `prop_*` entities (LOD 0, default body group, skins)
 - [ ] Prop lighting from world lights and ambient cubes (currently the floor lightmap below each prop)
 - [x] 2D skybox
-- [ ] Water, light styles, translucent sorting, cubemap reflections, prop fade distances
+- [x] Water placeholder: fog colour, Fresnel blend to a dim reflection tint, animated normal-map ripples
+- [ ] Real water: reflection and refraction render targets, underwater fog, `$bottommaterial`, cheap-water distances
+- [ ] Light styles, translucent sorting, cubemap reflections, prop fade distances
 - [ ] Confirm the lightmap brightness (overbright scale 2.3) against original-game screenshots
 - [x] Static models in maps
 - [ ] Skinned and animated models

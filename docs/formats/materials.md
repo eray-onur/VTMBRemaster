@@ -40,6 +40,12 @@ The first top-level block is the material. Its key is the shader name, and its c
 
 Texture parameters are relative to `materials/`. A value may use `\` or `/`, may start with `/`, and may include an extension. `materials/` + the normalized value + `.tth` gives the texture.
 
+### Colours and water
+
+Colour parameters use two notations: `{r g b}` in 0–255 and `[r g b]` in 0–1. So `"$fogcolor" "{.4 .4 .2}"` (in `water/warrenwater`) really is almost black. OpenBL keeps this behaviour.
+
+`Water` materials have no base texture. They use `$normalmap`, `$fogcolor`, `$reflecttint`, reflection and refraction amounts, and screen render targets (`_rt_WaterReflection`, `_rt_WaterRefraction`). Water that only defines a gameplay volume, such as `water/invisible_water` on the pier, is `UnlitGeneric` with `%compilenodraw`, and is never drawn.
+
 ### Usage in the Steam release
 
 There are 11,052 materials using 52 shaders. The most common are `VertexLitGeneric` (5,250), `LightmappedGeneric` (3,468), `UnlitGeneric` (1,617), `Eyes` (391), `WorldVertexTransition` (87), `Sprite` (61), `DecalModulate` (38) and `Water` (24).

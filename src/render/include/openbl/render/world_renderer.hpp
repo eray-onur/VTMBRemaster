@@ -27,6 +27,8 @@ struct WorldStats {
 struct WorldDrawSettings {
     float light_scale = 2.3f; // Source-style lightmap overbright (2^1.2 in linear space); verify against the original.
     bool fullbright = false;
+    std::array<float, 3> camera_position{}; // For water.
+    float time = 0.0f;                      // Seconds; animates water.
 };
 
 class WorldRenderer {
@@ -65,8 +67,12 @@ private:
     std::unique_ptr<rhi::Buffer> indices_;
     // [blend: opaque, alpha, additive][cull: back, none]
     std::array<std::array<std::unique_ptr<rhi::Pipeline>, 2>, 3> pipelines_;
+    void draw_water(rhi::CommandList& cmd, const std::array<float, 16>& vp, const WorldDrawSettings& settings);
+
     std::vector<Batch> opaque_;
     std::vector<Batch> translucent_;
+    std::vector<Batch> water_;
+    std::unique_ptr<rhi::Pipeline> water_pipeline_;
     std::array<float, 2> white_luxel_{}; // Lightmap coordinates used by faces without lightmaps.
 };
 
