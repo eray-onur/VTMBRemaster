@@ -45,7 +45,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Light styles, translucent sorting, cubemap reflections, prop fade distances
 - [ ] Confirm the lightmap brightness (overbright scale 2.3) against original-game screenshots
 - [x] Static models in maps
-- [ ] Skinned and animated models
+- [x] Skinned and animated models: GPU skinning (per-draw bone data), NPCs from map entities playing their first `ACT_IDLE` sequence
+- [ ] Animation: blending between sequences, multi-blend sequences, facial flexes, eyes
 - [ ] Free-fly viewer on Windows and Linux
 
 ## Phase 2: simulation core

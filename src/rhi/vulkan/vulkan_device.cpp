@@ -48,6 +48,7 @@ VkFormat to_vk(Format f) {
     case Format::RGB32_Float: return VK_FORMAT_R32G32B32_SFLOAT;
     case Format::RGBA32_Float: return VK_FORMAT_R32G32B32A32_SFLOAT;
     case Format::RGBA16_Float: return VK_FORMAT_R16G16B16A16_SFLOAT;
+    case Format::RGBA16_UInt: return VK_FORMAT_R16G16B16A16_UINT;
     case Format::D32_Float: return VK_FORMAT_D32_SFLOAT;
     case Format::Undefined: break;
     }
@@ -119,15 +120,16 @@ private:
 class VulkanPipeline final : public Pipeline {
 public:
     VulkanPipeline(VulkanDevice& device, VkPipeline pipeline, VkPipelineLayout layout, VkDescriptorSetLayout set_layout,
-                   std::uint32_t texture_count, std::uint32_t push_size)
+                   std::uint32_t texture_count, std::uint32_t push_size, bool shader_data)
         : device_(device), pipeline_(pipeline), layout_(layout), set_layout_(set_layout), texture_count_(texture_count),
-          push_size_(push_size) {}
+          push_size_(push_size), shader_data_(shader_data) {}
     ~VulkanPipeline() override;
     VkPipeline handle() const { return pipeline_; }
     VkPipelineLayout layout() const { return layout_; }
     VkDescriptorSetLayout set_layout() const { return set_layout_; }
     std::uint32_t texture_count() const { return texture_count_; }
     std::uint32_t push_size() const { return push_size_; }
+    bool shader_data() const { return shader_data_; }
 
 private:
     VulkanDevice& device_;
@@ -136,6 +138,7 @@ private:
     VkDescriptorSetLayout set_layout_;
     std::uint32_t texture_count_;
     std::uint32_t push_size_;
+    bool shader_data_;
 };
 
 class VulkanBindGroup final : public BindGroup {
@@ -182,6 +185,30 @@ public:
     void draw_indexed(std::uint32_t index_count, std::uint32_t first_index, std::int32_t vertex_offset) override {
         vkCmdDrawIndexed(cmd, index_count, 1, first_index, vertex_offset, 0);
     }
+    void set_shader_data(const void* data, std::size_t size) override {
+        const VulkanPipeline& p = require_pipeline();
+        if (!p.shader_data()) {
+            throw std::runtime_error("bound pipeline does not use shader data");
+        }
+        if (size == 0 || size > kMaxShaderDataSize) {
+            throw std::invalid_argument("bad shader data size");
+        }
+        const VkDeviceSize offset = (data_cursor + data_alignment - 1) / data_alignment * data_alignment;
+        if (offset + kMaxShaderDataSize > data_capacity) {
+            throw std::runtime_error("per-frame shader data exhausted");
+        }
+        std::memcpy(data_base + offset, data, size);
+        data_cursor = offset + size;
+        const auto dynamic_offset = static_cast<std::uint32_t>(offset);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p.layout(), 1, 1, &data_set, 1, &dynamic_offset);
+    }
+
+    // Per-frame shader data ring, set up by begin_frame().
+    std::byte* data_base = nullptr;
+    VkDeviceSize data_capacity = 0;
+    VkDeviceSize data_cursor = 0;
+    VkDeviceSize data_alignment = 256;
+    VkDescriptorSet data_set = VK_NULL_HANDLE;
 
 private:
     const VulkanPipeline& require_pipeline() const {
@@ -214,11 +241,14 @@ public:
             }
             destroy_swapchain();
             for (auto& f : frames_) {
+                vmaDestroyBuffer(allocator_, f.data_buffer, f.data_allocation);
                 vkDestroyFence(device_, f.fence, nullptr);
                 vkDestroySemaphore(device_, f.image_available, nullptr);
                 vkDestroyCommandPool(device_, f.pool, nullptr);
             }
             vkDestroyCommandPool(device_, upload_pool_, nullptr);
+            vkDestroyDescriptorPool(device_, shader_data_pool_, nullptr);
+            vkDestroyDescriptorSetLayout(device_, shader_data_layout_, nullptr);
             vkDestroyFence(device_, upload_fence_, nullptr);
             for (VkDescriptorPool pool : descriptor_pools_) {
                 vkDestroyDescriptorPool(device_, pool, nullptr);
@@ -377,9 +407,10 @@ public:
 
         const VkPushConstantRange push{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                        desc.push_constant_size};
+        const VkDescriptorSetLayout set_layouts[] = {set_layout, shader_data_layout_};
         VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-        layout_info.setLayoutCount = 1;
-        layout_info.pSetLayouts = &set_layout;
+        layout_info.setLayoutCount = desc.shader_data ? 2 : 1;
+        layout_info.pSetLayouts = set_layouts;
         layout_info.pushConstantRangeCount = desc.push_constant_size ? 1 : 0;
         layout_info.pPushConstantRanges = &push;
         VkPipelineLayout layout = VK_NULL_HANDLE;
@@ -469,7 +500,7 @@ public:
         vkDestroyShaderModule(device_, ps, nullptr);
         check(result, "vkCreateGraphicsPipelines");
         return std::make_unique<VulkanPipeline>(*this, pipeline, layout, set_layout, desc.texture_count,
-                                                desc.push_constant_size);
+                                                desc.push_constant_size, desc.shader_data);
     }
 
     std::unique_ptr<BindGroup> create_bind_group(const Pipeline& pipeline, const Sampler& sampler,
@@ -575,6 +606,11 @@ public:
 
         command_list_.cmd = frame.cmd;
         command_list_.pipeline = nullptr;
+        command_list_.data_base = frame.data_mapped;
+        command_list_.data_capacity = kShaderDataPerFrame;
+        command_list_.data_cursor = 0;
+        command_list_.data_alignment = storage_alignment_;
+        command_list_.data_set = frame.data_set;
         in_frame_ = true;
         return &command_list_;
     }
@@ -595,6 +631,9 @@ public:
                           VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_NONE, 0);
         }
         check(vkEndCommandBuffer(frame.cmd), "vkEndCommandBuffer");
+        if (command_list_.data_cursor > 0) {
+            check(vmaFlushAllocation(allocator_, frame.data_allocation, 0, command_list_.data_cursor), "flush shader data");
+        }
 
         VkSemaphoreSubmitInfo wait{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
         wait.semaphore = frame.image_available;
@@ -687,7 +726,13 @@ private:
         VkCommandBuffer cmd = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
         VkSemaphore image_available = VK_NULL_HANDLE;
+        // Per-draw shader data written by the CPU during the frame.
+        VkBuffer data_buffer = VK_NULL_HANDLE;
+        VmaAllocation data_allocation = nullptr;
+        std::byte* data_mapped = nullptr;
+        VkDescriptorSet data_set = VK_NULL_HANDLE;
     };
+    static constexpr VkDeviceSize kShaderDataPerFrame = 8 * 1024 * 1024;
 
     struct Staging {
         VkBuffer buffer = VK_NULL_HANDLE;
@@ -800,6 +845,7 @@ private:
                     queue_family_ = q;
                     adapter_name_ = props.deviceName;
                     max_anisotropy_ = f2.features.samplerAnisotropy ? props.limits.maxSamplerAnisotropy : 1.0f;
+                    storage_alignment_ = std::max<VkDeviceSize>(props.limits.minStorageBufferOffsetAlignment, 16);
                     anisotropy_supported_ = f2.features.samplerAnisotropy;
                 }
                 break;
@@ -867,8 +913,51 @@ private:
         }
         pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
         check(vkCreateCommandPool(device_, &pool_info, nullptr, &upload_pool_), "vkCreateCommandPool");
+        create_shader_data_resources();
         fence_info.flags = 0;
         check(vkCreateFence(device_, &fence_info, nullptr, &upload_fence_), "vkCreateFence");
+    }
+
+    void create_shader_data_resources() {
+        const VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1,
+                                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+        VkDescriptorSetLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        layout_info.bindingCount = 1;
+        layout_info.pBindings = &binding;
+        check(vkCreateDescriptorSetLayout(device_, &layout_info, nullptr, &shader_data_layout_), "shader data layout");
+
+        const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, kFramesInFlight};
+        VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pool_info.maxSets = kFramesInFlight;
+        pool_info.poolSizeCount = 1;
+        pool_info.pPoolSizes = &size;
+        check(vkCreateDescriptorPool(device_, &pool_info, nullptr, &shader_data_pool_), "shader data pool");
+
+        for (Frame& f : frames_) {
+            VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+            info.size = kShaderDataPerFrame;
+            info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+            VmaAllocationCreateInfo alloc{};
+            alloc.usage = VMA_MEMORY_USAGE_AUTO;
+            alloc.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+            VmaAllocationInfo out{};
+            check(vmaCreateBuffer(allocator_, &info, &alloc, &f.data_buffer, &f.data_allocation, &out),
+                  "shader data buffer");
+            f.data_mapped = static_cast<std::byte*>(out.pMappedData);
+
+            VkDescriptorSetAllocateInfo set_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            set_info.descriptorPool = shader_data_pool_;
+            set_info.descriptorSetCount = 1;
+            set_info.pSetLayouts = &shader_data_layout_;
+            check(vkAllocateDescriptorSets(device_, &set_info, &f.data_set), "shader data set");
+            const VkDescriptorBufferInfo buffer_info{f.data_buffer, 0, kMaxShaderDataSize};
+            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            write.dstSet = f.data_set;
+            write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
+            write.pBufferInfo = &buffer_info;
+            vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        }
     }
 
     void create_swapchain() {
@@ -1142,6 +1231,9 @@ private:
     VkFormat capture_format_ = VK_FORMAT_UNDEFINED;
 
     VkCommandPool upload_pool_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout shader_data_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool shader_data_pool_ = VK_NULL_HANDLE;
+    VkDeviceSize storage_alignment_ = 256;
     VkFence upload_fence_ = VK_NULL_HANDLE;
     std::vector<VkDescriptorPool> descriptor_pools_;
     std::vector<std::pair<std::uint64_t, std::function<void()>>> deletions_;

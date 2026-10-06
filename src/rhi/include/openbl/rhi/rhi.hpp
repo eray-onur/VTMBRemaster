@@ -32,6 +32,7 @@ enum class Format : std::uint8_t {
     RGB32_Float,
     RGBA32_Float,
     RGBA16_Float,
+    RGBA16_UInt, // Vertex attribute only (e.g. bone indices).
     D32_Float,
 };
 
@@ -95,7 +96,12 @@ enum class BlendMode : std::uint8_t { Opaque, Alpha, Additive };
 
 // Resource layout shared by all pipelines: set/table 0 holds one sampler at
 // binding 0 and `texture_count` sampled 2D textures at bindings 1..N, visible
-// to the pixel shader. Push constants are visible to all stages.
+// to the pixel shader. Push constants are visible to all stages. Pipelines
+// with `shader_data` also read per-draw data (CommandList::set_shader_data)
+// as a read-only structured buffer at set/space 1, binding 0, in all stages.
+
+// Largest block accepted by CommandList::set_shader_data.
+constexpr std::size_t kMaxShaderDataSize = 64 * 1024;
 struct PipelineDesc {
     ShaderCode vertex;
     ShaderCode pixel;
@@ -105,6 +111,7 @@ struct PipelineDesc {
     std::vector<VertexAttribute> attributes;
     std::uint32_t texture_count = 1;
     std::uint32_t push_constant_size = 64;
+    bool shader_data = false;
     CullMode cull = CullMode::Back;
     bool front_counter_clockwise = false;
     bool depth_test = true;
@@ -131,6 +138,9 @@ public:
     virtual void set_vertex_buffer(const Buffer& buffer, std::size_t offset = 0) = 0;
     virtual void set_index_buffer(const Buffer& buffer, std::size_t offset = 0) = 0; // 32-bit indices
     virtual void push_constants(const void* data, std::uint32_t size) = 0;
+    // Copies `size` bytes (at most kMaxShaderDataSize) into per-frame memory and
+    // binds them for the following draws. The bound pipeline must use shader_data.
+    virtual void set_shader_data(const void* data, std::size_t size) = 0;
     virtual void draw_indexed(std::uint32_t index_count, std::uint32_t first_index = 0, std::int32_t vertex_offset = 0) = 0;
 };
 

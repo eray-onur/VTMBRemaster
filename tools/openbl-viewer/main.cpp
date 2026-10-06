@@ -13,6 +13,7 @@
 #include "openbl/formats/zip.hpp"
 #include "openbl/platform/window.hpp"
 #include "openbl/render/asset_source.hpp"
+#include "openbl/render/character_renderer.hpp"
 #include "openbl/render/material_system.hpp"
 #include "openbl/render/texture_upload.hpp"
 #include "openbl/render/prop_renderer.hpp"
@@ -44,7 +45,7 @@ namespace {
 
 constexpr const char* kUsage =
     "usage: openbl-viewer [--game DIR] [--map NAME] [--pos X Y Z] [--angles PITCH YAW]\n"
-    "                     [--light-scale F] [--fullbright] [--no-props] [--screenshot out.png [--frames N]]\n"
+    "                     [--light-scale F] [--fullbright] [--no-props] [--no-characters] [--screenshot out.png [--frames N]]\n"
     "                     [--validation] [--no-vsync]";
 
 struct Options {
@@ -55,6 +56,7 @@ struct Options {
     float light_scale = 2.3f;
     bool fullbright = false;
     bool props = true;
+    bool characters = true;
     std::optional<std::filesystem::path> screenshot;
     int frames = 0; // With --screenshot: frames to render before capturing.
     bool validation = false;
@@ -95,6 +97,8 @@ Options parse_args(int argc, char** argv) {
             o.fullbright = true;
         } else if (a == "--no-props") {
             o.props = false;
+        } else if (a == "--no-characters") {
+            o.characters = false;
         } else if (a == "--screenshot") {
             o.screenshot = next();
         } else if (a == "--frames") {
@@ -222,6 +226,12 @@ public:
         if (options.props) {
             props_ = std::make_unique<render::PropRenderer>(device, *materials_, *assets_, bsp_);
         }
+        if (options.characters) {
+            characters_ = std::make_unique<render::CharacterRenderer>(device, *materials_, *assets_, bsp_);
+            const auto& c = characters_->stats();
+            std::cout << "characters: " << c.instances << " instances of " << c.models << " models ("
+                      << c.missing_models << " missing), " << c.without_sequence << " without an idle sequence\n";
+        }
         if (auto sky = bsp_.entities.at(0).find("skyname"); sky != bsp_.entities.at(0).end()) {
             try {
                 sky_ = std::make_unique<render::SkyRenderer>(device, *materials_, sky->second);
@@ -276,13 +286,23 @@ public:
         }
         const auto m = to_array(projection * view);
         const render::PropDrawSettings prop_settings{settings_.light_scale, settings_.fullbright};
+        const render::CharacterDrawSettings character_settings{settings_.light_scale, settings_.fullbright};
+        if (characters_) {
+            characters_->update(time);
+        }
         world_->draw_opaque(cmd, m, settings_);
         if (props_) {
             props_->draw_opaque(cmd, m, prop_settings);
         }
+        if (characters_) {
+            characters_->draw_opaque(cmd, m, character_settings);
+        }
         world_->draw_translucent(cmd, m, settings_);
         if (props_) {
             props_->draw_translucent(cmd, m, prop_settings);
+        }
+        if (characters_) {
+            characters_->draw_translucent(cmd, m, character_settings);
         }
     }
 
@@ -295,6 +315,7 @@ private:
     std::unique_ptr<render::WorldRenderer> world_;
     std::unique_ptr<render::PropRenderer> props_;
     std::unique_ptr<render::SkyRenderer> sky_;
+    std::unique_ptr<render::CharacterRenderer> characters_;
 };
 
 int run(const Options& options) {

@@ -7,6 +7,8 @@
 #include "openbl/render/prop_lighting.hpp"
 
 #include "half.hpp"
+#include "mesh_util.hpp"
+#include "model_materials.hpp"
 
 #include "openbl_prop_ps.h"
 #include "openbl_prop_vs.h"
@@ -47,27 +49,6 @@ constexpr std::uint32_t kUnlit = 4;
 constexpr std::uint32_t kSelfIllum = 8;
 constexpr std::uint32_t kTranslucent = 16;
 
-// Area-weighted smooth normals, for vertex formats that do not store usable normals.
-void generate_normals(std::vector<Vertex>& vertices, const std::vector<std::uint32_t>& indices) {
-    std::vector<glm::vec3> acc(vertices.size(), glm::vec3(0.0f));
-    for (std::size_t t = 0; t + 2 < indices.size(); t += 3) {
-        const glm::vec3 a = glm::make_vec3(vertices[indices[t]].position);
-        const glm::vec3 b = glm::make_vec3(vertices[indices[t + 1]].position);
-        const glm::vec3 c = glm::make_vec3(vertices[indices[t + 2]].position);
-        const glm::vec3 n = glm::cross(b - a, c - a);
-        for (std::size_t k = 0; k < 3; ++k) {
-            acc[indices[t + k]] += n;
-        }
-    }
-    for (std::size_t v = 0; v < vertices.size(); ++v) {
-        const float len = glm::length(acc[v]);
-        const glm::vec3 n = len > 0 ? acc[v] / len : glm::vec3(0, 0, 1);
-        vertices[v].normal[0] = n.x;
-        vertices[v].normal[1] = n.y;
-        vertices[v].normal[2] = n.z;
-    }
-}
-
 // Source angles: pitch (down positive) about Y, yaw about Z, roll about X;
 // applied roll, then pitch, then yaw.
 glm::mat4 prop_transform(const formats::Vec3& origin, const formats::Vec3& angles) {
@@ -84,24 +65,6 @@ formats::Vec3 parse_vec3(const formats::BspEntity& e, const char* key) {
         std::istringstream(it->second) >> v[0] >> v[1] >> v[2];
     }
     return v;
-}
-
-std::string material_name(const AssetSource& assets, const formats::MdlFile& mdl, std::int32_t texture) {
-    if (texture < 0) {
-        return {};
-    }
-    const std::string& tex = mdl.textures[static_cast<std::size_t>(texture)];
-    std::string first;
-    for (const std::string& dir : mdl.texture_dirs) {
-        const std::string name = formats::normalize_game_path(dir + "/" + tex);
-        if (first.empty()) {
-            first = name;
-        }
-        if (assets.exists("materials/" + name + ".vmt")) {
-            return name;
-        }
-    }
-    return first.empty() ? formats::normalize_game_path(tex) : first;
 }
 
 } // namespace
@@ -235,7 +198,17 @@ const PropRenderer::Model* PropRenderer::load_model(const std::string& path) {
             }
             if (!indices.empty()) {
                 if (needs_normals) {
-                    generate_normals(vertices, indices);
+                    std::vector<std::array<float, 3>> positions;
+                    positions.reserve(vertices.size());
+                    for (const Vertex& v : vertices) {
+                        positions.push_back({v.position[0], v.position[1], v.position[2]});
+                    }
+                    const auto normals = detail::smooth_normals(positions, indices);
+                    for (std::size_t v = 0; v < vertices.size(); ++v) {
+                        vertices[v].normal[0] = normals[v][0];
+                        vertices[v].normal[1] = normals[v][1];
+                        vertices[v].normal[2] = normals[v][2];
+                    }
                     ++stats_.generated_normals;
                 }
                 model = std::make_unique<Model>();
@@ -257,7 +230,7 @@ const PropRenderer::Model* PropRenderer::load_model(const std::string& path) {
                         Mesh mesh;
                         mesh.first_index = r.first;
                         mesh.index_count = r.count;
-                        mesh.material = &materials_.material(material_name(assets_, mdl, mdl.texture_for(r.material, f)));
+                        mesh.material = &materials_.material(detail::model_material_name(assets_, mdl, mdl.texture_for(r.material, f)));
                         if (mesh.material->skip) {
                             continue;
                         }

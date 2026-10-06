@@ -1,4 +1,5 @@
 add_library(openbl_render
+    character_renderer.cpp
     light_probe.cpp
     material_system.cpp
     prop_lighting.cpp
@@ -19,3 +20,5 @@ openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/textured.hlsl vert
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/textured.hlsl frag ps_main openbl_textured_ps)
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/water.hlsl vert vs_main openbl_water_vs)
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/water.hlsl frag ps_main openbl_water_ps)
+openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/skinned.hlsl vert vs_main openbl_skinned_vs)
+openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/skinned.hlsl frag ps_main openbl_skinned_ps)
