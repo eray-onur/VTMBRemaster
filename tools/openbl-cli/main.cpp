@@ -9,12 +9,18 @@
 #include "openbl/formats/mdl.hpp"
 #include "openbl/formats/vtx.hpp"
 #include "openbl/formats/path.hpp"
+#include "openbl/formats/text_encoding.hpp"
 #include "openbl/formats/tth.hpp"
 #include "openbl/formats/vmt.hpp"
 #include "openbl/formats/vpk.hpp"
 #include "openbl/formats/vtf.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <charconv>
+#include <optional>
+#include <span>
+#include <unordered_map>
 #include "openbl/vfs/game_filesystem.hpp"
 
 #include <cmath>
@@ -43,12 +49,13 @@ void usage() {
                  "  openbl-cli fs stat [game-dir]\n"
                  "  openbl-cli fs list [game-dir] [path-prefix]\n"
                  "  openbl-cli fs coverage [game-dir]\n"
-                 "  openbl-cli fs extract <out-dir> [path-prefix [game-dir]]\n"
+                 "  openbl-cli fs extract <out-dir> [prefix[*suffix] [game-dir]]\n"
                  "  openbl-cli fs which <path> [game-dir]\n"
                  "  openbl-cli fs cat <path> [game-dir]\n"
                  "  openbl-cli tex info <texture> [game-dir]\n"
                  "  openbl-cli tex export <texture> <out.tga> [game-dir]\n"
                  "  openbl-cli mat info <material> [game-dir]\n"
+                 "  openbl-cli mat catalogue [out.md|-] [game-dir]\n"
                  "  openbl-cli mdl info <model> [game-dir]\n"
                  "  openbl-cli mdl export <model> <out.obj> [game-dir]\n"
                  "  openbl-cli mdl sequences <model> [game-dir]\n"
@@ -185,7 +192,267 @@ void print_kv(const formats::KvNode& node, int indent) {
     }
 }
 
+// Classifies a material parameter value for the shader catalogue.
+std::string_view value_kind(const vfs::GameFileSystem& gfs, std::string_view value,
+                            std::unordered_map<std::string, bool>& texture_cache) {
+    auto is_number = [](std::string_view s, bool integer) {
+        if (s.empty()) {
+            return false;
+        }
+        double d = 0;
+        long long i = 0;
+        const char* end = s.data() + s.size();
+        return integer ? std::from_chars(s.data(), end, i).ptr == end : std::from_chars(s.data(), end, d).ptr == end;
+    };
+    const std::string_view v = value;
+    if (v.empty()) {
+        return "empty";
+    }
+    if (is_number(v, true)) {
+        return "int";
+    }
+    if (is_number(v, false) || (v.front() == '.' && is_number(std::string("0") + std::string(v), false))) {
+        return "float";
+    }
+    if (v.front() == '[' || v.front() == '{') {
+        return "vector";
+    }
+    if (v.starts_with("center") || v.starts_with("scale") || v.starts_with("rotate") || v.starts_with("translate")) {
+        return "transform";
+    }
+    const std::string tex = formats::material_texture_path(v);
+    auto [it, inserted] = texture_cache.try_emplace(tex, false);
+    if (inserted) {
+        it->second = gfs.exists(tex + ".tth") || gfs.exists(tex + ".vtf");
+    }
+    if (it->second) {
+        return "texture";
+    }
+    if (gfs.exists(tex + ".vmt")) {
+        return "material";
+    }
+    return "string";
+}
+
+// Material parameters the renderer reads (src/render/material_system.cpp);
+// keep in sync so the catalogue shows what is still unsupported.
+constexpr std::string_view kRendererParams[] = {
+    "$basetexture", "$basetexture2", "$alphatest", "$alphatestreference", "$additive", "$translucent",
+    "$selfillum", "$nocull", "$normalmap", "$fogcolor", "$reflecttint", "%compilenodraw", "%compiletrigger",
+    "%compileclip", "%compileplayerclip", "%compilenpcclip", "%compileinvisible", "%compilehint", "%compileskip",
+    "%compileareaportal", "%compileorigin", "%compilefog",
+};
+
+// Writes a Markdown catalogue of every shader, parameter and proxy used by
+// the game's materials, including those packed into maps.
+int cmd_mat_catalogue(const vfs::GameFileSystem& gfs, std::ostream& out) {
+    struct Param {
+        std::size_t uses = 0;
+        std::map<std::string, std::size_t> kinds;
+        std::string example;
+    };
+    struct Shader {
+        std::size_t materials = 0, from_maps = 0;
+        std::map<std::string, Param> params;
+        std::map<std::string, std::size_t> fallbacks;
+        std::size_t junk_keys = 0;
+    };
+    struct Proxy {
+        std::size_t uses = 0;
+        std::map<std::string, std::size_t> keys;
+        std::map<std::string, std::size_t> shaders;
+    };
+    std::map<std::string, Shader> shaders;
+    std::map<std::string, Proxy> proxies;
+    std::map<std::string, std::size_t> junk; // Keys that are not parameters, across all shaders.
+    std::unordered_map<std::string, bool> texture_cache;
+    std::size_t failed = 0;
+    auto lower = [](std::string s) {
+        for (char& c : s) {
+            c = (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+        }
+        return s;
+    };
+
+    auto add = [&](const formats::Material& mat, bool from_map) {
+        Shader& s = shaders[mat.shader];
+        ++s.materials;
+        s.from_maps += from_map;
+        for (const auto& [key, value] : mat.params) {
+            // Real parameters start with '$' or '%'. Anything else is a key/value
+            // pair knocked out of step by a typo (see docs/formats/materials.md).
+            if (key.empty() || (key[0] != '$' && key[0] != '%')) {
+                ++s.junk_keys;
+                std::string shown = formats::cp1252_to_utf8(key);
+                for (char& c : shown) {
+                    c = (c == '\n' || c == '\r' || c == '\t') ? ' ' : c;
+                }
+                ++junk[shown];
+                continue;
+            }
+            Param& p = s.params[key];
+            ++p.uses;
+            ++p.kinds[std::string(value_kind(gfs, value, texture_cache))];
+            if (p.example.empty() && !value.empty()) {
+                p.example = formats::cp1252_to_utf8(value.size() > 40 ? value.substr(0, 37) + "..." : value);
+            }
+        }
+        for (const auto& block : mat.sub_blocks) {
+            ++s.fallbacks[lower(block.key)];
+        }
+        for (const auto& proxy : mat.proxies) {
+            Proxy& p = proxies[lower(proxy.key)];
+            ++p.uses;
+            ++p.shaders[mat.shader];
+            for (const auto& child : proxy.children) {
+                ++p.keys[formats::cp1252_to_utf8(lower(child.key))];
+            }
+        }
+    };
+    auto parse = [&](std::span<const std::byte> data) {
+        return formats::parse_vmt({reinterpret_cast<const char*>(data.data()), data.size()});
+    };
+
+    for (const auto& path : gfs.list_files()) {
+        if (path.ends_with(".vmt")) {
+            try {
+                add(parse(*gfs.read(path)), false);
+            } catch (const formats::FormatError&) {
+                ++failed;
+            }
+        } else if (path.starts_with("maps/") && path.ends_with(".bsp")) {
+            const auto bsp = formats::parse_bsp(*gfs.read(path));
+            const formats::ZipArchive pak(bsp.pakfile);
+            for (const auto& entry : pak.entries()) {
+                if (!entry.path.ends_with(".vmt")) {
+                    continue;
+                }
+                try {
+                    auto mat = parse(pak.read(entry));
+                    if (formats::is_vmt_patch(mat)) {
+                        const std::string base_path = formats::vmt_patch_include(mat);
+                        const auto* in_pak = pak.find(base_path);
+                        const auto base_data = in_pak ? std::optional(pak.read(*in_pak)) : gfs.read(base_path);
+                        if (!base_data) {
+                            ++failed;
+                            continue;
+                        }
+                        mat = formats::apply_vmt_patch(parse(*base_data), mat);
+                    }
+                    add(mat, true);
+                } catch (const formats::FormatError&) {
+                    ++failed;
+                }
+            }
+        }
+    }
+
+    std::size_t total = 0;
+    for (const auto& [name, s] : shaders) {
+        total += s.materials;
+    }
+    std::vector<std::pair<std::size_t, std::string>> order;
+    for (const auto& [name, s] : shaders) {
+        order.emplace_back(s.materials, name);
+    }
+    std::sort(order.rbegin(), order.rend());
+
+    out << "# Shader catalogue\n\n"
+        << "Generated by `openbl-cli mat catalogue` from the Steam release: " << total << " materials (loose, in archives,"
+        << " and in map pakfiles with patches applied), " << shaders.size() << " shaders, " << proxies.size()
+        << " proxy types. " << failed << " materials could not be read.\n\n"
+        << "Value kinds: `texture` (resolves to a texture), `material` (resolves to another material), `int`, `float`,"
+        << " `vector` (`[x y z]` or `{r g b}`), `transform` (`center … scale … rotate … translate …`), `string`,"
+        << " `empty`. The OpenBL column marks parameters the renderer reads today.\n\n"
+        << "## Shaders\n\n| Shader | Materials | From maps | Parameters |\n|---|---|---|---|\n";
+    for (const auto& [n, name] : order) {
+        const auto& s = shaders[name];
+        out << "| [" << name << "](#" << name << ") | " << s.materials << " | " << s.from_maps << " | "
+            << s.params.size() << " |\n";
+    }
+    for (const auto& [n, name] : order) {
+        const auto& s = shaders[name];
+        out << "\n### " << name << "\n\n" << s.materials << " materials.";
+        if (!s.fallbacks.empty()) {
+            out << " Fallback blocks:";
+            for (const auto& [f, c] : s.fallbacks) {
+                out << " `" << f << "` (" << c << ")";
+            }
+            out << ".";
+        }
+        if (s.junk_keys) {
+            out << " " << s.junk_keys << " keys that are not parameters (typos; see below).";
+        }
+        out << "\n\n| Parameter | Uses | Kinds | Example | OpenBL |\n|---|---|---|---|---|\n";
+        std::vector<std::pair<std::size_t, std::string>> params;
+        for (const auto& [key, p] : s.params) {
+            params.emplace_back(p.uses, key);
+        }
+        std::sort(params.begin(), params.end(), [](const auto& a, const auto& b) {
+            return a.first != b.first ? a.first > b.first : a.second < b.second;
+        });
+        for (const auto& [uses, key] : params) {
+            const auto& p = s.params.at(key);
+            out << "| `" << key << "` | " << uses << " | ";
+            bool first = true;
+            for (const auto& [kind, c] : p.kinds) {
+                out << (first ? "" : ", ") << kind << (p.kinds.size() > 1 ? " " + std::to_string(c) : "");
+                first = false;
+            }
+            std::string example = p.example;
+            std::replace(example.begin(), example.end(), '|', '/');
+            const bool supported = std::find(std::begin(kRendererParams), std::end(kRendererParams), key) !=
+                                   std::end(kRendererParams);
+            out << " | `" << example << "` | " << (supported ? "yes" : "") << " |\n";
+        }
+    }
+    std::size_t junk_total = 0;
+    std::vector<std::pair<std::size_t, std::string>> junk_order;
+    for (const auto& [key, n] : junk) {
+        junk_total += n;
+        junk_order.emplace_back(n, key);
+    }
+    std::sort(junk_order.rbegin(), junk_order.rend());
+    out << "\n## Keys that are not parameters\n\n" << junk_total
+        << " keys across all materials do not start with `$` or `%`. They come from typos that knock keys and"
+        << " values out of step, mostly `\\\\` used as if it were a comment. The most common:\n\n";
+    for (std::size_t i = 0; i < junk_order.size() && i < 15; ++i) {
+        out << "- `" << junk_order[i].second << "` (" << junk_order[i].first << ")\n";
+    }
+    out << "\n## Proxies\n\n| Proxy | Uses | Keys | Shaders |\n|---|---|---|---|\n";
+    std::vector<std::pair<std::size_t, std::string>> porder;
+    for (const auto& [name, p] : proxies) {
+        porder.emplace_back(p.uses, name);
+    }
+    std::sort(porder.rbegin(), porder.rend());
+    for (const auto& [n, name] : porder) {
+        const auto& p = proxies[name];
+        out << "| `" << name << "` | " << p.uses << " | ";
+        bool first = true;
+        for (const auto& [key, c] : p.keys) {
+            out << (first ? "" : ", ") << "`" << key << "`" << (c != p.uses ? " (" + std::to_string(c) + ")" : "");
+            first = false;
+        }
+        out << " | ";
+        first = true;
+        for (const auto& [shader, c] : p.shaders) {
+            out << (first ? "" : ", ") << shader;
+            first = false;
+        }
+        out << " |\n";
+    }
+    return 0;
+}
+
 int cmd_mat(const std::vector<std::string_view>& args) {
+    if (args.size() >= 2 && args[1] == "catalogue") {
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 3));
+        if (args.size() >= 3 && args[2] != "-") {
+            std::ofstream out{fs::path(args[2])};
+            return cmd_mat_catalogue(gfs, out);
+        }
+        return cmd_mat_catalogue(gfs, std::cout);
+    }
     if (args.size() < 3 || args[1] != "info") {
         usage();
         return 2;
@@ -773,10 +1040,17 @@ int cmd_fs(const std::vector<std::string_view>& args) {
     if (sub == "extract" && args.size() >= 3) {
         const vfs::GameFileSystem gfs(game_dir_arg(args, 4));
         const fs::path out_dir(args[2]);
-        const std::string prefix = args.size() >= 4 ? formats::normalize_game_path(args[3]) : std::string();
+        // "materials/*.vmt": a prefix and an optional suffix around one '*'.
+        std::string prefix = args.size() >= 4 ? std::string(args[3]) : std::string();
+        std::string suffix;
+        if (const auto star = prefix.find('*'); star != std::string::npos) {
+            suffix = formats::normalize_game_path(prefix.substr(star + 1));
+            prefix.resize(star);
+        }
+        prefix = formats::normalize_game_path(prefix);
         std::size_t count = 0;
         for (const auto& path : gfs.list_files()) {
-            if (!path.starts_with(prefix)) {
+            if (!path.starts_with(prefix) || !path.ends_with(suffix)) {
                 continue;
             }
             const auto data = gfs.read(path);
