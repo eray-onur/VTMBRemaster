@@ -2,6 +2,8 @@
 
 #include "openbl/formats/error.hpp"
 #include "openbl/formats/image_decode.hpp"
+#include "openbl/formats/mdl.hpp"
+#include "openbl/formats/vtx.hpp"
 #include "openbl/formats/path.hpp"
 #include "openbl/formats/tth.hpp"
 #include "openbl/formats/vmt.hpp"
@@ -38,6 +40,8 @@ void usage() {
                  "  openbl-cli tex info <texture> [game-dir]\n"
                  "  openbl-cli tex export <texture> <out.tga> [game-dir]\n"
                  "  openbl-cli mat info <material> [game-dir]\n"
+                 "  openbl-cli mdl info <model> [game-dir]\n"
+                 "  openbl-cli mdl export <model> <out.obj> [game-dir]\n"
                  "\n"
                  "<texture> and <material> are game paths with or without extension, e.g.\n"
                  "materials/brick/bradwllb; the materials/ prefix is optional for <material>.\n"
@@ -214,6 +218,129 @@ int cmd_mat(const std::vector<std::string_view>& args) {
     return 0;
 }
 
+struct LoadedModel {
+    formats::MdlFile mdl;
+    formats::VtxFile vtx;
+};
+
+LoadedModel load_model(const vfs::GameFileSystem& gfs, std::string_view path) {
+    std::string base = formats::normalize_game_path(path);
+    if (base.ends_with(".mdl")) {
+        base.erase(base.size() - 4);
+    }
+    if (!base.starts_with("models/")) {
+        base.insert(0, "models/");
+    }
+    auto mdl_data = gfs.read(base + ".mdl");
+    auto vtx_data = gfs.read(base + ".dx80.vtx");
+    if (!mdl_data || !vtx_data) {
+        throw std::runtime_error("model not found (needs .mdl and .dx80.vtx): " + base);
+    }
+    LoadedModel out{formats::parse_mdl(*mdl_data), formats::parse_vtx(*vtx_data)};
+    if (out.mdl.checksum != out.vtx.checksum) {
+        throw std::runtime_error("checksum mismatch between .mdl and .vtx");
+    }
+    return out;
+}
+
+// Game path of the material a texture name resolves to, or empty.
+std::string find_model_material(const vfs::GameFileSystem& gfs, const formats::MdlFile& mdl, std::int32_t texture) {
+    if (texture < 0) {
+        return {};
+    }
+    for (const auto& dir : mdl.texture_dirs) {
+        const std::string path = formats::normalize_game_path("materials/" + dir + "/" +
+                                                              mdl.textures[static_cast<std::size_t>(texture)]) +
+                                 ".vmt";
+        if (gfs.exists(path)) {
+            return path;
+        }
+    }
+    return {};
+}
+
+const char* vertex_format_name(formats::MdlVertexFormat f) {
+    switch (f) {
+    case formats::MdlVertexFormat::Float:
+        return "float";
+    case formats::MdlVertexFormat::Quantized16:
+        return "quantized16";
+    default:
+        return "quantized8";
+    }
+}
+
+int cmd_mdl(const std::vector<std::string_view>& args) {
+    if (args.size() >= 3 && args[1] == "info") {
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 3));
+        const auto model = load_model(gfs, args[2]);
+        const auto& mdl = model.mdl;
+        std::cout << "name:      " << mdl.name << "\n"
+                  << "bones:     " << mdl.bones.size() << "\n"
+                  << "skins:     " << mdl.skin_families.size() << "\n"
+                  << "lods:      " << model.vtx.lod_count << "\n"
+                  << "textures:\n";
+        for (std::size_t t = 0; t < mdl.textures.size(); ++t) {
+            const std::string mat = find_model_material(gfs, mdl, static_cast<std::int32_t>(t));
+            std::cout << "  " << mdl.textures[t] << "  ->  " << (mat.empty() ? "(not found)" : mat) << "\n";
+        }
+        for (std::size_t b = 0; b < mdl.body_parts.size(); ++b) {
+            const auto& part = mdl.body_parts[b];
+            std::cout << "body part '" << part.name << "'\n";
+            for (std::size_t m = 0; m < part.models.size(); ++m) {
+                const auto& mo = part.models[m];
+                std::size_t tris = 0;
+                for (const auto& mesh : model.vtx.body_parts[b].models[m].lods[0].meshes) {
+                    tris += mesh.triangles().size() / 3;
+                }
+                std::cout << "  model '" << mo.name << "': " << mo.vertices.size() << " vertices ("
+                          << vertex_format_name(mo.vertex_format) << "), " << mo.meshes.size() << " meshes, " << tris
+                          << " triangles\n";
+            }
+        }
+        return 0;
+    }
+    if (args.size() >= 4 && args[1] == "export") {
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 4));
+        const auto model = load_model(gfs, args[2]);
+        std::ofstream out{fs::path(args[3])};
+        out << "# Exported by openbl-cli from " << model.mdl.name << " (first model of each body part, LOD 0)\n";
+        std::size_t base = 1;
+        for (std::size_t b = 0; b < model.mdl.body_parts.size(); ++b) {
+            const auto& part = model.mdl.body_parts[b];
+            if (part.models.empty()) {
+                continue;
+            }
+            const auto& mo = part.models[0];
+            out << "o " << part.name << "\n";
+            for (const auto& v : mo.vertices) {
+                out << "v " << v.position[0] << " " << v.position[1] << " " << v.position[2] << "\n";
+                out << "vt " << v.uv[0] << " " << 1.0f - v.uv[1] << "\n";
+            }
+            const auto& lod = model.vtx.body_parts[b].models[0].lods[0];
+            for (std::size_t me = 0; me < mo.meshes.size() && me < lod.meshes.size(); ++me) {
+                const auto& mesh = mo.meshes[me];
+                const auto tex = model.mdl.texture_for(mesh.material);
+                out << "usemtl " << (tex >= 0 ? model.mdl.textures[static_cast<std::size_t>(tex)] : "none") << "\n";
+                const auto tris = lod.meshes[me].triangles();
+                for (std::size_t t = 0; t + 2 < tris.size(); t += 3) {
+                    out << "f";
+                    for (std::size_t k = 0; k < 3; ++k) {
+                        const std::size_t idx = base + mesh.vertex_offset + tris[t + k];
+                        out << " " << idx << "/" << idx;
+                    }
+                    out << "\n";
+                }
+            }
+            base += mo.vertices.size();
+        }
+        std::cout << "wrote " << args[3] << "\n";
+        return out ? 0 : 1;
+    }
+    usage();
+    return 2;
+}
+
 int cmd_vpk(const std::vector<std::string_view>& args) {
     if (args.size() < 3) {
         usage();
@@ -337,6 +464,9 @@ int main(int argc, char** argv) {
         }
         if (args[0] == "mat") {
             return cmd_mat(args);
+        }
+        if (args[0] == "mdl") {
+            return cmd_mdl(args);
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

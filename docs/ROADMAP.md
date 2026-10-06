@@ -12,7 +12,9 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Loose `.tga` images (UI, fonts)
 - [x] Materials: `.vmt` and the KeyValues text syntax
 - [ ] Shaders: catalogue the parameters each of the 52 shaders uses; proxy behaviour
-- [ ] Models: `.mdl`, `.vtx`, `.vvd` (if present), `.phy`
+- [x] Models: `.mdl` v2531 geometry, bones, skins, textures; `.vtx` v107 triangle lists and LODs
+- [ ] Models: packed normal tables for quantized vertices; animations and sequences; attachments, hitboxes, flexes
+- [ ] Physics: `.phy`
 - [ ] Maps: `.bsp` (Bloodlines variant), `.ain` (AI node graphs)
 - [ ] Dialogue: `.dlg`. Lip-sync: `.lip`. Choreography: `.vcd`
 - [ ] `vdata` text tables: items, hack terminals, strings, signs
