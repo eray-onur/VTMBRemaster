@@ -20,6 +20,7 @@ add_executable(openbl_tests
     test_lip.cpp
     test_mdl.cpp
     test_tth.cpp
+    test_vcd.cpp
     test_vmt.cpp
     test_vtf.cpp)
 target_link_libraries(openbl_tests PRIVATE openbl::formats openbl::vfs doctest::doctest ZLIB::ZLIB openbl_options)

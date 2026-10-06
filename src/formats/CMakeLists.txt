@@ -10,6 +10,7 @@ add_library(openbl_formats
     path.cpp
     text_encoding.cpp
     tth.cpp
+    vcd.cpp
     vmt.cpp
     vpk.cpp
     vtf.cpp
