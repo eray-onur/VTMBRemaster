@@ -9,6 +9,7 @@ FetchContent_MakeAvailable(doctest)
 
 add_executable(openbl_tests
     main.cpp
+    test_ain.cpp
     test_bsp.cpp
     test_dlg.cpp
     test_path.cpp

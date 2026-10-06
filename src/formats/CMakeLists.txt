@@ -1,4 +1,5 @@
 add_library(openbl_formats
+    ain.cpp
     bsp.cpp
     dlg.cpp
     image_decode.cpp
