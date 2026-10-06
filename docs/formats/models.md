@@ -98,15 +98,63 @@ Verified on every model in the Steam release: 11,039 animations and 10,739 seque
 | 0x108 | animation count, offset (72-byte animation descriptions) |
 | 0x110 | sequence count, offset (764-byte sequences) |
 | 0x11c, 0x120 | sequence group count, offset (one `default` group in practice) |
+| 0x180, 0x184 | **pose parameter** count, offset (20-byte entries) |
 | 0x194, 0x198 | **include model** count, offset (116-byte entries; name at +0, relative) |
 
 Characters keep almost no animation of their own. The cop, for example, has only `ragdoll`, and includes `models/character/shared/male/npc_allsequences.mdl`. That file in turn includes `stances.mdl`, `conversations.mdl` and `allsequences.mdl`, which hold the shared animations. Animation bones are matched to model bones by name; across the male skeleton the 53 shared bones have identical names, parents and bind poses.
 
 ### Structures
 
-**Animation description** (72 bytes): `i32 name (rel)` (e.g. `@Stance_Anger_Idle_1`), `f32 fps`, `i32 flags`, `i32 frame count`, `i32 movement count`, `i32 movement offset`, `f32 bounds[6]`, `i32 data offset (rel)` at +48, then 20 bytes not yet decoded.
+**Animation description** (72 bytes): `i32 name (rel)` (e.g. `@Stance_Anger_Idle_1`), `f32 fps`, `i32 flags`, `i32 frame count`, `i32 movement count`, `i32 movement offset (rel)`, `f32 bounds[6]`, `i32 data offset (rel)` at +48. The last 20 bytes are zero apart from two animations.
 
-**Sequence** (764 bytes): `i32 label (rel)`, `i32 activity name (rel)`, `i32 flags` (bit 0 = looping), `i32 activity`, `i32 activity weight`, `i32 event count`, `i32 event offset`, `f32 bounds[6]`, `i32 blend count` at +52, `i16 animation index[]` at +56 (one per blend), group sizes at +572 and +576. The rest is not yet decoded.
+**Movement piece** (44 bytes; root motion): `i32 end frame`, `i32 flags`, `f32 start speed`, `f32 end speed`, `f32 yaw`, `f32 direction[3]`, `f32 displacement[3]`. A piece runs from the previous piece's end frame (or 0) to its own. End frames always increase, and the last piece ends on the last frame (all 22,873 pieces in 1,362 animations). The flags name the axes that move, and match the displacement without exception: `0x40` x, `0x80` y, `0x100` z, `0x800` yaw. `0x1000` is set on most pieces; its meaning is unknown.
+
+**Pose parameter** (20 bytes): `i32 name (rel)`, `i32 flags`, `f32 start`, `f32 end`, `f32 wrap` (360 for parameters that loop, else 0). The shipped models use `move_yaw` and `hit_yaw` (−180…180, looping) and `aim_yaw`/`aim_pitch` (−45…45).
+
+**Sequence** (764 bytes):
+
+| Offset | Field |
+|---|---|
+| +0 | `i32` label (rel) |
+| +4 | `i32` activity name (rel) |
+| +8 | `i32` flags (bit 0 = looping) |
+| +12 | `i32` activity, −1 in every file (resolved by name at load time) |
+| +16 | `i32` activity weight |
+| +20, +24 | event count, offset (rel) |
+| +28 | `f32` bounds[6] |
+| +52 | `i32` blend count (= grid[0] × grid[1]) |
+| +56 | `i16` animation index[16][16]: the blend grid; entry [i][j] at +56 + 2·(16i + j) |
+| +572, +576 | `i32` grid size per axis (1, 2, 3, 5 or 9 × 1 or 3) |
+| +580, +584 | `i32` pose parameter per axis, −1 if none |
+| +588, +592 | `f32` parameter value at the first grid column/row |
+| +596, +600 | `f32` parameter value at the last |
+| +612, +616 | `f32` fade-in and fade-out time (0.2 s for most) |
+| +620 | `f32` a third time, usually equal to the others; meaning unknown |
+| +660, +664 | count and offset (rel) of a small float block; meaning unknown |
+| +672 | `f32` a second bounding box |
+| +700, +704 | count, offset (rel) of **melee sweep points** (24 bytes: two points) |
+| +708, +712 | count, offset (rel) of **melee hits** (188 bytes) |
+| +716, +720 | `f32` pair set with the melee data (e.g. 120, 213); FLT_MIN/FLT_MAX otherwise |
+| +752…+760 | `f32` values, mostly 0, 1, 1; meaning unknown |
+
+Blend grids step evenly from the start to the end value. Andrei's `run` blends `run_180`, `run_225` … `run_135`, `run_180` across `move_yaw` −180…180.
+
+**Event** (76 bytes): `f32 cycle` (0–1 through the sequence; all 1,726 events are in range), `i32 event id`, `i32 type` (always 0), `char options[64]`. The ids are game codes. The most common, with the options they carry:
+
+| Id | Uses | Options seen | Probably |
+|---|---|---|---|
+| 4006, 4007 | 272, 104 | — | creature footsteps or attacks (rat) |
+| 2050–2053 | 567 | — | melee attack phases |
+| 3031 | 105 | — | Ming Xiao attack |
+| 5001, 5003 | 146 | `4` | weapon fire or reload |
+| 5118, 5116, 5117, 5120, 5112, 5115 | 111 | `Root;d_animalism_bat_trail_emitter`, `BlowSmoke_Emitter` | start a particle emitter, optionally at an attachment |
+| 4100–4102 | 65 | `models/items/Bum_Bottle/Bum_Bottle` | attach or detach a prop model |
+| 4050, 4051 | 80 | `Stealth_Kill` | stealth kill |
+| 4150–4154 | 16 | `cel_ring`, `Cough` | phone and character sounds |
+| 1003, 1005 | 27 | `MX_CHARGE_ROAR` | sounds |
+| 6001, 6002, 6013 | 57 | `0 6` | view-model weapon events |
+
+**Melee hit** (188 bytes): `f32 start cycle`, `f32 end cycle`, `i32 bone` (usually a hand), `f32 value` (often 15, probably damage or reach), five `f32` (unknown), then `-1` padding, then four 16-byte **reaction slots** at +120, +136, +152 and +168. Each slot starts with a record-relative activity name such as `ACT_KNOCKBACK_NORMAL_HIGH_RIGHT`, probably one per direction the victim can face. There are 1,460 hits in 528 sequences.
 
 **Animation data:** one 32-byte record per bone, `f32` (always 1.0) and then seven `u32` channel offsets relative to the record: position x, y, z, rotation x, y, z, w. An offset of 0 means the channel is not stored. Each channel is run-length encoded in 16-bit entries. A header entry holds `valid` and `total` bytes, in that order, followed by `valid` signed values that cover `total` frames; frames past `valid` repeat the last value. Runs follow one another until the frame count is reached.
 
@@ -118,7 +166,9 @@ Characters keep almost no animation of their own. The cop, for example, has only
 
 **Shipped data issues:** 8 sequences reference animations that the file does not contain. These are models compiled with their animations stripped (`throwtaxi`, `woodbox/lid`, `drknobantique*_static`). OpenBL marks them invalid (`animation = -1`).
 
-**Not yet decoded:** extra blends of multi-blend sequences (aiming, directional movement), movement (root motion), events, IK, and the root bone's facing convention. Animation roots are stored about 90° off the bind root about the vertical axis.
+**Shipped data issues (blends):** the crooked cop's three walkie-talkie sequences are 2×1 grids of two copies of the same animation, with no pose parameter.
+
+**Not yet decoded:** the root bone's facing convention (animation roots are stored about 90° off the bind root about the vertical axis), the +660 float block, and the meaning of the unknown melee fields. No IK data has been found; if the format has any, it is in one of the unknown fields.
 
 ## `.vtx` layout
 

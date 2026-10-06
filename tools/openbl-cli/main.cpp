@@ -448,7 +448,7 @@ int cmd_mat(const std::vector<std::string_view>& args) {
     if (args.size() >= 2 && args[1] == "catalogue") {
         const vfs::GameFileSystem gfs(game_dir_arg(args, 3));
         if (args.size() >= 3 && args[2] != "-") {
-            std::ofstream out{fs::path(args[2])};
+            std::ofstream out(fs::path(args[2]), std::ios::binary);
             return cmd_mat_catalogue(gfs, out);
         }
         return cmd_mat_catalogue(gfs, std::cout);

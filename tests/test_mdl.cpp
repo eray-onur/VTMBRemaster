@@ -174,8 +174,51 @@ std::vector<std::byte> build_mdl(MdlVertexFormat format) {
     b.i32(seq + 8, 1);
     b.i32(seq + 12, -1);
     b.i32(seq + 16, 1);
-    b.i32(seq + 52, 1);
+    b.i32(seq + 52, 2);
     b.i32(seq + 56, 0);
+    b.u16(seq + 56 + 2 * 16, 0); // grid [1][0]
+    b.i32(seq + 572, 2);
+    b.i32(seq + 576, 1);
+    b.i32(seq + 580, 0);
+    b.i32(seq + 584, -1);
+    b.f32(seq + 588, -45.0f);
+    b.f32(seq + 596, 45.0f);
+    b.f32(seq + 612, 0.2f);
+    b.f32(seq + 616, 0.3f);
+
+    // One event, one movement piece, one melee hit, one pose parameter.
+    const std::size_t event = b.size();
+    b.grow(event + 76);
+    b.i32(seq + 20, 1);
+    b.i32(seq + 24, static_cast<std::int32_t>(event - seq));
+    b.f32(event, 0.5f);
+    b.i32(event + 4, 5001);
+    b.put(event + 12, "4", 2);
+    const std::size_t movement = b.size();
+    b.grow(movement + 44);
+    b.i32(anim + 16, 1);
+    b.i32(anim + 20, static_cast<std::int32_t>(movement - anim));
+    b.i32(movement, 2);
+    b.i32(movement + 4, motion_flags::X | 0x1000);
+    b.f32(movement + 20, 1.0f);
+    b.f32(movement + 32, 8.0f);
+    const std::size_t sweep = b.size();
+    b.grow(sweep + 24 + 188);
+    const std::size_t hit = sweep + 24;
+    b.i32(seq + 700, 1);
+    b.i32(seq + 704, static_cast<std::int32_t>(sweep - seq));
+    b.i32(seq + 708, 1);
+    b.i32(seq + 712, static_cast<std::int32_t>(hit - seq));
+    b.f32(sweep + 20, 3.0f);
+    b.f32(hit, 0.25f);
+    b.f32(hit + 4, 0.5f);
+    b.f32(hit + 12, 15.0f);
+    const std::size_t pose = b.size();
+    b.grow(pose + 20);
+    b.i32(0x180, 1);
+    b.i32(0x184, static_cast<std::int32_t>(pose));
+    b.f32(pose + 8, -45.0f);
+    b.f32(pose + 12, 45.0f);
 
     const std::size_t include = b.size();
     b.grow(include + 116);
@@ -186,6 +229,8 @@ std::vector<std::byte> build_mdl(MdlVertexFormat format) {
     b.i32(seq, static_cast<std::int32_t>(b.str("idle") - seq));
     b.i32(seq + 4, static_cast<std::int32_t>(b.str("ACT_IDLE") - seq));
     b.i32(include, static_cast<std::int32_t>(b.str("Models\\Shared\\Anims.mdl") - include));
+    b.i32(hit + 120, static_cast<std::int32_t>(b.str("ACT_KNOCKBACK_SMALL_HIGH_BACK") - hit));
+    b.i32(pose, static_cast<std::int32_t>(b.str("aim_yaw") - pose));
     b.i32(bone, static_cast<std::int32_t>(b.str("root") - bone));
     b.i32(part, static_cast<std::int32_t>(b.str("body") - part));
     b.i32(0x8c, static_cast<std::int32_t>(b.size()));
@@ -291,6 +336,32 @@ TEST_CASE("MDL animations, sequences and include models") {
     CHECK(mdl.sequences[0].activity_name == "ACT_IDLE");
     CHECK((mdl.sequences[0].flags & sequence_flags::Looping) != 0);
     CHECK(mdl.sequences[0].animation == 0);
+
+    const auto& seq = mdl.sequences[0];
+    CHECK(seq.grid == std::array<std::int32_t, 2>{2, 1});
+    CHECK(seq.blend_animations == std::vector<std::int32_t>{0, 0});
+    CHECK(seq.blend(1, 0) == 0);
+    CHECK(seq.blend_param[0] == 0);
+    CHECK(seq.blend_end[0] == 45.0f);
+    CHECK(seq.fade_out == doctest::Approx(0.3f));
+    REQUIRE(seq.events.size() == 1);
+    CHECK(seq.events[0].cycle == 0.5f);
+    CHECK(seq.events[0].id == 5001);
+    CHECK(seq.events[0].options == "4");
+    REQUIRE(seq.melee_sweep.size() == 1);
+    CHECK(seq.melee_sweep[0][5] == 3.0f);
+    REQUIRE(seq.melee_hits.size() == 1);
+    CHECK(seq.melee_hits[0].end_cycle == 0.5f);
+    CHECK(seq.melee_hits[0].value == 15.0f);
+    CHECK(seq.melee_hits[0].reactions[0] == "ACT_KNOCKBACK_SMALL_HIGH_BACK");
+    CHECK(seq.melee_hits[0].reactions[1].empty());
+    REQUIRE(mdl.pose_parameters.size() == 1);
+    CHECK(mdl.pose_parameters[0].name == "aim_yaw");
+    CHECK(mdl.pose_parameters[0].start == -45.0f);
+    REQUIRE(mdl.animations[0].movements.size() == 1);
+    CHECK(mdl.animations[0].movements[0].end_frame == 2);
+    CHECK((mdl.animations[0].movements[0].flags & motion_flags::X) != 0);
+    CHECK(mdl.animations[0].movements[0].displacement[0] == 8.0f);
     CHECK(mdl.include_models == std::vector<std::string>{"models/shared/anims.mdl"});
     CHECK(mdl.bones[0].position_scale[0] == doctest::Approx(1.0f / 256.0f));
 
@@ -400,6 +471,8 @@ TEST_CASE("MDL integration: every model in the real install loads") {
     const vfs::GameFileSystem gfs(*game);
     std::size_t models = 0, vtx_files = 0, triangles = 0, vertices = 0, outside_hull = 0;
     std::size_t animations = 0, sequences = 0, samples = 0, non_unit = 0, missing_includes = 0, broken_sequences = 0;
+    std::size_t blended = 0, events = 0, bad_events = 0, bad_blend_params = 0, movements = 0, bad_movements = 0,
+                melee_hits = 0;
     std::map<MdlVertexFormat, std::size_t> formats;
     for (const auto& path : gfs.list_files()) {
         if (!path.ends_with(".mdl")) {
@@ -414,6 +487,31 @@ TEST_CASE("MDL integration: every model in the real install loads") {
         sequences += mdl.sequences.size();
         for (const auto& s : mdl.sequences) {
             broken_sequences += s.animation < 0;
+            blended += s.blend_animations.size() > 1;
+            events += s.events.size();
+            melee_hits += s.melee_hits.size();
+            for (const auto& e : s.events) {
+                bad_events += e.cycle < 0.0f || e.cycle > 1.0f;
+            }
+            // The crooked cop's walkie-talkie sequences "blend" two copies of the
+            // same animation and have no parameter; that is harmless.
+            auto anim_name = [&](std::int32_t a) {
+                return a < 0 ? std::string() : mdl.animations[static_cast<std::size_t>(a)].name;
+            };
+            const bool same = std::all_of(s.blend_animations.begin(), s.blend_animations.end(), [&](std::int32_t a) {
+                return anim_name(a) == anim_name(s.blend_animations[0]);
+            });
+            for (int k = 0; k < 2; ++k) {
+                const bool used = s.grid[k] > 1 && !same;
+                bad_blend_params += used && (s.blend_param[k] < 0 ||
+                                             s.blend_param[k] >= static_cast<std::int32_t>(mdl.pose_parameters.size()));
+            }
+        }
+        for (const auto& a : mdl.animations) {
+            movements += a.movements.size();
+            if (!a.movements.empty() && a.frame_count > 1) {
+                bad_movements += a.movements.back().end_frame != static_cast<std::int32_t>(a.frame_count) - 1;
+            }
         }
         for (const auto& inc : mdl.include_models) {
             missing_includes += !gfs.exists(inc);
@@ -488,6 +586,11 @@ TEST_CASE("MDL integration: every model in the real install loads") {
     // Models compiled with their animations stripped but sequences kept
     // (throwtaxi, woodbox/lid, drknobantique*_static): 8 in the Steam release.
     CHECK(broken_sequences <= 8);
+    MESSAGE(blended << " blended sequences, " << events << " events, " << movements << " movement pieces, "
+                    << melee_hits << " melee hits");
+    CHECK(bad_events == 0);
+    CHECK(bad_blend_params == 0);
+    CHECK(bad_movements == 0);
     CHECK(non_unit == 0);
     CHECK(models > 4000);
     CHECK(vtx_files >= 2 * models - 1);

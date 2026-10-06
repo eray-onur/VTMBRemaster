@@ -20,6 +20,7 @@ constexpr std::size_t kFlagsOffset = 0xe4;
 constexpr std::size_t kBonesOffset = 0xf0;
 constexpr std::size_t kAnimationsOffset = 0x108;
 constexpr std::size_t kSequencesOffset = 0x110;
+constexpr std::size_t kPoseParametersOffset = 0x180;
 constexpr std::size_t kIncludeModelsOffset = 0x194;
 constexpr std::size_t kTexturesOffset = 0x124;
 constexpr std::size_t kTextureDirsOffset = 0x12c;
@@ -35,6 +36,12 @@ constexpr std::size_t kMeshSize = 60;
 constexpr std::size_t kAnimationSize = 72;
 constexpr std::size_t kSequenceSize = 764;
 constexpr std::size_t kIncludeModelSize = 116;
+constexpr std::size_t kPoseParameterSize = 20;
+constexpr std::size_t kMovementSize = 44;
+constexpr std::size_t kEventSize = 76;
+constexpr std::size_t kMeleeSweepSize = 24;
+constexpr std::size_t kMeleeHitSize = 188;
+constexpr std::int32_t kBlendGridSize = 16; // Animation indices: i16[16][16] at sequence +56.
 
 // Sanity limits; the Steam release stays far below these.
 constexpr std::uint32_t kMaxCount = 1 << 20;
@@ -234,6 +241,21 @@ private:
             a.frame_count = static_cast<std::uint32_t>(frames);
             a.data_offset = rel(at, i32(at + 48));
             need(a.data_offset, std::uint64_t{32} * mdl.bones.size());
+            const std::uint32_t movements = count(at + 16, "movement");
+            const std::size_t movement_base = rel(at, i32(at + 20));
+            need(movement_base, std::uint64_t{movements} * kMovementSize);
+            for (std::uint32_t m = 0; m < movements; ++m) {
+                const std::size_t mv = movement_base + std::size_t{m} * kMovementSize;
+                MdlMovement piece;
+                piece.end_frame = i32(mv);
+                piece.flags = i32(mv + 4);
+                piece.start_speed = f32(mv + 8);
+                piece.end_speed = f32(mv + 12);
+                piece.yaw = f32(mv + 16);
+                piece.direction = vec3(mv + 20);
+                piece.displacement = vec3(mv + 32);
+                a.movements.push_back(piece);
+            }
             mdl.animations.push_back(std::move(a));
         }
 
@@ -249,12 +271,79 @@ private:
             s.activity = i32(at + 12);
             s.activity_weight = i32(at + 16);
             s.blend_count = i32(at + 52);
-            // 16-bit animation indices, one per blend; the first is the base pose.
-            s.animation = static_cast<std::int16_t>(u16(at + 56));
-            if (s.animation < 0 || static_cast<std::uint32_t>(s.animation) >= anims) {
-                s.animation = -1; // Broken reference in the shipped data (e.g. throwtaxi.mdl).
+            auto animation_index = [&](std::int32_t i, std::int32_t j) {
+                const auto a = static_cast<std::int16_t>(u16(at + 56 + 2 * std::size_t(i * kBlendGridSize + j)));
+                // Broken references exist in the shipped data (e.g. throwtaxi.mdl).
+                return a < 0 || static_cast<std::uint32_t>(a) >= anims ? -1 : std::int32_t{a};
+            };
+            s.animation = animation_index(0, 0);
+            for (int k = 0; k < 2; ++k) {
+                s.grid[k] = i32(at + 572 + 4 * std::size_t(k));
+                if (s.grid[k] < 1 || s.grid[k] > kBlendGridSize) {
+                    in_.fail("sequence blend grid out of range");
+                }
+                s.blend_param[k] = i32(at + 580 + 4 * std::size_t(k));
+                s.blend_start[k] = f32(at + 588 + 4 * std::size_t(k));
+                s.blend_end[k] = f32(at + 596 + 4 * std::size_t(k));
+            }
+            for (std::int32_t row = 0; row < s.grid[0]; ++row) {
+                for (std::int32_t col = 0; col < s.grid[1]; ++col) {
+                    s.blend_animations.push_back(animation_index(row, col));
+                }
+            }
+            s.fade_in = f32(at + 612);
+            s.fade_out = f32(at + 616);
+
+            const std::uint32_t events = count(at + 20, "event");
+            const std::size_t event_base = rel(at, i32(at + 24));
+            need(event_base, std::uint64_t{events} * kEventSize);
+            for (std::uint32_t e = 0; e < events; ++e) {
+                const std::size_t ev = event_base + std::size_t{e} * kEventSize;
+                s.events.push_back({f32(ev), i32(ev + 4), i32(ev + 8), fixed_string(ev + 12, 64)});
+            }
+
+            const std::uint32_t sweep = count(at + 700, "melee sweep point");
+            const std::size_t sweep_base = rel(at, i32(at + 704));
+            need(sweep_base, std::uint64_t{sweep} * kMeleeSweepSize);
+            for (std::uint32_t k = 0; k < sweep; ++k) {
+                std::array<float, 6> pts{};
+                for (std::size_t c = 0; c < 6; ++c) {
+                    pts[c] = f32(sweep_base + std::size_t{k} * kMeleeSweepSize + 4 * c);
+                }
+                s.melee_sweep.push_back(pts);
+            }
+            const std::uint32_t hits = count(at + 708, "melee hit");
+            const std::size_t hit_base = rel(at, i32(at + 712));
+            need(hit_base, std::uint64_t{hits} * kMeleeHitSize);
+            for (std::uint32_t k = 0; k < hits; ++k) {
+                const std::size_t h = hit_base + std::size_t{k} * kMeleeHitSize;
+                MdlMeleeHit hit;
+                hit.start_cycle = f32(h);
+                hit.end_cycle = f32(h + 4);
+                hit.bone = i32(h + 8);
+                hit.value = f32(h + 12);
+                for (std::size_t c = 0; c < hit.params.size(); ++c) {
+                    hit.params[c] = f32(h + 16 + 4 * c);
+                }
+                // Four 16-byte reaction slots, each starting with a record-relative name.
+                for (std::size_t r = 0; r < hit.reactions.size(); ++r) {
+                    const std::int32_t name = i32(h + 120 + 16 * r);
+                    if (name != 0) {
+                        hit.reactions[r] = c_string(rel(h, name));
+                    }
+                }
+                s.melee_hits.push_back(std::move(hit));
             }
             mdl.sequences.push_back(std::move(s));
+        }
+
+        const std::uint32_t poses = count(kPoseParametersOffset, "pose parameter");
+        const std::size_t pose_base = u32(kPoseParametersOffset + 4);
+        need(pose_base, std::uint64_t{poses} * kPoseParameterSize);
+        for (std::uint32_t i = 0; i < poses; ++i) {
+            const std::size_t at = pose_base + std::size_t{i} * kPoseParameterSize;
+            mdl.pose_parameters.push_back(
+                {c_string(rel(at, i32(at))), i32(at + 4), f32(at + 8), f32(at + 12), f32(at + 16)});
         }
 
         const std::uint32_t includes = count(kIncludeModelsOffset, "include model");

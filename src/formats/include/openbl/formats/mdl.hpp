@@ -41,17 +41,53 @@ struct MdlBonePose {
     std::array<float, 4> rotation{}; // Quaternion x, y, z, w.
 };
 
+namespace motion_flags {
+constexpr std::int32_t X = 0x40;
+constexpr std::int32_t Y = 0x80;
+constexpr std::int32_t Z = 0x100;
+constexpr std::int32_t Yaw = 0x800;
+// 0x1000 is set on most pieces; meaning unknown.
+} // namespace motion_flags
+
+// A stretch of root motion: from the previous piece's end frame (or 0) to end_frame.
+struct MdlMovement {
+    std::int32_t end_frame = 0;
+    std::int32_t flags = 0; // motion_flags.
+    float start_speed = 0, end_speed = 0;
+    float yaw = 0;                       // Degrees turned (with motion_flags::Yaw).
+    std::array<float, 3> direction{};    // Unit vector.
+    std::array<float, 3> displacement{}; // Total motion over the piece.
+};
+
 struct MdlAnimation {
     std::string name;
     float fps = 30.0f;
     std::int32_t flags = 0;
     std::uint32_t frame_count = 0;
+    std::vector<MdlMovement> movements;
     std::size_t data_offset = 0; // Absolute offset of the per-bone channel records.
 };
 
 namespace sequence_flags {
 constexpr std::int32_t Looping = 0x1;
 }
+
+struct MdlEvent {
+    float cycle = 0;  // 0-1 through the sequence.
+    std::int32_t id = 0; // Game-specific event code (see docs/formats/models.md).
+    std::int32_t type = 0;
+    std::string options;
+};
+
+// Bloodlines melee data: when a swing can hit, with which bone, and how the
+// victim reacts. Layout decoded; gameplay meaning partly inferred.
+struct MdlMeleeHit {
+    float start_cycle = 0, end_cycle = 0;
+    std::int32_t bone = -1;
+    float value = 0;                       // Often 15; probably damage or reach.
+    std::array<float, 5> params{};          // Following floats, meaning unknown.
+    std::array<std::string, 4> reactions;   // Knockback activities, e.g. ACT_KNOCKBACK_NORMAL_HIGH_RIGHT.
+};
 
 struct MdlSequence {
     std::string label;
@@ -61,9 +97,30 @@ struct MdlSequence {
     std::int32_t activity_weight = 0;
     std::int32_t blend_count = 1;
     // First animation played (16-bit index in the file), or -1 if the shipped
-    // data references an animation that does not exist. Further blends are not
-    // decoded yet.
+    // data references an animation that does not exist.
     std::int32_t animation = 0;
+
+    // Blend grid: grid[0] x grid[1] animations laid out [i][j], i along the
+    // first pose parameter. Indices are -1 where the reference is broken.
+    std::array<std::int32_t, 2> grid{1, 1};
+    std::vector<std::int32_t> blend_animations;
+    std::array<std::int32_t, 2> blend_param{-1, -1}; // Index into MdlFile::pose_parameters.
+    std::array<float, 2> blend_start{}, blend_end{};
+    float fade_in = 0.2f, fade_out = 0.2f;
+    std::vector<MdlEvent> events;
+    std::vector<std::array<float, 6>> melee_sweep; // Pairs of points, probably the weapon's path.
+    std::vector<MdlMeleeHit> melee_hits;
+
+    std::int32_t blend(std::int32_t i, std::int32_t j) const {
+        return blend_animations[static_cast<std::size_t>(i * grid[1] + j)];
+    }
+};
+
+struct MdlPoseParameter {
+    std::string name; // move_yaw, hit_yaw, aim_yaw, aim_pitch.
+    std::int32_t flags = 0;
+    float start = 0, end = 0;
+    float wrap = 0; // 360 for looping parameters, else 0.
 };
 
 enum class MdlVertexFormat : std::int32_t {
@@ -117,6 +174,7 @@ struct MdlFile {
     std::vector<MdlBodyPart> body_parts;
     std::vector<MdlAnimation> animations;
     std::vector<MdlSequence> sequences;
+    std::vector<MdlPoseParameter> pose_parameters;
     // Other model files whose sequences and animations this model uses
     // (e.g. models/character/shared/male/npc_allsequences.mdl). Normalized game paths.
     std::vector<std::string> include_models;

@@ -11,10 +11,12 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Textures: `.tth`/`.ttz` pairs and embedded VTF 7.1, with DXT/RGB decoding to RGBA8
 - [x] Loose `.tga` and `.png` images (reader; not yet wired into the virtual filesystem's texture loading)
 - [x] Materials: `.vmt` and the KeyValues text syntax
-- [ ] Shaders: catalogue the parameters each of the 52 shaders uses; proxy behaviour
+- [x] Shaders: catalogue of every shader, parameter and proxy (`openbl-cli mat catalogue`, docs/formats/shaders.md, proxies.md)
+- [ ] Shaders: verify proxy behaviour against the original game
 - [x] Models: `.mdl` v2531 geometry, bones, skins, textures; `.vtx` v107 triangle lists and LODs
 - [x] Animations: descriptions, sequences, include models, run-length channel decoding, root-relative spine rotation, skinning matrices
-- [ ] Animations: multi-blend sequences, movement, events, IK; root facing convention
+- [x] Animations: blend grids and pose parameters, events, movement (root motion), fade times, Bloodlines melee hit data
+- [ ] Animations: root facing convention; unknown sequence fields (+620, +660 block, +752…)
 - [ ] Models: packed normal tables for quantized vertices; attachments, hitboxes, flexes
 - [ ] Physics: `.phy`
 - [x] Maps: `.bsp` v17 geometry, faces, displacements, lightmap data, static props, entities, pakfile
