@@ -7,6 +7,7 @@ add_library(openbl_formats
     image_write.cpp
     keyvalues.cpp
     lip.cpp
+    localization.cpp
     mdl.cpp
     path.cpp
     text_encoding.cpp
