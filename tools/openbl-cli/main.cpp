@@ -4,6 +4,7 @@
 #include "openbl/formats/error.hpp"
 #include "openbl/formats/zip.hpp"
 #include "openbl/formats/image_decode.hpp"
+#include "openbl/formats/keyvalues.hpp"
 #include "openbl/formats/mdl.hpp"
 #include "openbl/formats/vtx.hpp"
 #include "openbl/formats/path.hpp"
@@ -45,6 +46,8 @@ void usage() {
                  "  openbl-cli mat info <material> [game-dir]\n"
                  "  openbl-cli mdl info <model> [game-dir]\n"
                  "  openbl-cli mdl export <model> <out.obj> [game-dir]\n"
+                 "  openbl-cli mdl sequences <model> [game-dir]\n"
+                 "  openbl-cli mdl pose <model> <sequence> <frame> <out.obj> [game-dir]\n"
                  "  openbl-cli bsp info <map> [game-dir]\n"
                  "  openbl-cli bsp export <map> <out.obj> [game-dir]\n"
                  "\n"
@@ -275,7 +278,139 @@ const char* vertex_format_name(formats::MdlVertexFormat f) {
     }
 }
 
+// --- Posing (CPU skinning) for inspection ------------------------------------
+
+struct FoundSequence {
+    std::shared_ptr<formats::MdlFile> file; // Model that owns the sequence's animation.
+    formats::MdlSequence sequence;
+};
+
+// Searches a model and, recursively, its include models for a sequence label.
+std::optional<FoundSequence> find_sequence(const vfs::GameFileSystem& gfs, const std::string& path,
+                                           std::string_view label, int depth = 0) {
+    if (depth > 8) {
+        return std::nullopt;
+    }
+    const auto data = gfs.read(path);
+    if (!data) {
+        return std::nullopt;
+    }
+    auto mdl = std::make_shared<formats::MdlFile>(formats::parse_mdl(*data));
+    for (const auto& s : mdl->sequences) {
+        if (formats::iequals(s.label, label) && s.animation >= 0) {
+            return FoundSequence{mdl, s};
+        }
+    }
+    for (const auto& inc : mdl->include_models) {
+        if (auto found = find_sequence(gfs, inc, label, depth + 1)) {
+            return found;
+        }
+    }
+    return std::nullopt;
+}
+
+void list_sequences(const vfs::GameFileSystem& gfs, const std::string& path, int depth = 0) {
+    const auto data = gfs.read(path);
+    if (!data || depth > 8) {
+        return;
+    }
+    const auto mdl = formats::parse_mdl(*data);
+    std::cout << std::string(static_cast<std::size_t>(depth) * 2, ' ') << path << ": " << mdl.sequences.size()
+              << " sequences, " << mdl.animations.size() << " animations\n";
+    for (const auto& s : mdl.sequences) {
+        std::cout << std::string(static_cast<std::size_t>(depth) * 2 + 2, ' ') << s.label;
+        if (s.animation >= 0) {
+            const auto& a = mdl.animations[static_cast<std::size_t>(s.animation)];
+            std::cout << "  (" << a.frame_count << " frames @ " << a.fps << " fps"
+                      << ((s.flags & formats::sequence_flags::Looping) ? ", loops" : "") << ")";
+        }
+        std::cout << "  " << s.activity_name << "\n";
+    }
+    for (const auto& inc : mdl.include_models) {
+        list_sequences(gfs, inc, depth + 1);
+    }
+}
+
+std::string model_path(std::string_view arg) {
+    std::string base = formats::normalize_game_path(arg);
+    if (!base.ends_with(".mdl")) {
+        base += ".mdl";
+    }
+    if (!base.starts_with("models/")) {
+        base.insert(0, "models/");
+    }
+    return base;
+}
+
 int cmd_mdl(const std::vector<std::string_view>& args) {
+    if (args.size() >= 3 && args[1] == "sequences") {
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 3));
+        list_sequences(gfs, model_path(args[2]));
+        return 0;
+    }
+    if (args.size() >= 6 && args[1] == "pose") {
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 6));
+        const auto model = load_model(gfs, args[2]);
+        const auto found = find_sequence(gfs, model_path(args[2]), args[3]);
+        if (!found) {
+            std::cerr << "sequence not found: " << args[3] << "\n";
+            return 1;
+        }
+        const auto& anim_file = *found->file;
+        const auto anim_pose =
+            anim_file.sample_animation(static_cast<std::size_t>(found->sequence.animation),
+                                       static_cast<std::uint32_t>(std::stoul(std::string(args[4]))));
+        // Map animation bones onto the model's bones by name; unmapped bones keep their bind pose.
+        const auto& bones = model.mdl.bones;
+        auto local = formats::mdl_bind_pose(bones);
+        std::size_t mapped = 0;
+        for (std::size_t b = 0; b < bones.size(); ++b) {
+            for (std::size_t a = 0; a < anim_file.bones.size(); ++a) {
+                if (formats::iequals(anim_file.bones[a].name, bones[b].name)) {
+                    local[b] = anim_pose[a];
+                    ++mapped;
+                    break;
+                }
+            }
+        }
+        const auto skin = formats::mdl_skinning_matrices(bones, formats::mdl_world_transforms(bones, local));
+        std::ofstream out{fs::path(args[5])};
+        std::size_t base = 1;
+        for (std::size_t bp = 0; bp < model.mdl.body_parts.size(); ++bp) {
+            const auto& part = model.mdl.body_parts[bp];
+            if (part.models.empty()) {
+                continue;
+            }
+            const auto& mo = part.models[0];
+            for (const auto& v : mo.vertices) {
+                std::array<float, 3> p{};
+                for (std::size_t k = 0; k < 3; ++k) {
+                    const float w = v.weights[k] / 255.0f;
+                    if (w <= 0 || v.bones[k] >= skin.size()) {
+                        continue;
+                    }
+                    const formats::MdlMatrix& m = skin[v.bones[k]];
+                    for (std::size_t i = 0; i < 3; ++i) {
+                        p[i] += w * (m[i][0] * v.position[0] + m[i][1] * v.position[1] + m[i][2] * v.position[2] + m[i][3]);
+                    }
+                }
+                out << "v " << p[0] << " " << p[1] << " " << p[2] << "\n";
+            }
+            const auto& lod = model.vtx.body_parts[bp].models[0].lods[0];
+            for (std::size_t me = 0; me < mo.meshes.size() && me < lod.meshes.size(); ++me) {
+                const auto tris = lod.meshes[me].triangles();
+                for (std::size_t t = 0; t + 2 < tris.size(); t += 3) {
+                    out << "f " << base + mo.meshes[me].vertex_offset + tris[t] << " "
+                        << base + mo.meshes[me].vertex_offset + tris[t + 1] << " "
+                        << base + mo.meshes[me].vertex_offset + tris[t + 2] << "\n";
+                }
+            }
+            base += mo.vertices.size();
+        }
+        std::cout << "posed with '" << found->sequence.label << "' (" << mapped << " of " << bones.size()
+                  << " bones animated) -> " << args[5] << "\n";
+        return 0;
+    }
     if (args.size() >= 3 && args[1] == "info") {
         const vfs::GameFileSystem gfs(game_dir_arg(args, 3));
         const auto model = load_model(gfs, args[2]);

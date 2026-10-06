@@ -135,6 +135,57 @@ std::vector<std::byte> build_mdl(MdlVertexFormat format) {
     b.i32(0x134, 1);
     b.i32(0x138, 1);
     b.i32(0x13c, static_cast<std::int32_t>(skins));
+    // Animation scales: 1/256 per position unit, 1/32768 per quaternion component.
+    for (std::size_t k = 0; k < 3; ++k) {
+        b.f32(bone + 0x3c + 4 * k, 1.0f / 256.0f);
+    }
+    for (std::size_t k = 0; k < 4; ++k) {
+        b.f32(bone + 0x48 + 4 * k, 1.0f / 32768.0f);
+    }
+
+    // One 3-frame animation: position x runs 1.0, 2.0, (2.0 repeated); rotation z
+    // is a constant 0.5; every other channel keeps the bone default.
+    const std::size_t anim = b.size();
+    b.grow(anim + 72 + 32);
+    b.i32(0x108, 1);
+    b.i32(0x10c, static_cast<std::int32_t>(anim));
+    b.f32(anim + 4, 30.0f);
+    b.i32(anim + 8, 1);
+    b.i32(anim + 12, 3);
+    b.i32(anim + 48, 72);
+    const std::size_t record = anim + 72;
+    b.f32(record, 1.0f);
+    const std::size_t pos_x = b.size();
+    b.u8(pos_x, 2); // valid
+    b.u8(pos_x + 1, 3); // total
+    b.u16(pos_x + 2, 256);
+    b.u16(pos_x + 4, 512);
+    const std::size_t rot_z = b.size();
+    b.u8(rot_z, 1);
+    b.u8(rot_z + 1, 3);
+    b.u16(rot_z + 2, 16384);
+    b.i32(record + 4, static_cast<std::int32_t>(pos_x - record));
+    b.i32(record + 4 + 4 * 5, static_cast<std::int32_t>(rot_z - record));
+
+    const std::size_t seq = b.size();
+    b.grow(seq + 764);
+    b.i32(0x110, 1);
+    b.i32(0x114, static_cast<std::int32_t>(seq));
+    b.i32(seq + 8, 1);
+    b.i32(seq + 12, -1);
+    b.i32(seq + 16, 1);
+    b.i32(seq + 52, 1);
+    b.i32(seq + 56, 0);
+
+    const std::size_t include = b.size();
+    b.grow(include + 116);
+    b.i32(0x194, 1);
+    b.i32(0x198, static_cast<std::int32_t>(include));
+
+    b.i32(anim, static_cast<std::int32_t>(b.str("@idle") - anim));
+    b.i32(seq, static_cast<std::int32_t>(b.str("idle") - seq));
+    b.i32(seq + 4, static_cast<std::int32_t>(b.str("ACT_IDLE") - seq));
+    b.i32(include, static_cast<std::int32_t>(b.str("Models\\Shared\\Anims.mdl") - include));
     b.i32(bone, static_cast<std::int32_t>(b.str("root") - bone));
     b.i32(part, static_cast<std::int32_t>(b.str("body") - part));
     b.i32(0x8c, static_cast<std::int32_t>(b.size()));
@@ -229,6 +280,68 @@ TEST_CASE("MDL quantized vertices") {
     CHECK(m8.vertices[0].position[2] == doctest::Approx(2.0f));
 }
 
+TEST_CASE("MDL animations, sequences and include models") {
+    const auto mdl = parse_mdl(build_mdl(MdlVertexFormat::Float));
+    REQUIRE(mdl.animations.size() == 1);
+    CHECK(mdl.animations[0].name == "@idle");
+    CHECK(mdl.animations[0].frame_count == 3);
+    CHECK(mdl.animations[0].fps == 30.0f);
+    REQUIRE(mdl.sequences.size() == 1);
+    CHECK(mdl.sequences[0].label == "idle");
+    CHECK(mdl.sequences[0].activity_name == "ACT_IDLE");
+    CHECK((mdl.sequences[0].flags & sequence_flags::Looping) != 0);
+    CHECK(mdl.sequences[0].animation == 0);
+    CHECK(mdl.include_models == std::vector<std::string>{"models/shared/anims.mdl"});
+    CHECK(mdl.bones[0].position_scale[0] == doctest::Approx(1.0f / 256.0f));
+
+    const auto f0 = mdl.sample_animation(0, 0);
+    const auto f1 = mdl.sample_animation(0, 1);
+    const auto f2 = mdl.sample_animation(0, 2);
+    REQUIRE(f0.size() == 1);
+    // Positions are offsets from the bind position (x = 1.0 for this bone).
+    CHECK(f0[0].position[0] == doctest::Approx(2.0f));
+    CHECK(f1[0].position[0] == doctest::Approx(3.0f));
+    CHECK(f2[0].position[0] == doctest::Approx(3.0f)); // last value repeats
+    CHECK(f0[0].position[1] == 0.0f);                  // bone default
+    CHECK(f0[0].rotation[2] == doctest::Approx(0.5f)); // rotations are absolute
+    CHECK(f0[0].rotation[3] == 1.0f);                  // default quaternion w
+    CHECK(mdl.sample_animation(0, 99)[0].position[0] == doctest::Approx(3.0f)); // clamped
+    CHECK_THROWS_AS(mdl.sample_animation(1, 0), FormatError);
+}
+
+TEST_CASE("MDL world and skinning transforms") {
+    // Root at the origin; child 10 units along x, rotated 90 degrees about z;
+    // grandchild flagged to rotate relative to the root.
+    std::vector<MdlBone> bones(3);
+    const float s = std::sqrt(0.5f);
+    bones[0].parent = -1;
+    bones[0].quaternion = {0, 0, 0, 1};
+    bones[1].parent = 0;
+    bones[1].position = {10, 0, 0};
+    bones[1].quaternion = {0, 0, s, s};
+    bones[2].parent = 1;
+    bones[2].position = {5, 0, 0};
+    bones[2].quaternion = {0, 0, 0, 1};
+    for (auto& b : bones) {
+        b.pose_to_bone = {{{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}}};
+    }
+
+    auto world = mdl_world_transforms(bones, mdl_bind_pose(bones));
+    // The child's rotation turns the grandchild's offset onto +y.
+    CHECK(world[2][0][3] == doctest::Approx(10.0f));
+    CHECK(world[2][1][3] == doctest::Approx(5.0f));
+    CHECK(world[2][0][0] == doctest::Approx(0.0f).epsilon(1e-6)); // inherits the 90 degree turn
+
+    bones[2].flags = bone_flags::RotationRelativeToRoot;
+    world = mdl_world_transforms(bones, mdl_bind_pose(bones));
+    CHECK(world[2][1][3] == doctest::Approx(5.0f)); // position still follows the parent
+    CHECK(world[2][0][0] == doctest::Approx(1.0f)); // rotation ignores the parent's turn
+
+    const auto skin = mdl_skinning_matrices(bones, world);
+    CHECK(skin[1][0][3] == doctest::Approx(10.0f));
+    CHECK_THROWS_AS(mdl_world_transforms(bones, {}), FormatError);
+}
+
 TEST_CASE("MDL rejects malformed files") {
     auto data = build_mdl(MdlVertexFormat::Float);
     SUBCASE("signature") {
@@ -286,6 +399,7 @@ TEST_CASE("MDL integration: every model in the real install loads") {
     }
     const vfs::GameFileSystem gfs(*game);
     std::size_t models = 0, vtx_files = 0, triangles = 0, vertices = 0, outside_hull = 0;
+    std::size_t animations = 0, sequences = 0, samples = 0, non_unit = 0, missing_includes = 0, broken_sequences = 0;
     std::map<MdlVertexFormat, std::size_t> formats;
     for (const auto& path : gfs.list_files()) {
         if (!path.ends_with(".mdl")) {
@@ -296,6 +410,27 @@ TEST_CASE("MDL integration: every model in the real install loads") {
         MdlFile mdl;
         REQUIRE_NOTHROW(mdl = parse_mdl(*data));
         ++models;
+        animations += mdl.animations.size();
+        sequences += mdl.sequences.size();
+        for (const auto& s : mdl.sequences) {
+            broken_sequences += s.animation < 0;
+        }
+        for (const auto& inc : mdl.include_models) {
+            missing_includes += !gfs.exists(inc);
+        }
+        for (std::size_t a = 0; a < mdl.animations.size(); ++a) {
+            const std::uint32_t frames = std::max(1u, mdl.animations[a].frame_count);
+            for (std::uint32_t frame : {0u, frames / 2, frames - 1}) {
+                std::vector<MdlBonePose> pose;
+                REQUIRE_NOTHROW(pose = mdl.sample_animation(a, frame));
+                for (const auto& p : pose) {
+                    const auto& q = p.rotation;
+                    const float n = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+                    non_unit += std::abs(n - 1.0f) > 0.02f;
+                    ++samples;
+                }
+            }
+        }
         for (const auto& part : mdl.body_parts) {
             for (const auto& m : part.models) {
                 ++formats[m.vertex_format];
@@ -347,6 +482,13 @@ TEST_CASE("MDL integration: every model in the real install loads") {
                    << " dx80 triangles (all LODs); formats float/q16/q8 = " << formats[MdlVertexFormat::Float] << "/"
                    << formats[MdlVertexFormat::Quantized16] << "/" << formats[MdlVertexFormat::Quantized8] << "; "
                    << outside_hull << " vertices outside the header hull");
+    MESSAGE(animations << " animations, " << sequences << " sequences, " << samples << " bone samples ("
+                       << non_unit << " non-unit rotations), " << missing_includes << " missing include models, "
+                       << broken_sequences << " sequences with broken animation references");
+    // Models compiled with their animations stripped but sequences kept
+    // (throwtaxi, woodbox/lid, drknobantique*_static): 8 in the Steam release.
+    CHECK(broken_sequences <= 8);
+    CHECK(non_unit == 0);
     CHECK(models > 4000);
     CHECK(vtx_files >= 2 * models - 1);
 }

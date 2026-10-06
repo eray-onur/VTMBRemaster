@@ -87,6 +87,39 @@ Until both tables are recovered, quantized vertices report `has_normal = false` 
 
 To do: recover both tables.
 
+## Animation
+
+Verified on every model in the Steam release: 11,039 animations and 10,739 sequences. All 1,368,576 sampled bone rotations are unit quaternions, and all 13,305 animation channels checked in the male stance and conversation files decode to exactly their frame count and byte length. The cop renders correctly in both an "arms crossed" stance and a "hands behind back" stance.
+
+### Header fields
+
+| Offset | Fields |
+|---|---|
+| 0x108 | animation count, offset (72-byte animation descriptions) |
+| 0x110 | sequence count, offset (764-byte sequences) |
+| 0x11c, 0x120 | sequence group count, offset (one `default` group in practice) |
+| 0x194, 0x198 | **include model** count, offset (116-byte entries; name at +0, relative) |
+
+Characters keep almost no animation of their own. The cop, for example, has only `ragdoll`, and includes `models/character/shared/male/npc_allsequences.mdl`. That file in turn includes `stances.mdl`, `conversations.mdl` and `allsequences.mdl`, which hold the shared animations. Animation bones are matched to model bones by name; across the male skeleton the 53 shared bones have identical names, parents and bind poses.
+
+### Structures
+
+**Animation description** (72 bytes): `i32 name (rel)` (e.g. `@Stance_Anger_Idle_1`), `f32 fps`, `i32 flags`, `i32 frame count`, `i32 movement count`, `i32 movement offset`, `f32 bounds[6]`, `i32 data offset (rel)` at +48, then 20 bytes not yet decoded.
+
+**Sequence** (764 bytes): `i32 label (rel)`, `i32 activity name (rel)`, `i32 flags` (bit 0 = looping), `i32 activity`, `i32 activity weight`, `i32 event count`, `i32 event offset`, `f32 bounds[6]`, `i32 blend count` at +52, `i16 animation index[]` at +56 (one per blend), group sizes at +572 and +576. The rest is not yet decoded.
+
+**Animation data:** one 32-byte record per bone, `f32` (always 1.0) and then seven `u32` channel offsets relative to the record: position x, y, z, rotation x, y, z, w. An offset of 0 means the channel is not stored. Each channel is run-length encoded in 16-bit entries. A header entry holds `valid` and `total` bytes, in that order, followed by `valid` signed values that cover `total` frames; frames past `valid` repeat the last value. Runs follow one another until the frame count is reached.
+
+- **Rotation** components are **absolute**: `value × bone.rotation_scale[c]` (bone +0x48…+0x54, a separate scale per component, chosen to maximise precision).
+- **Position** components are **offsets from the bind position**: `bone.position[c] + value × bone.position_scale[c]` (bone +0x3c, 1/256 on characters).
+- A channel that is not stored keeps the bind value.
+
+**Bone flags** (bone +0x88). Bit `0x2` is set on every `BipNN Spine1` bone (525 bones in all) and means **the rotation is relative to the top of the hierarchy (`Bip01`), not to the parent**. The position still chains through the parent. Treating it as parent-relative bends characters 120° at the waist. Root-relative gives a median of 7° from bind across all 67 male stances.
+
+**Shipped data issues:** 8 sequences reference animations that the file does not contain. These are models compiled with their animations stripped (`throwtaxi`, `woodbox/lid`, `drknobantique*_static`). OpenBL marks them invalid (`animation = -1`).
+
+**Not yet decoded:** extra blends of multi-blend sequences (aiming, directional movement), movement (root motion), events, IK, and the root bone's facing convention. Animation roots are stored about 90° off the bind root about the vertical axis.
+
 ## `.vtx` layout
 
 | Struct | Size | Fields |
