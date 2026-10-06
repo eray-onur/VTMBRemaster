@@ -32,6 +32,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -44,8 +45,8 @@ using namespace openbl;
 namespace {
 
 constexpr const char* kUsage =
-    "usage: openbl-viewer [--game DIR] [--map NAME] [--pos X Y Z] [--angles PITCH YAW]\n"
-    "                     [--light-scale F] [--fullbright] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]]\n"
+    "usage: openbl-viewer [--game DIR] [--map NAME] [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
+    "                     [--light-scale F] [--fullbright] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--shots FILE --out DIR]\n"
     "                     [--validation] [--no-vsync]";
 
 struct Options {
@@ -54,11 +55,16 @@ struct Options {
     std::optional<glm::vec3> position;
     std::optional<glm::vec2> angles; // pitch, yaw
     float light_scale = 2.3f;
+    float fov = 75.0f;
+    std::uint32_t width = 1600;
+    std::uint32_t height = 900;
     bool fullbright = false;
     bool props = true;
     bool light_styles = true;
     bool characters = true;
     std::optional<std::filesystem::path> screenshot;
+    std::optional<std::filesystem::path> shots;     // Shot list: "name x y z pitch yaw" per line.
+    std::filesystem::path shots_dir = ".";
     int frames = 0; // With --screenshot: frames to render before capturing.
     bool validation = false;
     bool vsync = true;
@@ -92,6 +98,16 @@ Options parse_args(int argc, char** argv) {
             v.x = std::stof(next());
             v.y = std::stof(next());
             o.angles = v;
+        } else if (a == "--fov") {
+            o.fov = std::stof(next());
+        } else if (a == "--size") {
+            const std::string size = next();
+            const auto x = size.find('x');
+            if (x == std::string::npos) {
+                throw std::runtime_error("--size expects WIDTHxHEIGHT");
+            }
+            o.width = static_cast<std::uint32_t>(std::stoul(size.substr(0, x)));
+            o.height = static_cast<std::uint32_t>(std::stoul(size.substr(x + 1)));
         } else if (a == "--light-scale") {
             o.light_scale = std::stof(next());
         } else if (a == "--fullbright") {
@@ -104,6 +120,10 @@ Options parse_args(int argc, char** argv) {
             o.characters = false;
         } else if (a == "--screenshot") {
             o.screenshot = next();
+        } else if (a == "--shots") {
+            o.shots = next();
+        } else if (a == "--out") {
+            o.shots_dir = next();
         } else if (a == "--frames") {
             o.frames = std::stoi(next());
         } else if (a == "--validation") {
@@ -322,7 +342,7 @@ private:
 };
 
 int run(const Options& options) {
-    platform::Window window({"OpenBL Viewer"});
+    platform::Window window({"OpenBL Viewer", options.width, options.height});
     auto device = rhi::create_vulkan_device(window, {options.validation, options.vsync});
     const auto info = device->info();
     std::cout << "renderer: " << info.backend << " on " << info.adapter << "\n";
@@ -333,6 +353,7 @@ int run(const Options& options) {
             gfs = std::make_unique<vfs::GameFileSystem>(*options.game_dir);
         }
         viewer::Camera camera;
+        camera.fov = options.fov;
         std::unique_ptr<Scene> scene;
         if (options.map) {
             auto map = std::make_unique<MapScene>(*device, *gfs, *options.map, options);
@@ -355,6 +376,32 @@ int run(const Options& options) {
         }
 
         const auto start_time = std::chrono::steady_clock::now();
+        struct Shot {
+            std::string name;
+            glm::vec3 position;
+            float pitch, yaw;
+        };
+        std::vector<Shot> shots;
+        if (options.shots) {
+            std::ifstream list(*options.shots);
+            if (!list) {
+                throw std::runtime_error("cannot read shot list " + options.shots->string());
+            }
+            std::string line;
+            while (std::getline(list, line)) {
+                std::istringstream in(line);
+                Shot s;
+                if (line.empty() || line[0] == '#' || !(in >> s.name >> s.position.x >> s.position.y >> s.position.z >> s.pitch >> s.yaw)) {
+                    continue;
+                }
+                shots.push_back(s);
+            }
+            std::filesystem::create_directories(options.shots_dir);
+        }
+        std::size_t shot_index = 0;
+        int shot_frame = 0;
+        constexpr int kShotSettleFrames = 3;
+
         auto last = start_time;
         int frame = 0;
         while (window.poll_events()) {
@@ -365,8 +412,16 @@ int run(const Options& options) {
                 break;
             }
             camera.update(window.input(), dt);
+            bool shot_capture = false;
+            if (shot_index < shots.size()) {
+                const Shot& s = shots[shot_index];
+                camera.position = s.position;
+                camera.pitch = s.pitch;
+                camera.yaw = s.yaw;
+                shot_capture = ++shot_frame >= kShotSettleFrames;
+            }
 
-            const bool capture = options.screenshot && frame == options.frames;
+            const bool capture = (options.screenshot && frame == options.frames) || shot_capture;
             if (capture) {
                 device->request_capture();
             }
@@ -384,11 +439,19 @@ int run(const Options& options) {
                 if (!image) {
                     throw std::runtime_error("capture failed");
                 }
-                formats::write_png(*options.screenshot, image->rgba, image->width, image->height);
-                std::cout << "wrote " << options.screenshot->string() << " (" << image->width << "x" << image->height
-                          << ") at pos " << camera.position.x << " " << camera.position.y << " " << camera.position.z
-                          << " angles " << camera.pitch << " " << camera.yaw << "\n";
-                break;
+                const std::filesystem::path out =
+                    shot_capture ? options.shots_dir / (shots[shot_index].name + ".png") : *options.screenshot;
+                formats::write_png(out, image->rgba, image->width, image->height);
+                std::cout << "wrote " << out.string() << " (" << image->width << "x" << image->height << ") at pos "
+                          << camera.position.x << " " << camera.position.y << " " << camera.position.z << " angles "
+                          << camera.pitch << " " << camera.yaw << "\n";
+                if (!shot_capture) {
+                    break;
+                }
+                shot_frame = 0;
+                if (++shot_index == shots.size()) {
+                    break;
+                }
             }
             ++frame;
         }

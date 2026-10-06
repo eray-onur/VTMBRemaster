@@ -44,7 +44,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Water placeholder: fog colour, Fresnel blend to a dim reflection tint, animated normal-map ripples
 - [ ] Real water: reflection and refraction render targets, underwater fog, `$bottommaterial`, cheap-water distances
 - [ ] Light styles, translucent sorting, cubemap reflections, prop fade distances
-- [ ] Confirm the lightmap brightness (overbright scale 2.3) against original-game screenshots
+- [x] Parity tooling: viewer shot lists (`--shots`, `--fov`, `--size`), `openbl-cli image compare` (see docs/PARITY.md)
+- [ ] Confirm the lightmap brightness (overbright scale 2.3) against original-game screenshots; verify the capture commands
 - [x] Static models in maps
 - [x] Skinned and animated models: GPU skinning (per-draw bone data), NPCs from map entities playing their first `ACT_IDLE` sequence
 - [ ] Animation: blending between sequences, multi-blend sequences, facial flexes, eyes

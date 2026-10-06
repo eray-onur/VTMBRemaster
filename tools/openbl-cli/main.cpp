@@ -4,6 +4,7 @@
 #include "openbl/formats/error.hpp"
 #include "openbl/formats/zip.hpp"
 #include "openbl/formats/image_decode.hpp"
+#include "openbl/formats/image_read.hpp"
 #include "openbl/formats/keyvalues.hpp"
 #include "openbl/formats/mdl.hpp"
 #include "openbl/formats/vtx.hpp"
@@ -16,6 +17,7 @@
 #include <algorithm>
 #include "openbl/vfs/game_filesystem.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -50,6 +52,7 @@ void usage() {
                  "  openbl-cli mdl pose <model> <sequence> <frame> <out.obj> [game-dir]\n"
                  "  openbl-cli bsp info <map> [game-dir]\n"
                  "  openbl-cli bsp export <map> <out.obj> [game-dir]\n"
+                 "  openbl-cli image compare <reference> <candidate> [x y w h]\n"
                  "\n"
                  "<texture> and <material> are game paths with or without extension, e.g.\n"
                  "materials/brick/bradwllb; the materials/ prefix is optional for <material>.\n"
@@ -587,6 +590,57 @@ int cmd_bsp(const std::vector<std::string_view>& args) {
     return 2;
 }
 
+// Brightness and difference statistics between two screenshots (PNG or TGA),
+// optionally restricted to a region given in reference-image pixels.
+int cmd_image(const std::vector<std::string_view>& args) {
+    if (args.size() < 4 || args[1] != "compare") {
+        usage();
+        return 2;
+    }
+    const auto a = formats::read_image(fs::path(args[2]));
+    const auto b = formats::read_image(fs::path(args[3]));
+    if (a.width != b.width || a.height != b.height) {
+        std::cerr << "image sizes differ: " << a.width << "x" << a.height << " vs " << b.width << "x" << b.height
+                  << "\n";
+        return 1;
+    }
+    std::uint32_t x0 = 0, y0 = 0, w = a.width, h = a.height;
+    if (args.size() >= 8) {
+        x0 = static_cast<std::uint32_t>(std::stoul(std::string(args[4])));
+        y0 = static_cast<std::uint32_t>(std::stoul(std::string(args[5])));
+        w = static_cast<std::uint32_t>(std::stoul(std::string(args[6])));
+        h = static_cast<std::uint32_t>(std::stoul(std::string(args[7])));
+        if (x0 + w > a.width || y0 + h > a.height) {
+            std::cerr << "region outside the image\n";
+            return 1;
+        }
+    }
+    double sum_a[3] = {}, sum_b[3] = {}, abs_diff = 0, sq_diff = 0;
+    for (std::uint32_t y = y0; y < y0 + h; ++y) {
+        for (std::uint32_t x = x0; x < x0 + w; ++x) {
+            const std::size_t i = (std::size_t{y} * a.width + x) * 4;
+            for (std::size_t c = 0; c < 3; ++c) {
+                sum_a[c] += a.rgba[i + c];
+                sum_b[c] += b.rgba[i + c];
+                const double d = static_cast<double>(b.rgba[i + c]) - a.rgba[i + c];
+                abs_diff += std::abs(d);
+                sq_diff += d * d;
+            }
+        }
+    }
+    const double n = static_cast<double>(w) * h;
+    const char* names[] = {"red  ", "green", "blue "};
+    std::cout << "region " << x0 << "," << y0 << " " << w << "x" << h << "\n";
+    for (std::size_t c = 0; c < 3; ++c) {
+        std::cout << "  " << names[c] << "  reference " << sum_a[c] / n << "  candidate " << sum_b[c] / n
+                  << "  ratio " << (sum_a[c] > 0 ? sum_b[c] / sum_a[c] : 0.0) << "\n";
+    }
+    const double mse = sq_diff / (n * 3);
+    std::cout << "  mean absolute difference " << abs_diff / (n * 3) << "\n"
+              << "  PSNR " << (mse > 0 ? 10.0 * std::log10(255.0 * 255.0 / mse) : 99.0) << " dB\n";
+    return 0;
+}
+
 int cmd_vpk(const std::vector<std::string_view>& args) {
     if (args.size() < 3) {
         usage();
@@ -716,6 +770,9 @@ int main(int argc, char** argv) {
         }
         if (args[0] == "bsp") {
             return cmd_bsp(args);
+        }
+        if (args[0] == "image") {
+            return cmd_image(args);
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

@@ -1,6 +1,7 @@
 add_library(openbl_formats
     bsp.cpp
     image_decode.cpp
+    image_read.cpp
     image_write.cpp
     keyvalues.cpp
     mdl.cpp
