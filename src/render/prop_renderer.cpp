@@ -4,7 +4,9 @@
 #include "openbl/formats/mdl.hpp"
 #include "openbl/formats/path.hpp"
 #include "openbl/formats/vtx.hpp"
-#include "openbl/render/light_probe.hpp"
+#include "openbl/render/prop_lighting.hpp"
+
+#include "half.hpp"
 
 #include "openbl_prop_ps.h"
 #include "openbl_prop_vs.h"
@@ -14,9 +16,11 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 #include <sstream>
 
 namespace openbl::render {
@@ -26,23 +30,43 @@ namespace {
 struct Vertex {
     float position[3];
     float uv[2];
+    float normal[3];
 };
 
 struct PushConstants {
     float mvp[16];
-    float tint[4];
+    std::uint32_t cube[9]; // 18 half-floats: rgb per cube face
+    float alpha_ref;
     std::uint32_t flags;
-    float padding[3];
+    float padding;
 };
-static_assert(sizeof(PushConstants) == 96);
+static_assert(sizeof(PushConstants) == 112);
 
 constexpr std::uint32_t kAlphaTest = 1;
 constexpr std::uint32_t kUnlit = 4;
 constexpr std::uint32_t kSelfIllum = 8;
 constexpr std::uint32_t kTranslucent = 16;
 
-// Light used when no lit floor is found below a prop.
-constexpr std::array<float, 3> kDefaultLight = {0.25f, 0.25f, 0.25f};
+// Area-weighted smooth normals, for vertex formats that do not store usable normals.
+void generate_normals(std::vector<Vertex>& vertices, const std::vector<std::uint32_t>& indices) {
+    std::vector<glm::vec3> acc(vertices.size(), glm::vec3(0.0f));
+    for (std::size_t t = 0; t + 2 < indices.size(); t += 3) {
+        const glm::vec3 a = glm::make_vec3(vertices[indices[t]].position);
+        const glm::vec3 b = glm::make_vec3(vertices[indices[t + 1]].position);
+        const glm::vec3 c = glm::make_vec3(vertices[indices[t + 2]].position);
+        const glm::vec3 n = glm::cross(b - a, c - a);
+        for (std::size_t k = 0; k < 3; ++k) {
+            acc[indices[t + k]] += n;
+        }
+    }
+    for (std::size_t v = 0; v < vertices.size(); ++v) {
+        const float len = glm::length(acc[v]);
+        const glm::vec3 n = len > 0 ? acc[v] / len : glm::vec3(0, 0, 1);
+        vertices[v].normal[0] = n.x;
+        vertices[v].normal[1] = n.y;
+        vertices[v].normal[2] = n.z;
+    }
+}
 
 // Source angles: pitch (down positive) about Y, yaw about Z, roll about X;
 // applied roll, then pitch, then yaw.
@@ -89,7 +113,7 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
     pd.vertex.spirv = openbl_prop_vs;
     pd.pixel.spirv = openbl_prop_ps;
     pd.vertex_stride = sizeof(Vertex);
-    pd.attributes = {{0, rhi::Format::RGB32_Float, 0}, {1, rhi::Format::RG32_Float, 12}};
+    pd.attributes = {{0, rhi::Format::RGB32_Float, 0}, {1, rhi::Format::RG32_Float, 12}, {2, rhi::Format::RGB32_Float, 20}};
     pd.texture_count = 1;
     pd.push_constant_size = sizeof(PushConstants);
     pd.front_counter_clockwise = false;
@@ -104,9 +128,9 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
     }
     sampler_ = device.create_sampler({});
 
-    const FloorLightProbe probe(bsp);
+    const PropLighting lighting(bsp);
     auto add = [&](const std::string& path, const formats::Vec3& origin, const formats::Vec3& angles,
-                   std::size_t skin, const formats::Vec3& light_point) {
+                   std::size_t skin, const std::optional<formats::Vec3>& lighting_origin) {
         const Model* model = load_model(path);
         if (!model) {
             return;
@@ -116,20 +140,28 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
         inst.skin = skin < model->skins.size() ? skin : 0;
         const glm::mat4 m = prop_transform(origin, angles);
         std::memcpy(inst.transform.data(), glm::value_ptr(m), sizeof(inst.transform));
-        const formats::Vec3 probe_point{light_point[0], light_point[1], light_point[2] + 16.0f};
-        if (auto light = probe.sample(probe_point)) {
-            inst.light = *light;
-        } else {
-            inst.light = kDefaultLight;
-            ++stats_.unprobed_instances;
+        // Sample at the model's centre (or its explicit lighting origin), nudged
+        // out of solid space if the centre is embedded in the world.
+        const glm::vec3 c = lighting_origin ? glm::vec3(glm::make_vec3(lighting_origin->data()))
+                                            : glm::vec3(m * glm::vec4(glm::make_vec3(model->center.data()), 1.0f));
+        formats::Vec3 point{c.x, c.y, c.z};
+        if (bsp.leafs[bsp.leaf_at(point)].contents & formats::contents::Solid) {
+            point = {origin[0], origin[1], origin[2] + 16.0f};
         }
+        std::array<std::array<float, 3>, 3> rotation{};
+        for (int r = 0; r < 3; ++r) {
+            for (int k = 0; k < 3; ++k) {
+                rotation[static_cast<std::size_t>(r)][static_cast<std::size_t>(k)] = m[k][r];
+            }
+        }
+        inst.lighting = lighting.sample(point, rotation);
         instances_.push_back(inst);
     };
 
     constexpr std::uint8_t kUseLightingOrigin = 0x2;
     for (const auto& sp : bsp.static_props) {
         add(bsp.static_prop_models[sp.model], sp.origin, sp.angles, static_cast<std::size_t>(std::max(sp.skin, 0)),
-            (sp.flags & kUseLightingOrigin) ? sp.lighting_origin : sp.origin);
+            (sp.flags & kUseLightingOrigin) ? std::optional(sp.lighting_origin) : std::nullopt);
     }
     for (const auto& e : bsp.entities) {
         auto cls = e.find("classname");
@@ -143,7 +175,7 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
             skin = static_cast<std::size_t>(std::max(0, std::atoi(s->second.c_str())));
         }
         const auto origin = parse_vec3(e, "origin");
-        add(formats::normalize_game_path(model->second), origin, parse_vec3(e, "angles"), skin, origin);
+        add(formats::normalize_game_path(model->second), origin, parse_vec3(e, "angles"), skin, std::nullopt);
     }
     stats_.instances = instances_.size();
 }
@@ -172,6 +204,7 @@ const PropRenderer::Model* PropRenderer::load_model(const std::string& path) {
                 std::int32_t material;
             };
             std::vector<MeshRange> ranges;
+            bool needs_normals = false;
             for (std::size_t b = 0; b < mdl.body_parts.size(); ++b) {
                 const auto& part = mdl.body_parts[b];
                 if (part.models.empty() || vtx.body_parts[b].models.empty() || vtx.body_parts[b].models[0].lods.empty()) {
@@ -180,8 +213,11 @@ const PropRenderer::Model* PropRenderer::load_model(const std::string& path) {
                 const auto& mo = part.models[0]; // Default body group.
                 const auto& lod = vtx.body_parts[b].models[0].lods[0];
                 const auto vertex_base = static_cast<std::uint32_t>(vertices.size());
+                needs_normals = needs_normals || mo.vertex_format != formats::MdlVertexFormat::Float;
                 for (const auto& v : mo.vertices) {
-                    vertices.push_back({{v.position[0], v.position[1], v.position[2]}, {v.uv[0], v.uv[1]}});
+                    vertices.push_back({{v.position[0], v.position[1], v.position[2]},
+                                        {v.uv[0], v.uv[1]},
+                                        {v.normal[0], v.normal[1], v.normal[2]}});
                 }
                 for (std::size_t me = 0; me < mo.meshes.size() && me < lod.meshes.size(); ++me) {
                     const auto tris = lod.meshes[me].triangles();
@@ -198,7 +234,18 @@ const PropRenderer::Model* PropRenderer::load_model(const std::string& path) {
                 }
             }
             if (!indices.empty()) {
+                if (needs_normals) {
+                    generate_normals(vertices, indices);
+                    ++stats_.generated_normals;
+                }
                 model = std::make_unique<Model>();
+                glm::vec3 lo(INFINITY), hi(-INFINITY);
+                for (const Vertex& v : vertices) {
+                    lo = glm::min(lo, glm::make_vec3(v.position));
+                    hi = glm::max(hi, glm::make_vec3(v.position));
+                }
+                const glm::vec3 center = (lo + hi) * 0.5f;
+                model->center = {center.x, center.y, center.z};
                 model->vertices = device_.create_buffer({vertices.size() * sizeof(Vertex), rhi::BufferUsage::Vertex},
                                                         std::as_bytes(std::span(vertices)));
                 model->indices = device_.create_buffer({indices.size() * sizeof(std::uint32_t), rhi::BufferUsage::Index},
@@ -246,8 +293,9 @@ void PropRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float, 16>&
     for (const Instance& inst : instances_) {
         const glm::mat4 mvp = view_projection * glm::make_mat4(inst.transform.data());
         std::memcpy(pc.mvp, glm::value_ptr(mvp), sizeof(pc.mvp));
-        for (int k = 0; k < 3; ++k) {
-            pc.tint[k] = inst.light[static_cast<std::size_t>(k)] * settings.light_scale;
+        for (std::size_t h = 0; h < 18; ++h) {
+            const std::uint32_t half = detail::to_half(inst.lighting.color[h / 3][h % 3] * settings.light_scale);
+            pc.cube[h / 2] = (h % 2) ? ((pc.cube[h / 2] & 0xFFFFu) | (half << 16)) : half;
         }
         for (const Mesh& mesh : inst.model->skins[inst.skin]) {
             const RenderMaterial& m = *mesh.material;
@@ -264,7 +312,7 @@ void PropRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float, 16>&
                 cmd.set_index_buffer(*inst.model->indices);
                 bound_model = inst.model;
             }
-            pc.tint[3] = m.alpha_ref;
+            pc.alpha_ref = m.alpha_ref;
             pc.flags = (m.alpha_test ? kAlphaTest : 0) | ((m.unlit || settings.fullbright) ? kUnlit : 0) |
                        (m.self_illum ? kSelfIllum : 0) | (m.translucent ? kTranslucent : 0);
             cmd.set_bind_group(*mesh.bind_group);

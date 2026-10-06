@@ -1,6 +1,7 @@
 add_library(openbl_render
     light_probe.cpp
     material_system.cpp
+    prop_lighting.cpp
     prop_renderer.cpp
     sky_renderer.cpp
     texture_upload.cpp

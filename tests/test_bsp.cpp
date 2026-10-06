@@ -105,6 +105,36 @@ std::vector<std::byte> build_bsp() {
         lumps[bsp_lump::Models].put(v);
     }
 
+    // BSP tree: one node on plane 0 (z = 0); empty leaf above, solid leaf below.
+    lumps[bsp_lump::Nodes].put(std::int32_t{0});
+    lumps[bsp_lump::Nodes].put(std::int32_t{-1});
+    lumps[bsp_lump::Nodes].put(std::int32_t{-2});
+    lumps[bsp_lump::Nodes].d.resize(32);
+    for (std::int32_t contents : {0, 1}) {
+        Writer& l = lumps[bsp_lump::Leafs];
+        const std::size_t at = l.d.size();
+        l.put(contents);
+        l.put(std::int16_t{static_cast<std::int16_t>(contents ? -1 : 0)});
+        l.d.resize(at + 32);
+    }
+
+    // One point light (88-byte record).
+    {
+        Writer& w = lumps[bsp_lump::WorldLights];
+        w.vec(0, 0, 100);   // origin
+        w.vec(500, 400, 300); // intensity
+        w.vec(0, 0, -1);    // normal
+        w.put(std::int32_t{0}); // cluster
+        w.put(std::int32_t{1}); // type: point
+        w.put(std::int32_t{0}); // style
+        for (float f : {0.0f, 0.0f, 0.0f, 256.0f, 0.0f, 0.0f, 1.0f}) {
+            w.put(f);
+        }
+        for (std::int32_t v : {0, -1, 0}) {
+            w.put(v);
+        }
+    }
+
     // Displacement: power 1 (3x3), starting at corner (64, 64), centre raised by 10.
     Writer& di = lumps[bsp_lump::DispInfo];
     di.vec(64, 64, 0);
@@ -300,6 +330,27 @@ TEST_CASE("BSP face meshes") {
     CHECK(disp.alphas[4] == 1.0f);
     // Texture coordinates use the undisplaced surface.
     CHECK(disp.uvs[4][0] == doctest::Approx(0.25f));
+}
+
+TEST_CASE("BSP world lights and line of sight") {
+    const auto bsp = parse_bsp(build_bsp());
+    REQUIRE(bsp.world_lights.size() == 1);
+    const auto& light = bsp.world_lights[0];
+    CHECK(light.type == BspLightType::Point);
+    CHECK(light.origin[2] == 100.0f);
+    CHECK(light.intensity[1] == 400.0f);
+    CHECK(light.radius == 256.0f);
+    CHECK(light.quadratic_attn == 1.0f);
+    CHECK(light.texinfo == -1);
+
+    REQUIRE(bsp.nodes.size() == 1);
+    REQUIRE(bsp.leafs.size() == 2);
+    CHECK(bsp.leaf_at({0, 0, 10}) == 0);
+    CHECK(bsp.leaf_at({0, 0, -10}) == 1);
+    CHECK_FALSE(bsp.segment_blocked({0, 0, 10}, {50, 50, 5}));
+    CHECK(bsp.segment_blocked({0, 0, 10}, {0, 0, -5}));
+    CHECK(bsp.segment_blocked({0, 0, -10}, {0, 0, -20}));
+    CHECK_FALSE(bsp.segment_blocked({0, 0, -10}, {0, 0, -20}, contents::Water));
 }
 
 TEST_CASE("BSP lightmap coordinates and RGBE") {

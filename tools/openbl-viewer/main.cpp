@@ -238,7 +238,8 @@ public:
             const auto& p = props_->stats();
             std::cout << "props: " << p.instances << " instances of " << p.models << " models ("
                       << p.missing_models << " missing, " << p.triangles << " triangles), "
-                      << p.unprobed_instances << " without floor lighting\n";
+                      << p.generated_normals << " models with generated normals; " << bsp_.world_lights.size()
+                      << " world lights\n";
         }
         std::cout << "loaded in " << std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count()
                   << " s\n";

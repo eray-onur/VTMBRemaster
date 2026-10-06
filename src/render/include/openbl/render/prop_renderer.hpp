@@ -7,6 +7,7 @@
 #include "openbl/formats/bsp.hpp"
 #include "openbl/render/asset_source.hpp"
 #include "openbl/render/material_system.hpp"
+#include "openbl/render/prop_lighting.hpp"
 #include "openbl/rhi/rhi.hpp"
 
 #include <array>
@@ -21,8 +22,8 @@ struct PropStats {
     std::size_t instances = 0;
     std::size_t models = 0;
     std::size_t missing_models = 0;
-    std::size_t unprobed_instances = 0; // No lit floor found below; default light used.
     std::size_t triangles = 0;          // Per model, LOD 0, summed over unique models.
+    std::size_t generated_normals = 0;  // Models whose normals were computed from geometry.
 };
 
 struct PropDrawSettings {
@@ -58,12 +59,13 @@ private:
         std::unique_ptr<rhi::Buffer> vertices;
         std::unique_ptr<rhi::Buffer> indices;
         std::vector<std::vector<Mesh>> skins; // [skin family][mesh]
+        std::array<float, 3> center{};        // Bounds centre in model space.
     };
     struct Instance {
         const Model* model = nullptr;
         std::size_t skin = 0;
         std::array<float, 16> transform{}; // Column-major model matrix.
-        std::array<float, 3> light{};
+        AmbientCube lighting;              // Model space.
     };
 
     const Model* load_model(const std::string& path);

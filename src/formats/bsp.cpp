@@ -111,6 +111,46 @@ public:
         bsp.lighting.assign(light.begin(), light.end());
         parse_displacements(bsp);
         parse_game_lump(bsp);
+        for_each(bsp_lump::WorldLights, 88, [&](detail::BinaryReader& r) {
+            BspWorldLight l;
+            l.origin = vec3(r);
+            l.intensity = vec3(r);
+            l.normal = vec3(r);
+            l.cluster = r.i32();
+            l.type = static_cast<BspLightType>(r.i32());
+            l.style = r.i32();
+            l.stopdot = r.f32();
+            l.stopdot2 = r.f32();
+            l.exponent = r.f32();
+            l.radius = r.f32();
+            l.constant_attn = r.f32();
+            l.linear_attn = r.f32();
+            l.quadratic_attn = r.f32();
+            l.flags = r.i32();
+            l.texinfo = r.i32();
+            l.owner = r.i32();
+            bsp.world_lights.push_back(l);
+        });
+        for_each(bsp_lump::Leafs, 32, [&](detail::BinaryReader& r) {
+            BspLeaf leaf;
+            leaf.contents = r.i32();
+            leaf.cluster = static_cast<std::int16_t>(r.u16());
+            bsp.leafs.push_back(leaf);
+        });
+        for_each(bsp_lump::Nodes, 32, [&](detail::BinaryReader& r) {
+            BspNode node;
+            node.plane = r.i32();
+            node.children = {r.i32(), r.i32()};
+            const auto valid = [&](std::int32_t c) {
+                return c >= 0 ? static_cast<std::size_t>(c) < lumps_[bsp_lump::Nodes].length / 32
+                              : static_cast<std::size_t>(-static_cast<std::int64_t>(c) - 1) < bsp.leafs.size();
+            };
+            if (node.plane < 0 || static_cast<std::size_t>(node.plane) >= bsp.planes.size() || !valid(node.children[0]) ||
+                !valid(node.children[1])) {
+                in_.fail("BSP node out of range");
+            }
+            bsp.nodes.push_back(node);
+        });
         const auto pak = lump_data(bsp_lump::PakFile);
         bsp.pakfile.assign(pak.begin(), pak.end());
         return bsp;
@@ -366,6 +406,54 @@ std::vector<Vec3> BspFile::face_polygon(const BspFace& face) const {
         out.push_back(vertices[se >= 0 ? edge[0] : edge[1]]);
     }
     return out;
+}
+
+std::size_t BspFile::leaf_at(const Vec3& point) const {
+    std::int32_t node = models.empty() ? 0 : models[0].head_node;
+    while (node >= 0 && static_cast<std::size_t>(node) < nodes.size()) {
+        const BspNode& n = nodes[static_cast<std::size_t>(node)];
+        const BspPlane& p = planes[static_cast<std::size_t>(n.plane)];
+        const float d = p.normal[0] * point[0] + p.normal[1] * point[1] + p.normal[2] * point[2] - p.dist;
+        node = n.children[d >= 0 ? 0 : 1];
+    }
+    return node < 0 ? static_cast<std::size_t>(-static_cast<std::int64_t>(node) - 1) : 0;
+}
+
+namespace {
+
+// Recursive segment test through the BSP tree.
+bool trace_node(const BspFile& bsp, std::int32_t node, const Vec3& a, const Vec3& b, std::int32_t mask, int depth) {
+    if (node < 0) {
+        const auto leaf = static_cast<std::size_t>(-static_cast<std::int64_t>(node) - 1);
+        return leaf < bsp.leafs.size() && (bsp.leafs[leaf].contents & mask) != 0;
+    }
+    if (depth > 256 || static_cast<std::size_t>(node) >= bsp.nodes.size()) {
+        return false;
+    }
+    const BspNode& n = bsp.nodes[static_cast<std::size_t>(node)];
+    const BspPlane& p = bsp.planes[static_cast<std::size_t>(n.plane)];
+    const float da = p.normal[0] * a[0] + p.normal[1] * a[1] + p.normal[2] * a[2] - p.dist;
+    const float db = p.normal[0] * b[0] + p.normal[1] * b[1] + p.normal[2] * b[2] - p.dist;
+    if (da >= 0 && db >= 0) {
+        return trace_node(bsp, n.children[0], a, b, mask, depth + 1);
+    }
+    if (da < 0 && db < 0) {
+        return trace_node(bsp, n.children[1], a, b, mask, depth + 1);
+    }
+    const float t = da / (da - db);
+    const Vec3 mid = lerp(a, b, t);
+    const int near_side = da >= 0 ? 0 : 1;
+    return trace_node(bsp, n.children[near_side], a, mid, mask, depth + 1) ||
+           trace_node(bsp, n.children[1 - near_side], mid, b, mask, depth + 1);
+}
+
+} // namespace
+
+bool BspFile::segment_blocked(const Vec3& a, const Vec3& b, std::int32_t mask) const {
+    if (nodes.empty() || models.empty()) {
+        return false;
+    }
+    return trace_node(*this, models[0].head_node, a, b, mask, 0);
 }
 
 BspFile parse_bsp(std::span<const std::byte> data) {

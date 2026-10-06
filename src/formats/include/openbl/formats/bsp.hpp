@@ -143,6 +143,53 @@ struct BspStaticProp {
     Vec3 lighting_origin{};
 };
 
+enum class BspLightType : std::int32_t {
+    Surface = 0,    // Emissive surface (area light), approximated as a point with a facing.
+    Point = 1,
+    Spot = 2,
+    Sky = 3,        // Directional sun light.
+    QuakeLight = 4,
+    SkyAmbient = 5,
+};
+
+// World light (88 bytes in Bloodlines maps, as in Valve's dworldlight_t).
+// Intensity is in the same linear units as the lightmaps: a light contributes
+// intensity * max(0, n.l) / (constant + linear*d + quadratic*d^2) to a surface.
+struct BspWorldLight {
+    Vec3 origin{};
+    Vec3 intensity{};
+    Vec3 normal{}; // Spot/surface/sky direction.
+    std::int32_t cluster = -1;
+    BspLightType type = BspLightType::Point;
+    std::int32_t style = 0;
+    float stopdot = 0;  // Spot: cosine of the inner cone.
+    float stopdot2 = 0; // Spot: cosine of the outer cone.
+    float exponent = 0;
+    float radius = 0;   // 0 = unlimited.
+    float constant_attn = 0;
+    float linear_attn = 0;
+    float quadratic_attn = 0;
+    std::int32_t flags = 0;
+    std::int32_t texinfo = -1;
+    std::int32_t owner = 0;
+};
+
+struct BspNode {
+    std::int32_t plane = 0;
+    std::array<std::int32_t, 2> children{}; // >= 0: node; < 0: leaf -(index + 1).
+};
+
+namespace contents {
+constexpr std::int32_t Solid = 0x1;
+constexpr std::int32_t Window = 0x2;
+constexpr std::int32_t Water = 0x20;
+} // namespace contents
+
+struct BspLeaf {
+    std::int32_t contents = 0;
+    std::int16_t cluster = -1;
+};
+
 using BspEntity = std::map<std::string, std::string>;
 
 struct BspFile {
@@ -160,12 +207,21 @@ struct BspFile {
     std::vector<std::byte> lighting; // ColorRGBExp32 luxels.
     std::vector<BspDispInfo> dispinfos;
     std::vector<BspDispVert> dispverts;
+    std::vector<BspWorldLight> world_lights;
+    std::vector<BspNode> nodes;
+    std::vector<BspLeaf> leafs;
     std::vector<std::string> static_prop_models;
     std::vector<BspStaticProp> static_props;
     std::vector<std::byte> pakfile; // Uncompressed zip; see ZipArchive.
 
     // Vertex positions of a face's polygon, in winding order.
     std::vector<Vec3> face_polygon(const BspFace& face) const;
+
+    // Index of the world leaf containing `point`.
+    std::size_t leaf_at(const Vec3& point) const;
+    // True if the segment from `a` to `b` passes through a world leaf whose
+    // contents intersect `mask` (solid by default).
+    bool segment_blocked(const Vec3& a, const Vec3& b, std::int32_t mask = contents::Solid) const;
 };
 
 // Throws FormatError.
