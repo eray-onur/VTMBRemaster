@@ -19,6 +19,7 @@ If you have studied any of the leaked code, do not contribute to the subsystem i
 - **Black-box binary analysis to understand behaviour.** The person doing the analysis writes a plain-language spec (what happens, not how the code is written). A different contributor implements from that spec. Specs must not contain decompiled code or pseudo-code transcribed from it.
 - Public, independently written documentation and community tools, if their licenses allow it. Name the source in the spec.
 - Original Python scripts from the game's data. These are game data that the engine runs. They must not be copied into this repository.
+- **Shader files shipped with the retail game** (`materials/dxshaders/*.psh` assembly, `shaders/*.vcs` compiled shaders). Like the Python scripts, they are part of the game data, so they may be read to learn how the original renders: constants, blend steps, overbright factors. Describe what they do in prose under `docs/`, never copy or transcribe them into this repository, and write OpenBL's shaders independently. (Project decision, 2026-10-07.)
 
 ## Game data
 

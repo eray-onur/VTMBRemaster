@@ -54,7 +54,7 @@ struct Options {
     std::optional<std::string> map;
     std::optional<glm::vec3> position;
     std::optional<glm::vec2> angles; // pitch, yaw
-    float light_scale = 2.3f;
+    float light_scale = 2.2974f;
     float fov = 75.0f;
     std::uint32_t width = 1600;
     std::uint32_t height = 900;

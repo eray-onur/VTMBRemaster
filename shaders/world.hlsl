@@ -74,7 +74,9 @@ float4 ps_main(VSOutput input) : SV_Target {
                 light += lightmap.Sample(texture_sampler, uv).rgb * style_value(style);
             }
         }
-        light *= pc.light_scale;
+        // The original stores the combined lightmap in an 8-bit texture as
+        // (luxel / 2)^(1/2.2), so anything above 2.0 saturates.
+        light = min(light, 2.0) * pc.light_scale;
     }
     float3 color = base.rgb * light;
     if (pc.flags & kSelfIllum) {
