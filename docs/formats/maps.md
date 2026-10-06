@@ -69,6 +69,10 @@ TexData names are relative to `materials/`. About a third (3,831) are per-map pa
 
 Faces whose texinfo has `SURF_BUMPLIGHT` (`0x800`) store **four** lightmaps per style: the flat one, then three for normal-mapped lighting. Every other face stores one per style. With this rule, faces in the lighting lump are packed with no gaps; this was checked on `ch_lotus_1`, where 279 bump-lit faces have gaps of exactly 3× their size. Luxel exponents range from about −64 to +7; very negative exponents are simply dark luxels.
 
+## Light styles
+
+A face stores one lightmap per used style, in the order of its `styles` slots; bump-lit faces store four per style, of which the first is the flat one. Style 0 is always on. Styles 1–12 are the classic animated patterns. Styles 32 and up are switchable lights: the compiler writes the assigned style into each light entity's `style` key, next to its `targetname`, and spawnflag 1 means the light starts off. In the Steam release, `sm_pier_1` has `houselights` (style 32, starting on), and `ch_lotus_1` has `ovenlight` (style 32, starting off) plus animated styles 2, 6 and 10. Faces use at most 4 of their 8 style slots.
+
 ## World lights (lump 15, 88 bytes)
 
 Valve's `dworldlight_t` layout: origin, intensity, normal, cluster, type, style, `stopdot`, `stopdot2`, exponent, radius, constant / linear / quadratic attenuation, flags, texinfo, owner. Types: 0 emissive surface, 1 point, 2 spot, 3 sky, 5 sky ambient. Point and spot lights use pure inverse-square falloff (quadratic = 1), sometimes with a radius cutoff. Emissive-surface lights store all three attenuation terms as zero; they fall off with the inverse square of the distance too.

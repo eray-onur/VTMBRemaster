@@ -49,6 +49,7 @@ VkFormat to_vk(Format f) {
     case Format::RGBA32_Float: return VK_FORMAT_R32G32B32A32_SFLOAT;
     case Format::RGBA16_Float: return VK_FORMAT_R16G16B16A16_SFLOAT;
     case Format::RGBA16_UInt: return VK_FORMAT_R16G16B16A16_UINT;
+    case Format::RGBA8_UInt: return VK_FORMAT_R8G8B8A8_UINT;
     case Format::D32_Float: return VK_FORMAT_D32_SFLOAT;
     case Format::Undefined: break;
     }

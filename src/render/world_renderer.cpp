@@ -25,9 +25,16 @@ using formats::BspFile;
 struct Vertex {
     float position[3];
     float uv[2];
-    float lightmap_uv[2];
+    float lightmap_uv[2]; // Style 0's block; further styles follow at style_step intervals.
     float blend;
+    std::uint8_t styles[4]; // Light styles of the face; 255 = unused.
+    float style_step;       // U distance between consecutive style blocks in the atlas.
 };
+static_assert(sizeof(Vertex) == 40);
+
+// Lightmap styles drawn per face (faces store up to 8; the Steam release uses at most 4).
+constexpr std::size_t kMaxFaceStyles = 4;
+constexpr std::int32_t kSurfBumpLight = 0x800; // Four lightmaps per style; the first is the flat one.
 
 struct PushConstants {
     float mvp[16];
@@ -73,6 +80,10 @@ bool face_has_lightmap(const BspFile& bsp, const BspFace& face) {
            (bsp.texinfos[face.texinfo].flags & formats::surf_flags::NoLight) == 0;
 }
 
+std::size_t face_styles(const BspFace& face) {
+    return std::min(face.style_count(), kMaxFaceStyles);
+}
+
 // A brush model instance: the world (model 0) or a brush entity at its origin.
 struct ModelInstance {
     std::size_t model = 0;
@@ -101,7 +112,8 @@ std::vector<ModelInstance> model_instances(const BspFile& bsp) {
 
 } // namespace
 
-WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, const BspFile& bsp) : device_(device) {
+WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, const BspFile& bsp)
+    : device_(device), styles_(bsp) {
     std::vector<std::array<float, 2>> lightmap_offsets;
     build_lightmap_atlas(bsp, lightmap_offsets);
     const float inv_w = 1.0f / static_cast<float>(stats_.lightmap_width);
@@ -160,6 +172,17 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
                     out.lightmap_uv[0] = white_luxel_[0] * inv_w;
                     out.lightmap_uv[1] = white_luxel_[1] * inv_h;
                 }
+                for (std::size_t k = 0; k < 4; ++k) {
+                    out.styles[k] = 255;
+                }
+                if (lit) {
+                    for (std::size_t k = 0; k < face_styles(face); ++k) {
+                        out.styles[k] = face.styles[k];
+                    }
+                    out.style_step = static_cast<float>(face.lightmap_size[0] + 2) * inv_w;
+                } else {
+                    out.styles[0] = 0; // The white luxel, at full brightness.
+                }
                 out.blend = mesh.alphas[v];
                 vertices.push_back(out);
             }
@@ -188,9 +211,12 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
     pd.attributes = {{0, rhi::Format::RGB32_Float, 0},
                      {1, rhi::Format::RG32_Float, 12},
                      {2, rhi::Format::RG32_Float, 20},
-                     {3, rhi::Format::R32_Float, 28}};
+                     {3, rhi::Format::R32_Float, 28},
+                     {4, rhi::Format::RGBA8_UInt, 32},
+                     {5, rhi::Format::R32_Float, 36}};
     pd.texture_count = 3;
     pd.push_constant_size = sizeof(PushConstants);
+    pd.shader_data = true;
     pd.front_counter_clockwise = kFrontCounterClockwise;
     const rhi::BlendMode blends[] = {rhi::BlendMode::Opaque, rhi::BlendMode::Alpha, rhi::BlendMode::Additive};
     for (std::size_t b = 0; b < 3; ++b) {
@@ -242,7 +268,8 @@ void WorldRenderer::build_lightmap_atlas(const BspFile& bsp, std::vector<std::ar
         if (!face_has_lightmap(bsp, face)) {
             continue;
         }
-        const auto w = static_cast<std::uint32_t>(face.lightmap_size[0] + 1);
+        const auto styles = static_cast<std::uint32_t>(face_styles(face));
+        const auto w = static_cast<std::uint32_t>(face.lightmap_size[0] + 1) * styles + (styles - 1);
         const auto h = static_cast<std::uint32_t>(face.lightmap_size[1] + 1);
         rects.push_back({f, w, h});
         area += std::uint64_t{w + 1} * (h + 1);
@@ -280,15 +307,21 @@ void WorldRenderer::build_lightmap_atlas(const BspFile& bsp, std::vector<std::ar
     for (std::size_t i = 0; i < rects.size(); ++i) {
         const BspFace& face = bsp.faces[rects[i].face];
         offsets[rects[i].face] = {static_cast<float>(placed[i][0]), static_cast<float>(placed[i][1])};
-        const std::byte* src = bsp.lighting.data() + face.light_offset;
-        for (std::uint32_t ly = 0; ly < rects[i].h; ++ly) {
-            for (std::uint32_t lx = 0; lx < rects[i].w; ++lx) {
-                const auto rgb = formats::decode_rgbe(src + (std::size_t{ly} * rects[i].w + lx) * 4);
-                const std::size_t o = ((std::size_t{placed[i][1]} + ly) * width + placed[i][0] + lx) * 4;
-                pixels[o] = to_half(rgb[0]);
-                pixels[o + 1] = to_half(rgb[1]);
-                pixels[o + 2] = to_half(rgb[2]);
-                pixels[o + 3] = one;
+        const auto lw = static_cast<std::uint32_t>(face.lightmap_size[0] + 1);
+        const std::size_t luxels = std::size_t{lw} * rects[i].h;
+        const bool bump = (bsp.texinfos[face.texinfo].flags & kSurfBumpLight) != 0;
+        for (std::size_t k = 0; k < face_styles(face); ++k) {
+            const std::byte* src = bsp.lighting.data() + face.light_offset + k * luxels * 4 * (bump ? 4 : 1);
+            const std::uint32_t x0 = placed[i][0] + static_cast<std::uint32_t>(k) * (lw + 1);
+            for (std::uint32_t ly = 0; ly < rects[i].h; ++ly) {
+                for (std::uint32_t lx = 0; lx < lw; ++lx) {
+                    const auto rgb = formats::decode_rgbe(src + (std::size_t{ly} * lw + lx) * 4);
+                    const std::size_t o = ((std::size_t{placed[i][1]} + ly) * width + x0 + lx) * 4;
+                    pixels[o] = to_half(rgb[0]);
+                    pixels[o + 1] = to_half(rgb[1]);
+                    pixels[o + 2] = to_half(rgb[2]);
+                    pixels[o + 3] = one;
+                }
             }
         }
     }
@@ -307,11 +340,17 @@ void WorldRenderer::draw_batches(rhi::CommandList& cmd, const std::vector<Batch>
     PushConstants pc{};
     std::memcpy(pc.mvp, vp.data(), sizeof(pc.mvp));
     pc.light_scale = settings.light_scale;
+    auto values = styles_.values(settings.time);
+    if (!settings.light_styles) {
+        std::fill(values.begin() + 1, values.end(), 0.0f);
+    }
+    std::copy(values.begin(), values.end(), style_values_.begin());
     for (const Batch& batch : batches) {
         const RenderMaterial& m = *batch.material;
         const rhi::Pipeline& pipeline = pipeline_for(m);
         if (&pipeline != bound) {
             cmd.set_pipeline(pipeline);
+            cmd.set_shader_data(style_values_.data(), sizeof(style_values_));
             bound = &pipeline;
         }
         pc.alpha_ref = m.alpha_ref;

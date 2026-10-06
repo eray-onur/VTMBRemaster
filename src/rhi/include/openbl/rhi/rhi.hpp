@@ -33,6 +33,7 @@ enum class Format : std::uint8_t {
     RGBA32_Float,
     RGBA16_Float,
     RGBA16_UInt, // Vertex attribute only (e.g. bone indices).
+    RGBA8_UInt,  // Vertex attribute only (e.g. light style indices).
     D32_Float,
 };
 

@@ -20,6 +20,8 @@ struct VSInput {
     [[vk::location(1)]] float2 uv : TEXCOORD0;
     [[vk::location(2)]] float2 lightmap_uv : TEXCOORD1;
     [[vk::location(3)]] float blend : TEXCOORD2;
+    [[vk::location(4)]] uint4 styles : TEXCOORD3;
+    [[vk::location(5)]] float style_step : TEXCOORD4;
 };
 
 struct VSOutput {
@@ -27,7 +29,16 @@ struct VSOutput {
     [[vk::location(0)]] float2 uv : TEXCOORD0;
     [[vk::location(1)]] float2 lightmap_uv : TEXCOORD1;
     [[vk::location(2)]] float blend : TEXCOORD2;
+    [[vk::location(3)]] nointerpolation uint4 styles : TEXCOORD3;
+    [[vk::location(4)]] nointerpolation float style_step : TEXCOORD4;
 };
+
+// Brightness of each of the 64 light styles (4 per element).
+[[vk::binding(0, 1)]] StructuredBuffer<float4> style_values;
+
+float style_value(uint style) {
+    return style_values[style >> 2][style & 3];
+}
 
 VSOutput vs_main(VSInput input) {
     VSOutput output;
@@ -35,6 +46,8 @@ VSOutput vs_main(VSInput input) {
     output.uv = input.uv;
     output.lightmap_uv = input.lightmap_uv;
     output.blend = input.blend;
+    output.styles = input.styles;
+    output.style_step = input.style_step;
     return output;
 }
 
@@ -53,7 +66,15 @@ float4 ps_main(VSOutput input) : SV_Target {
     }
     float3 light = float3(1.0, 1.0, 1.0);
     if (!(pc.flags & kUnlit)) {
-        light = lightmap.Sample(texture_sampler, input.lightmap_uv).rgb * pc.light_scale;
+        light = float3(0, 0, 0);
+        [unroll] for (uint k = 0; k < 4; ++k) {
+            const uint style = input.styles[k];
+            if (style < 64) {
+                const float2 uv = input.lightmap_uv + float2(input.style_step * k, 0);
+                light += lightmap.Sample(texture_sampler, uv).rgb * style_value(style);
+            }
+        }
+        light *= pc.light_scale;
     }
     float3 color = base.rgb * light;
     if (pc.flags & kSelfIllum) {

@@ -1,6 +1,7 @@
 add_library(openbl_render
     character_renderer.cpp
     light_probe.cpp
+    light_styles.cpp
     material_system.cpp
     prop_lighting.cpp
     prop_renderer.cpp

@@ -1,9 +1,12 @@
 #pragma once
 
 // Draws the brush geometry of a map: the world model and brush entities,
-// textured and lit by the baked lightmaps (style 0).
+// textured and lit by the baked lightmaps, with every light style weighted
+// by its current brightness (switchable lights in their default state,
+// animated styles flickering).
 
 #include "openbl/formats/bsp.hpp"
+#include "openbl/render/light_styles.hpp"
 #include "openbl/render/material_system.hpp"
 #include "openbl/rhi/rhi.hpp"
 
@@ -28,7 +31,8 @@ struct WorldDrawSettings {
     float light_scale = 2.3f; // Source-style lightmap overbright (2^1.2 in linear space); verify against the original.
     bool fullbright = false;
     std::array<float, 3> camera_position{}; // For water.
-    float time = 0.0f;                      // Seconds; animates water.
+    float time = 0.0f;                      // Seconds; animates water and light styles.
+    bool light_styles = true;               // false: lightmap style 0 only (debugging).
 };
 
 class WorldRenderer {
@@ -74,6 +78,8 @@ private:
     std::vector<Batch> water_;
     std::unique_ptr<rhi::Pipeline> water_pipeline_;
     std::array<float, 2> white_luxel_{}; // Lightmap coordinates used by faces without lightmaps.
+    LightStyles styles_;
+    std::array<float, 4 * 16> style_values_{}; // Current style brightness, uploaded as shader data.
 };
 
 } // namespace openbl::render

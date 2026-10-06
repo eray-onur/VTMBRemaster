@@ -38,7 +38,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Static props and `prop_*` entities (LOD 0, default body group, skins)
 - [x] Prop lighting: per-vertex ambient cube from visible style-0 world lights (BSP line-of-sight test)
 - [ ] Prop lighting: replace the bounce estimate (30% of the floor lightmap) with the original's ambient term; lights with styles other than 0
-- [ ] World: draw lightmap styles other than 0 (switchable and flickering lights) at their default state
+- [x] Light styles: all lightmap styles drawn, weighted per style (animated Quake patterns at 10 letters/s; switchable styles 32+ on unless all their lights start dark); props include styled world lights
+- [ ] Light styles: toggling switchable lights at runtime (needs entity I/O, Phase 2)
 - [x] 2D skybox
 - [x] Water placeholder: fog colour, Fresnel blend to a dim reflection tint, animated normal-map ripples
 - [ ] Real water: reflection and refraction render targets, underwater fog, `$bottommaterial`, cheap-water distances

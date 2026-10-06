@@ -3,13 +3,15 @@
 // Lighting for models placed in a map, Source style: an "ambient cube" of six
 // colours (+X, -X, +Y, -Y, +Z, -Z) that a vertex blends by its normal.
 //
-// Direct light: every style-0 point, spot and emissive-surface world light
-// whose line of sight to the sample point is not blocked by solid BSP leaves.
+// Direct light: every point, spot and emissive-surface world light, scaled by
+// its light style's default brightness, whose line of sight to the sample
+// point is not blocked by solid BSP leaves.
 // Indirect light: approximated as a fraction of the baked floor lightmap below
 // the point (bounce light is not stored in the world light list).
 
 #include "openbl/formats/bsp.hpp"
 #include "openbl/render/light_probe.hpp"
+#include "openbl/render/light_styles.hpp"
 
 #include <array>
 
@@ -30,6 +32,7 @@ public:
 private:
     const formats::BspFile& bsp_;
     FloorLightProbe floor_;
+    LightStyles styles_;
 };
 
 } // namespace openbl::render

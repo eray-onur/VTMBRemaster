@@ -20,7 +20,7 @@ float dot(const Vec3& a, const Vec3& b) {
 
 } // namespace
 
-PropLighting::PropLighting(const formats::BspFile& bsp) : bsp_(bsp), floor_(bsp) {}
+PropLighting::PropLighting(const formats::BspFile& bsp) : bsp_(bsp), floor_(bsp), styles_(bsp) {}
 
 AmbientCube PropLighting::sample(const Vec3& point, const std::array<std::array<float, 3>, 3>& rotation) const {
     AmbientCube cube;
@@ -31,7 +31,8 @@ AmbientCube PropLighting::sample(const Vec3& point, const std::array<std::array<
     }
 
     for (const auto& light : bsp_.world_lights) {
-        if (light.style != 0 ||
+        const float style = light.style >= 0 ? styles_.default_value(static_cast<std::size_t>(light.style)) : 0.0f;
+        if (style <= 0 ||
             (light.type != BspLightType::Point && light.type != BspLightType::Spot && light.type != BspLightType::Surface)) {
             continue;
         }
@@ -49,7 +50,7 @@ AmbientCube PropLighting::sample(const Vec3& point, const std::array<std::array<
         const float r = std::max(dist, 1.0f);
         const float attenuation =
             unattenuated ? r * r : light.constant_attn + light.linear_attn * r + light.quadratic_attn * r * r;
-        float scale = 1.0f / std::max(attenuation, 1.0f);
+        float scale = style / std::max(attenuation, 1.0f);
         if (light.type == BspLightType::Spot) {
             const float d = -dot(to_light, light.normal);
             if (d <= light.stopdot2) {

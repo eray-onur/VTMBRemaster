@@ -45,7 +45,7 @@ namespace {
 
 constexpr const char* kUsage =
     "usage: openbl-viewer [--game DIR] [--map NAME] [--pos X Y Z] [--angles PITCH YAW]\n"
-    "                     [--light-scale F] [--fullbright] [--no-props] [--no-characters] [--screenshot out.png [--frames N]]\n"
+    "                     [--light-scale F] [--fullbright] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]]\n"
     "                     [--validation] [--no-vsync]";
 
 struct Options {
@@ -56,6 +56,7 @@ struct Options {
     float light_scale = 2.3f;
     bool fullbright = false;
     bool props = true;
+    bool light_styles = true;
     bool characters = true;
     std::optional<std::filesystem::path> screenshot;
     int frames = 0; // With --screenshot: frames to render before capturing.
@@ -95,6 +96,8 @@ Options parse_args(int argc, char** argv) {
             o.light_scale = std::stof(next());
         } else if (a == "--fullbright") {
             o.fullbright = true;
+        } else if (a == "--no-light-styles") {
+            o.light_styles = false;
         } else if (a == "--no-props") {
             o.props = false;
         } else if (a == "--no-characters") {
@@ -205,7 +208,7 @@ private:
 class MapScene final : public Scene {
 public:
     MapScene(rhi::Device& device, const vfs::GameFileSystem& gfs, const std::string& name, const Options& options)
-        : settings_{options.light_scale, options.fullbright} {
+        : settings_{options.light_scale, options.fullbright, {}, 0.0f, options.light_styles} {
         std::string path = formats::normalize_game_path(name);
         if (!path.starts_with("maps/")) {
             path.insert(0, "maps/");
