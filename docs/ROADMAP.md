@@ -9,7 +9,7 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] VPK archives (`packNNN.vpk`), including the directory-index variant
 - [x] Virtual filesystem with loose-file and pack override order
 - [x] Textures: `.tth`/`.ttz` pairs and embedded VTF 7.1, with DXT/RGB decoding to RGBA8
-- [ ] Loose `.tga` images (UI, fonts)
+- [x] Loose `.tga` and `.png` images (reader; not yet wired into the virtual filesystem's texture loading)
 - [x] Materials: `.vmt` and the KeyValues text syntax
 - [ ] Shaders: catalogue the parameters each of the 52 shaders uses; proxy behaviour
 - [x] Models: `.mdl` v2531 geometry, bones, skins, textures; `.vtx` v107 triangle lists and LODs
@@ -18,11 +18,18 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Models: packed normal tables for quantized vertices; attachments, hitboxes, flexes
 - [ ] Physics: `.phy`
 - [x] Maps: `.bsp` v17 geometry, faces, displacements, lightmap data, static props, entities, pakfile
-- [ ] Maps: BSP tree, leafs and visibility, brushes, world lights, cubemaps, detail props, physics collision
-- [ ] AI node graphs: `.ain`
+- [x] Maps: BSP nodes and leafs (line-of-sight traces), world lights
+- [ ] Maps: visibility (PVS), brushes and brush sides, cubemaps, detail props, physics collision, overlays/decals
+- [x] Coverage report: `openbl-cli fs coverage` lists every extension in the game data with its status
+- [ ] AI node graphs: `.ain` (text in Bloodlines) and `.loc`
 - [ ] Dialogue: `.dlg`. Lip-sync: `.lip`. Choreography: `.vcd`
-- [ ] `vdata` text tables: items, hack terminals, strings, signs
-- [ ] Fonts and UI: `.fnt`, `.res`, `.vfe`
+- [ ] `vdata` text tables: items, hack terminals, signs, camera shots, system
+- [ ] Particle systems: `particles/*.txt` (1,594 files) and their `.tga` sprites
+- [ ] Facial expressions: `.vfe` and `expressions/*.txt`
+- [ ] Sound: `sound/schemes/*.txt`, `.sfk` waveform previews, `.pk`; decoding `.wav` and `.mp3`
+- [ ] Video: `.bik` intro movies (codec choice to be decided)
+- [ ] Fonts and UI: `.fnt`, `.res`, `.bmp`, `scripts/dialog_*` (includes a multiplayer dialog)
+- [ ] Configs: `.cfg`, `.lst` key bindings, `settings.scr`, `liblist.gam`
 - [ ] Save games (`.sav`)
 - [ ] Python bytecode (`.pyc`) in archives; identify the embedded interpreter's version
 

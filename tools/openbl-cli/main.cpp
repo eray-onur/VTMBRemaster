@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <string>
@@ -41,6 +42,7 @@ void usage() {
                  "  openbl-cli vpk extract <archive.vpk> <out-dir> [path-prefix]\n"
                  "  openbl-cli fs stat [game-dir]\n"
                  "  openbl-cli fs list [game-dir] [path-prefix]\n"
+                 "  openbl-cli fs coverage [game-dir]\n"
                  "  openbl-cli fs which <path> [game-dir]\n"
                  "  openbl-cli fs cat <path> [game-dir]\n"
                  "  openbl-cli tex info <texture> [game-dir]\n"
@@ -692,6 +694,47 @@ int cmd_vpk(const std::vector<std::string_view>& args) {
     return 2;
 }
 
+// Phase 0 progress: what OpenBL does with each file type in the game's content.
+struct FormatStatus {
+    std::string_view extension;
+    std::string_view status;  // parsed, todo, codec, reference
+    std::string_view note;
+};
+constexpr FormatStatus kFormats[] = {
+    {".vmt", "parsed", "materials"},
+    {".tth", "parsed", "texture headers + small mips"},
+    {".ttz", "parsed", "texture large mips (zlib)"},
+    {".mdl", "parsed", "models, animations (partial: flexes, attachments, multi-blend)"},
+    {".vtx", "parsed", "model triangle strips"},
+    {".bsp", "parsed", "maps (partial: brushes, visibility, cubemaps, detail props, overlays)"},
+    {".tga", "parsed", "particle and font images"},
+    {".phy", "todo", "physics collision"},
+    {".lip", "todo", "lip-sync text"},
+    {".vcd", "todo", "choreography (KeyValues-like)"},
+    {".txt", "todo", "vdata tables, particles, expressions, sound schemes (KeyValues)"},
+    {".dlg", "todo", "dialogue trees"},
+    {".ain", "todo", "AI node graphs (text)"},
+    {".loc", "todo", "AI graph map checksum"},
+    {".vfe", "todo", "facial expressions"},
+    {".fnt", "todo", "bitmap fonts"},
+    {".res", "todo", "UI layouts (KeyValues)"},
+    {".pyc", "todo", "compiled Python (version check only)"},
+    {".py", "todo", "Python source"},
+    {".cfg", "todo", "console configs"},
+    {".lst", "todo", "key bindings and lists"},
+    {".scr", "todo", "settings script"},
+    {".gam", "todo", "game info"},
+    {".bmp", "todo", "UI images"},
+    {".sfk", "todo", "sound waveform previews (SFPK)"},
+    {".pk", "todo", "unknown sound-related binary"},
+    {".mp3", "codec", "audio"},
+    {".wav", "codec", "audio"},
+    {".bik", "codec", "Bink video"},
+    {".psh", "reference", "original DX8 pixel shader assembly"},
+    {".vcs", "reference", "original compiled shaders"},
+    {".dll", "reference", "original engine binaries (never disassembled)"},
+};
+
 int cmd_fs(const std::vector<std::string_view>& args) {
     if (args.size() < 2) {
         usage();
@@ -717,6 +760,33 @@ int cmd_fs(const std::vector<std::string_view>& args) {
             if (path.starts_with(prefix)) {
                 std::cout << path << "\n";
             }
+        }
+        return 0;
+    }
+    if (sub == "coverage") {
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 2));
+        std::map<std::string, std::size_t> counts;
+        for (const auto& path : gfs.list_files()) {
+            const auto ext = fs::path(path).extension().string();
+            ++counts[ext.empty() ? "(none)" : ext];
+        }
+        std::vector<std::pair<std::size_t, std::string>> sorted;
+        for (const auto& [ext, n] : counts) {
+            sorted.emplace_back(n, ext);
+        }
+        std::sort(sorted.rbegin(), sorted.rend());
+        std::map<std::string, std::size_t> by_status;
+        for (const auto& [n, ext] : sorted) {
+            const auto it = std::find_if(std::begin(kFormats), std::end(kFormats),
+                                         [&](const FormatStatus& f) { return f.extension == ext; });
+            const std::string_view status = it != std::end(kFormats) ? it->status : "unknown";
+            by_status[std::string(status)] += n;
+            std::cout << std::left << std::setw(8) << ext << std::right << std::setw(7) << n << "  " << std::left
+                      << std::setw(10) << status << (it != std::end(kFormats) ? it->note : std::string_view()) << "\n";
+        }
+        std::cout << "\n";
+        for (const auto& [status, n] : by_status) {
+            std::cout << std::left << std::setw(10) << status << std::right << std::setw(7) << n << " files\n";
         }
         return 0;
     }
