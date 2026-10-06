@@ -43,6 +43,7 @@ void usage() {
                  "  openbl-cli fs stat [game-dir]\n"
                  "  openbl-cli fs list [game-dir] [path-prefix]\n"
                  "  openbl-cli fs coverage [game-dir]\n"
+                 "  openbl-cli fs extract <out-dir> [path-prefix [game-dir]]\n"
                  "  openbl-cli fs which <path> [game-dir]\n"
                  "  openbl-cli fs cat <path> [game-dir]\n"
                  "  openbl-cli tex info <texture> [game-dir]\n"
@@ -761,6 +762,25 @@ int cmd_fs(const std::vector<std::string_view>& args) {
                 std::cout << path << "\n";
             }
         }
+        return 0;
+    }
+    if (sub == "extract" && args.size() >= 3) {
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 4));
+        const fs::path out_dir(args[2]);
+        const std::string prefix = args.size() >= 4 ? formats::normalize_game_path(args[3]) : std::string();
+        std::size_t count = 0;
+        for (const auto& path : gfs.list_files()) {
+            if (!path.starts_with(prefix)) {
+                continue;
+            }
+            const auto data = gfs.read(path);
+            if (!data || !write_file(out_dir / fs::path(path), *data)) {
+                std::cerr << "failed: " << path << "\n";
+                continue;
+            }
+            ++count;
+        }
+        std::cout << "extracted " << count << " files to " << out_dir.string() << "\n";
         return 0;
     }
     if (sub == "coverage") {

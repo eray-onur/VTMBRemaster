@@ -3,6 +3,8 @@
 // Text KeyValues, the nested "key" "value" / "key" { ... } syntax used by
 // .vmt materials and many other text files. See docs/formats/materials.md.
 
+#include "openbl/formats/text_diagnostic.hpp"
+
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -21,10 +23,7 @@ struct KvNode {
     const KvNode* find(std::string_view child_key) const;
 };
 
-struct KvDiagnostic {
-    std::size_t line = 0;
-    std::string message;
-};
+using KvDiagnostic = TextDiagnostic;
 
 struct KvDocument {
     std::vector<KvNode> roots;
