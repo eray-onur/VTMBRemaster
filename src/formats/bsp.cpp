@@ -184,6 +184,18 @@ public:
             bsp.cubemaps.push_back(c);
         });
         parse_collision(bsp);
+        for_each(bsp_lump::VertexNormals, 12, [&](detail::BinaryReader& r) { bsp.vertex_normals.push_back(vec3(r)); });
+        for_each(bsp_lump::VertexNormalIndices, 2, [&](detail::BinaryReader& r) {
+            const std::uint16_t i = r.u16();
+            if (i >= bsp.vertex_normals.size()) {
+                in_.fail("vertex normal index out of range");
+            }
+            bsp.vertex_normal_indices.push_back(i);
+        });
+        parse_primitives(bsp);
+        for (const std::byte b : lump_data(bsp_lump::DispLightmapAlphas)) {
+            bsp.disp_lightmap_alphas.push_back(std::to_integer<std::uint8_t>(b));
+        }
         for_each(bsp_lump::Nodes, 32, [&](detail::BinaryReader& r) {
             BspNode node;
             node.plane = r.i32();
@@ -332,6 +344,35 @@ private:
         for (const BspFace& f : bsp.faces) {
             if (f.dispinfo >= 0 && static_cast<std::size_t>(f.dispinfo) >= bsp.dispinfos.size()) {
                 in_.fail("face references missing displacement");
+            }
+        }
+    }
+
+    void parse_primitives(BspFile& bsp) {
+        for_each(bsp_lump::PrimitiveVertices, 12, [&](detail::BinaryReader& r) { bsp.primitive_vertices.push_back(vec3(r)); });
+        for_each(bsp_lump::PrimitiveIndices, 2, [&](detail::BinaryReader& r) { bsp.primitive_indices.push_back(r.u16()); });
+        for_each(bsp_lump::Primitives, 10, [&](detail::BinaryReader& r) {
+            BspPrimitive p;
+            p.type = r.u16();
+            p.first_index = r.u16();
+            p.index_count = r.u16();
+            p.first_vertex = r.u16();
+            p.vertex_count = r.u16();
+            if (std::size_t{p.first_index} + p.index_count > bsp.primitive_indices.size() ||
+                std::size_t{p.first_vertex} + p.vertex_count > bsp.primitive_vertices.size()) {
+                in_.fail("primitive out of range");
+            }
+            for (std::size_t i = 0; i < p.index_count; ++i) {
+                const std::uint16_t v = bsp.primitive_indices[std::size_t{p.first_index} + i];
+                if (v < p.first_vertex || v >= p.first_vertex + p.vertex_count) {
+                    in_.fail("primitive index outside its vertices");
+                }
+            }
+            bsp.primitives.push_back(p);
+        });
+        for (const auto& f : bsp.faces) {
+            if (f.num_primitives > 0 && std::size_t{f.first_primitive} + f.num_primitives > bsp.primitives.size()) {
+                in_.fail("face primitives out of range");
             }
         }
     }
@@ -825,6 +866,54 @@ BspFaceMesh build_face_mesh(const BspFile& bsp, std::size_t face_index) {
     const BspTexInfo& ti = bsp.texinfos[face.texinfo];
     const auto polygon = bsp.face_polygon(face);
     BspFaceMesh mesh;
+
+    if (face.dispinfo < 0 && face.num_primitives > 0) {
+        // T-junction-free triangulation: triangle strips over extra vertices on
+        // the face's plane. Strip winding alternates, so each triangle is
+        // oriented to match the polygon's winding (its Newell normal).
+        Vec3 normal{};
+        for (std::size_t i = 0; i < polygon.size(); ++i) {
+            const Vec3& a = polygon[i];
+            const Vec3& b = polygon[(i + 1) % polygon.size()];
+            normal[0] += (a[1] - b[1]) * (a[2] + b[2]);
+            normal[1] += (a[2] - b[2]) * (a[0] + b[0]);
+            normal[2] += (a[0] - b[0]) * (a[1] + b[1]);
+        }
+        for (std::uint16_t k = 0; k < face.num_primitives; ++k) {
+            const BspPrimitive& prim = bsp.primitives[std::size_t{face.first_primitive} + k];
+            const auto base = static_cast<std::uint32_t>(mesh.positions.size());
+            for (std::uint16_t v = 0; v < prim.vertex_count; ++v) {
+                const Vec3& p = bsp.primitive_vertices[std::size_t{prim.first_vertex} + v];
+                mesh.positions.push_back(p);
+                mesh.uvs.push_back(texture_uv(bsp, ti, p));
+                mesh.lightmap_uvs.push_back(lightmap_uv(face, ti, p));
+                mesh.alphas.push_back(0.0f);
+            }
+            for (std::uint16_t i = 0; i + 2 < prim.index_count; ++i) {
+                std::array<std::uint32_t, 3> t{};
+                for (std::size_t c = 0; c < 3; ++c) {
+                    t[c] = base + bsp.primitive_indices[std::size_t{prim.first_index} + i + c] - prim.first_vertex;
+                }
+                if (t[0] == t[1] || t[1] == t[2] || t[0] == t[2]) {
+                    continue; // Degenerate join between strip runs.
+                }
+                const Vec3& a = mesh.positions[t[0]];
+                const Vec3& b = mesh.positions[t[1]];
+                const Vec3& c = mesh.positions[t[2]];
+                const Vec3 u{b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+                const Vec3 w{c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+                const Vec3 n{u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]};
+                if (n[0] * normal[0] + n[1] * normal[1] + n[2] * normal[2] < 0) {
+                    std::swap(t[1], t[2]);
+                }
+                mesh.indices.insert(mesh.indices.end(), t.begin(), t.end());
+            }
+        }
+        if (!mesh.indices.empty()) {
+            return mesh;
+        }
+        mesh = {};
+    }
 
     if (face.dispinfo < 0) {
         for (const Vec3& p : polygon) {

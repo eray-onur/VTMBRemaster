@@ -44,9 +44,15 @@ enum : std::size_t {
     DispInfo = 26,
     OriginalFaces = 27,
     PhysCollide = 29,
+    VertexNormals = 30,
+    VertexNormalIndices = 31,
+    DispLightmapAlphas = 32,
     DispVerts = 33,
     GameLump = 35,
     LeafWaterData = 36,
+    Primitives = 37,
+    PrimitiveVertices = 38,
+    PrimitiveIndices = 39,
     PakFile = 40,
     ClipPortalVerts = 41,
     Cubemaps = 42,
@@ -256,6 +262,15 @@ struct BspDetailLightStyle {
     std::uint8_t style = 0;
 };
 
+// Replacement triangulation for a face, with extra vertices on the face's
+// plane that close T-junction cracks. Indices are absolute positions in
+// BspFile::primitive_vertices, within [first_vertex, first_vertex + vertex_count).
+struct BspPrimitive {
+    std::uint16_t type = 1; // 1 = triangle strip (the only type in the shipped maps).
+    std::uint16_t first_index = 0, index_count = 0;
+    std::uint16_t first_vertex = 0, vertex_count = 0;
+};
+
 // Collision for one brush model (model 0 is the world).
 struct BspCollisionModel {
     std::int32_t model = 0;
@@ -308,6 +323,13 @@ struct BspFile {
     std::vector<BspDetailProp> detail_props;
     std::vector<BspDetailLightStyle> detail_light_styles;
     std::vector<BspCollisionModel> collision;
+    // One normal index per face corner, in face order (faces' surfedges concatenated).
+    std::vector<Vec3> vertex_normals;
+    std::vector<std::uint16_t> vertex_normal_indices;
+    std::vector<BspPrimitive> primitives;
+    std::vector<Vec3> primitive_vertices;
+    std::vector<std::uint16_t> primitive_indices;
+    std::vector<std::uint8_t> disp_lightmap_alphas; // One byte per displacement lightmap luxel.
     std::vector<std::string> static_prop_models;
     std::vector<BspStaticProp> static_props;
     std::vector<std::byte> pakfile; // Uncompressed zip; see ZipArchive.

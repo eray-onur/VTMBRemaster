@@ -36,6 +36,8 @@ Each solid is an `i32` byte size followed by that many bytes:
 
 Totals: 6,785 solids, 7,889 convex pieces, 301,216 triangles.
 
+**MOPP solids** (map collision only, tag `MOPP` at +44): pieces of two triangles follow the header back to back, each sized exactly 16 + 16 × triangles, up to a shared point pool. The tree offset points at compiled MOPP code after the pool.
+
 ## Text block
 
 After the last solid comes KeyValues text, ending in a zero byte:
