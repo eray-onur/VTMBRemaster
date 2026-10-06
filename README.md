@@ -22,6 +22,7 @@ What works today:
 | VPK archives (read and write) | Verified against all 15 archives of the Steam release |
 | Virtual filesystem (loose files over packs, override order) | Working |
 | Textures (`.tth`/`.ttz`, VTF 7.1, DXT decoding) | Verified against all 10,909 textures of the Steam release |
+| Materials (`.vmt`, KeyValues text) | Verified against all 11,052 materials of the Steam release |
 | `openbl-cli` inspection tool | Working |
 
 ## Building
@@ -58,6 +59,7 @@ openbl-cli fs cat python/vamputil.py      # print a file from the merged view
 openbl-cli vpk extract pack103.vpk out/   # extract one archive
 openbl-cli tex info materials/brick/bradwllb            # texture format, size, mips, damage
 openbl-cli tex export materials/brick/bradwllb out.tga  # decode the largest mip to TGA
+openbl-cli mat info brick/bradwllb                      # shader, parameters, proxies, warnings
 ```
 
 ## Contributing

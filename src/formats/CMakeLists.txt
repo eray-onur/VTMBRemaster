@@ -1,7 +1,9 @@
 add_library(openbl_formats
     image_decode.cpp
+    keyvalues.cpp
     path.cpp
     tth.cpp
+    vmt.cpp
     vpk.cpp
     vtf.cpp)
 add_library(openbl::formats ALIAS openbl_formats)

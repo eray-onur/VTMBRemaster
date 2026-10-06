@@ -4,8 +4,11 @@
 #include "openbl/formats/image_decode.hpp"
 #include "openbl/formats/path.hpp"
 #include "openbl/formats/tth.hpp"
+#include "openbl/formats/vmt.hpp"
 #include "openbl/formats/vpk.hpp"
 #include "openbl/formats/vtf.hpp"
+
+#include <algorithm>
 #include "openbl/vfs/game_filesystem.hpp"
 
 #include <cstdint>
@@ -34,8 +37,10 @@ void usage() {
                  "  openbl-cli fs cat <path> [game-dir]\n"
                  "  openbl-cli tex info <texture> [game-dir]\n"
                  "  openbl-cli tex export <texture> <out.tga> [game-dir]\n"
+                 "  openbl-cli mat info <material> [game-dir]\n"
                  "\n"
-                 "<texture> is a game path with or without extension, e.g. materials/brick/bradwllb.\n"
+                 "<texture> and <material> are game paths with or without extension, e.g.\n"
+                 "materials/brick/bradwllb; the materials/ prefix is optional for <material>.\n"
                  "\n"
                  "game-dir defaults to the OPENBL_GAME_DIR environment variable.\n";
 }
@@ -148,6 +153,65 @@ int cmd_tex(const std::vector<std::string_view>& args) {
     }
     usage();
     return 2;
+}
+
+void print_kv(const formats::KvNode& node, int indent) {
+    const std::string pad(static_cast<std::size_t>(indent) * 2, ' ');
+    if (!node.is_block) {
+        std::cout << pad << node.key << " = " << node.value << "\n";
+        return;
+    }
+    std::cout << pad << node.key << "\n";
+    for (const auto& child : node.children) {
+        print_kv(child, indent + 1);
+    }
+}
+
+int cmd_mat(const std::vector<std::string_view>& args) {
+    if (args.size() < 3 || args[1] != "info") {
+        usage();
+        return 2;
+    }
+    const vfs::GameFileSystem gfs(game_dir_arg(args, 3));
+    std::string path = formats::normalize_game_path(args[2]);
+    if (!path.ends_with(".vmt")) {
+        path += ".vmt";
+    }
+    if (!path.starts_with("materials/")) {
+        path.insert(0, "materials/");
+    }
+    const auto data = gfs.read(path);
+    if (!data) {
+        std::cerr << "not found: " << path << "\n";
+        return 1;
+    }
+    const auto mat =
+        formats::parse_vmt(std::string_view(reinterpret_cast<const char*>(data->data()), data->size()));
+
+    std::cout << "shader: " << mat.shader << "\n";
+    std::vector<std::pair<std::string, std::string>> params(mat.params.begin(), mat.params.end());
+    std::sort(params.begin(), params.end());
+    for (const auto& [key, value] : params) {
+        std::cout << "  " << key << " = " << value;
+        const std::string tex = formats::material_texture_path(value);
+        if (gfs.exists(tex + ".tth") || gfs.exists(tex + ".vtf")) {
+            std::cout << "  [texture]";
+        }
+        std::cout << "\n";
+    }
+    for (const auto& block : mat.sub_blocks) {
+        print_kv(block, 1);
+    }
+    if (!mat.proxies.empty()) {
+        std::cout << "proxies:\n";
+        for (const auto& proxy : mat.proxies) {
+            print_kv(proxy, 1);
+        }
+    }
+    for (const auto& d : mat.diagnostics) {
+        std::cout << "warning: line " << d.line << ": " << d.message << "\n";
+    }
+    return 0;
 }
 
 int cmd_vpk(const std::vector<std::string_view>& args) {
@@ -270,6 +334,9 @@ int main(int argc, char** argv) {
         }
         if (args[0] == "tex") {
             return cmd_tex(args);
+        }
+        if (args[0] == "mat") {
+            return cmd_mat(args);
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

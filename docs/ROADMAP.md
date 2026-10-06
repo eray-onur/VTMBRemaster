@@ -10,7 +10,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Virtual filesystem with loose-file and pack override order
 - [x] Textures: `.tth`/`.ttz` pairs and embedded VTF 7.1, with DXT/RGB decoding to RGBA8
 - [ ] Loose `.tga` images (UI, fonts)
-- [ ] Materials: `.vmt`
+- [x] Materials: `.vmt` and the KeyValues text syntax
+- [ ] Shaders: catalogue the parameters each of the 52 shaders uses; proxy behaviour
 - [ ] Models: `.mdl`, `.vtx`, `.vvd` (if present), `.phy`
 - [ ] Maps: `.bsp` (Bloodlines variant), `.ain` (AI node graphs)
 - [ ] Dialogue: `.dlg`. Lip-sync: `.lip`. Choreography: `.vcd`
