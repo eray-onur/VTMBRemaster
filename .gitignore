@@ -1,0 +1,22 @@
+# Build output
+/build/
+/out/
+CMakeUserPresets.json
+
+# IDE
+.vs/
+.idea/
+*.user
+
+# Never commit game data. OpenBL reads it from the user's own install.
+*.vpk
+*.bsp
+*.mdl
+*.vtx
+*.vvd
+*.vtf
+*.tth
+*.ttz
+*.lip
+*.sav
+/gamedata/
