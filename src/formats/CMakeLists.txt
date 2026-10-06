@@ -1,4 +1,5 @@
 add_library(openbl_formats
+    bsp.cpp
     image_decode.cpp
     keyvalues.cpp
     mdl.cpp
@@ -7,7 +8,8 @@ add_library(openbl_formats
     vmt.cpp
     vpk.cpp
     vtf.cpp
-    vtx.cpp)
+    vtx.cpp
+    zip.cpp)
 add_library(openbl::formats ALIAS openbl_formats)
 
 target_include_directories(openbl_formats PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

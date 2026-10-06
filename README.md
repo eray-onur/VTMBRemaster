@@ -24,6 +24,7 @@ What works today:
 | Textures (`.tth`/`.ttz`, VTF 7.1, DXT decoding) | Verified against all 10,909 textures of the Steam release |
 | Materials (`.vmt`, KeyValues text) | Verified against all 11,052 materials of the Steam release |
 | Model geometry (`.mdl` v2531, `.vtx` v107) | Verified against all 4,255 models of the Steam release; animations not yet |
+| Maps (`.bsp` v17: faces, displacements, static props, entities, pakfile) | Verified against all 101 maps of the Steam release |
 | `openbl-cli` inspection tool | Working |
 
 ## Building
@@ -63,6 +64,8 @@ openbl-cli tex export materials/brick/bradwllb out.tga  # decode the largest mip
 openbl-cli mat info brick/bradwllb                      # shader, parameters, proxies, warnings
 openbl-cli mdl info character/npc/common/cop/cop        # bones, textures, meshes, triangles
 openbl-cli mdl export character/npc/common/cop/cop cop.obj  # geometry to OBJ (LOD 0)
+openbl-cli bsp info sm_pier_1                           # faces, props, materials, entity classes
+openbl-cli bsp export sm_pier_1 pier.obj                # world geometry to OBJ
 ```
 
 ## Contributing

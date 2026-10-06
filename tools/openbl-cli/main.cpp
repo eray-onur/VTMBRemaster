@@ -1,6 +1,8 @@
 // openbl-cli: inspection and extraction tool for Bloodlines game data.
 
+#include "openbl/formats/bsp.hpp"
 #include "openbl/formats/error.hpp"
+#include "openbl/formats/zip.hpp"
 #include "openbl/formats/image_decode.hpp"
 #include "openbl/formats/mdl.hpp"
 #include "openbl/formats/vtx.hpp"
@@ -19,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -42,6 +45,8 @@ void usage() {
                  "  openbl-cli mat info <material> [game-dir]\n"
                  "  openbl-cli mdl info <model> [game-dir]\n"
                  "  openbl-cli mdl export <model> <out.obj> [game-dir]\n"
+                 "  openbl-cli bsp info <map> [game-dir]\n"
+                 "  openbl-cli bsp export <map> <out.obj> [game-dir]\n"
                  "\n"
                  "<texture> and <material> are game paths with or without extension, e.g.\n"
                  "materials/brick/bradwllb; the materials/ prefix is optional for <material>.\n"
@@ -341,6 +346,112 @@ int cmd_mdl(const std::vector<std::string_view>& args) {
     return 2;
 }
 
+formats::BspFile load_map(const vfs::GameFileSystem& gfs, std::string_view name) {
+    std::string path = formats::normalize_game_path(name);
+    if (!path.ends_with(".bsp")) {
+        path += ".bsp";
+    }
+    if (!path.starts_with("maps/")) {
+        path.insert(0, "maps/");
+    }
+    const auto data = gfs.read(path);
+    if (!data) {
+        throw std::runtime_error("map not found: " + path);
+    }
+    return formats::parse_bsp(*data);
+}
+
+// Faces that are never drawn: tool surfaces and the sky (rendered separately).
+bool face_is_drawn(const formats::BspFile& bsp, const formats::BspFace& face) {
+    using namespace formats::surf_flags;
+    return (bsp.texinfos[face.texinfo].flags & (NoDraw | Sky | Sky2D | Trigger | Skip | Hint)) == 0;
+}
+
+int cmd_bsp(const std::vector<std::string_view>& args) {
+    if (args.size() >= 3 && args[1] == "info") {
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 3));
+        const auto bsp = load_map(gfs, args[2]);
+        const formats::ZipArchive pak(bsp.pakfile);
+        std::size_t in_game = 0, in_pak = 0, missing = 0;
+        for (const auto& td : bsp.texdatas) {
+            const std::string vmt = "materials/" + td.material + ".vmt";
+            if (gfs.exists(vmt)) {
+                ++in_game;
+            } else if (pak.find(vmt)) {
+                ++in_pak;
+            } else {
+                ++missing;
+                std::cout << "missing material: " << td.material << "\n";
+            }
+        }
+        std::size_t displacements = 0;
+        for (const auto& f : bsp.faces) {
+            displacements += f.dispinfo >= 0;
+        }
+        std::map<std::string, std::size_t> classes;
+        for (const auto& e : bsp.entities) {
+            auto it = e.find("classname");
+            ++classes[it == e.end() ? "?" : it->second];
+        }
+        std::cout << "version:       " << bsp.version << " (revision " << bsp.map_revision << ")\n"
+                  << "faces:         " << bsp.faces.size() << " (" << displacements << " displacements)\n"
+                  << "brush models:  " << bsp.models.size() << "\n"
+                  << "static props:  " << bsp.static_props.size() << " using " << bsp.static_prop_models.size()
+                  << " models\n"
+                  << "lighting:      " << bsp.lighting.size() << " bytes\n"
+                  << "pakfile:       " << pak.entries().size() << " files\n"
+                  << "materials:     " << bsp.texdatas.size() << " (" << in_game << " in game data, " << in_pak
+                  << " in pakfile, " << missing << " missing)\n"
+                  << "entities:      " << bsp.entities.size() << "\n";
+        std::vector<std::pair<std::size_t, std::string>> sorted;
+        for (const auto& [name, n] : classes) {
+            sorted.emplace_back(n, name);
+        }
+        std::sort(sorted.rbegin(), sorted.rend());
+        for (std::size_t i = 0; i < sorted.size() && i < 15; ++i) {
+            std::cout << "  " << sorted[i].first << "  " << sorted[i].second << "\n";
+        }
+        return 0;
+    }
+    if (args.size() >= 4 && args[1] == "export") {
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 4));
+        const auto bsp = load_map(gfs, args[2]);
+        std::ofstream out{fs::path(args[3])};
+        out << "# World geometry exported by openbl-cli\n";
+        std::size_t base = 1, faces = 0;
+        const auto& world = bsp.models.at(0);
+        for (std::int32_t i = 0; i < world.num_faces; ++i) {
+            const std::size_t fi = static_cast<std::size_t>(world.first_face + i);
+            const auto& face = bsp.faces[fi];
+            if (!face_is_drawn(bsp, face)) {
+                continue;
+            }
+            const auto mesh = formats::build_face_mesh(bsp, fi);
+            const auto& ti = bsp.texinfos[face.texinfo];
+            out << "usemtl "
+                << (ti.texdata >= 0 ? bsp.texdatas[static_cast<std::size_t>(ti.texdata)].material : "none") << "\n";
+            for (std::size_t v = 0; v < mesh.positions.size(); ++v) {
+                out << "v " << mesh.positions[v][0] << " " << mesh.positions[v][1] << " " << mesh.positions[v][2]
+                    << "\nvt " << mesh.uvs[v][0] << " " << 1.0f - mesh.uvs[v][1] << "\n";
+            }
+            for (std::size_t t = 0; t + 2 < mesh.indices.size(); t += 3) {
+                out << "f";
+                for (std::size_t k = 0; k < 3; ++k) {
+                    const std::size_t idx = base + mesh.indices[t + k];
+                    out << " " << idx << "/" << idx;
+                }
+                out << "\n";
+            }
+            base += mesh.positions.size();
+            ++faces;
+        }
+        std::cout << "wrote " << faces << " faces to " << args[3] << "\n";
+        return out ? 0 : 1;
+    }
+    usage();
+    return 2;
+}
+
 int cmd_vpk(const std::vector<std::string_view>& args) {
     if (args.size() < 3) {
         usage();
@@ -467,6 +578,9 @@ int main(int argc, char** argv) {
         }
         if (args[0] == "mdl") {
             return cmd_mdl(args);
+        }
+        if (args[0] == "bsp") {
+            return cmd_bsp(args);
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
