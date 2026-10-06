@@ -21,15 +21,21 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Maps: BSP nodes and leafs (line-of-sight traces), world lights
 - [ ] Maps: visibility (PVS), brushes and brush sides, cubemaps, detail props, physics collision, overlays/decals
 - [x] Coverage report: `openbl-cli fs coverage` lists every extension in the game data with its status
-- [ ] AI node graphs: `.ain` (text in Bloodlines) and `.loc`
-- [ ] Dialogue: `.dlg`. Lip-sync: `.lip`. Choreography: `.vcd`
-- [ ] `vdata` text tables: items, hack terminals, signs, camera shots, system
-- [ ] Particle systems: `particles/*.txt` (1,594 files) and their `.tga` sprites
-- [ ] Facial expressions: `.vfe` and `expressions/*.txt`
-- [ ] Sound: `sound/schemes/*.txt`, `.sfk` waveform previews, `.pk`; decoding `.wav` and `.mp3`
+- [x] AI node graphs: `.ain` (text in Bloodlines) and `.loc`
+- [x] Dialogue: `.dlg`. Lip-sync: `.lip`. Choreography: `.vcd`
+- [x] `vdata` text tables parse (KeyValues with block comments, `\"` escapes, recovery from the shipped typos); catalogued in docs/formats/text_data.md
+- [ ] Typed loaders for the `vdata/system` rule tables (with the Phase 2 registries)
+- [x] Particle system definitions parse (`particles/*.txt`, 1,594 files)
+- [ ] Particle system semantics and rendering
+- [x] Facial expressions: `.vfe` and `expressions/*.txt`
+- [x] Sound schemes (`sound/schemes/*.txt`)
+- [ ] Sound: `.sfk` waveform previews, `.pk`; decoding `.wav` and `.mp3`
 - [ ] Video: `.bik` intro movies (codec choice to be decided)
-- [ ] Fonts and UI: `.fnt`, `.res`, `.bmp`, `scripts/dialog_*` (includes a multiplayer dialog)
-- [ ] Configs: `.cfg`, `.lst` key bindings, `settings.scr`, `liblist.gam`
+- [x] UI layouts and localisation: `.res`, `scripts/dialog_*`, `resource/gameui_english.txt` (UTF-16)
+- [ ] Fonts and UI images: `.fnt`, `.bmp`
+- [x] Key binding lists and `liblist.gam`
+- [ ] Special text formats: `scripts/titles.txt`, `sentences.txt`, `dsp_presets.txt`, `credits.txt`, `experience_table.txt`
+- [ ] Console scripts: `.cfg`, `valve.rc`, `settings.scr` (with the console in Phase 2)
 - [ ] Save games (`.sav`)
 - [ ] Python bytecode (`.pyc`) in archives; identify the embedded interpreter's version
 

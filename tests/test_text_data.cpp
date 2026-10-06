@@ -34,6 +34,9 @@ TEST_CASE("KeyValues integration: text data files in the real install") {
             group = path.substr(0, path.find('/'));
         } else if (path.ends_with(".res")) {
             group = "*.res";
+        } else if (path.starts_with("scripts/dialog_") || path.starts_with("scripts/kb_") ||
+                   path == "scripts/liblist.gam") {
+            group = "scripts (UI dialogs, key bindings, game info)";
         } else {
             continue;
         }
