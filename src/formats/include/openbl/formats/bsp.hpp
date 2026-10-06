@@ -5,6 +5,9 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include "openbl/formats/keyvalues.hpp"
+#include "openbl/formats/phy.hpp"
+
 #include <map>
 #include <span>
 #include <string>
@@ -32,11 +35,20 @@ enum : std::size_t {
     SurfEdges = 13,
     Models = 14,
     WorldLights = 15,
+    LeafFaces = 16,
+    LeafBrushes = 17,
+    Brushes = 18,
+    BrushSides = 19,
+    Areas = 20,
+    AreaPortals = 21,
     DispInfo = 26,
     OriginalFaces = 27,
+    PhysCollide = 29,
     DispVerts = 33,
     GameLump = 35,
+    LeafWaterData = 36,
     PakFile = 40,
+    ClipPortalVerts = 41,
     Cubemaps = 42,
     TexDataStringData = 43,
     TexDataStringTable = 44,
@@ -187,7 +199,79 @@ constexpr std::int32_t Water = 0x20;
 
 struct BspLeaf {
     std::int32_t contents = 0;
-    std::int16_t cluster = -1;
+    std::int16_t cluster = -1; // -1: outside the visibility data.
+    std::uint16_t area = 0;
+    std::uint16_t flags = 0;
+    std::array<std::int16_t, 3> mins{}, maxs{};
+    std::uint16_t first_leaf_face = 0, num_leaf_faces = 0;
+    std::uint16_t first_leaf_brush = 0, num_leaf_brushes = 0;
+    std::int16_t water_data = -1; // Index into BspFile::leaf_water, or -1.
+};
+
+struct BspBrush {
+    std::int32_t first_side = 0, num_sides = 0;
+    std::int32_t contents = 0;
+};
+
+struct BspBrushSide {
+    std::uint16_t plane = 0;
+    std::int16_t texinfo = -1;
+    std::int16_t dispinfo = 0;
+    std::int16_t bevel = 0; // 1 for bevel planes added by the compiler.
+};
+
+struct BspArea {
+    std::int32_t num_portals = 0, first_portal = 0;
+};
+
+struct BspAreaPortal {
+    std::uint16_t key = 0;        // Matches a func_areaportal's portal number.
+    std::uint16_t other_area = 0;
+    std::uint16_t first_clip_vert = 0, num_clip_verts = 0;
+    std::int32_t plane = 0;
+};
+
+struct BspLeafWater {
+    float surface_z = 0, min_z = 0;
+    std::int16_t texinfo = -1;
+};
+
+struct BspCubemap {
+    std::array<std::int32_t, 3> origin{};
+    std::int32_t size = 0; // 0 = default resolution.
+};
+
+struct BspDetailProp {
+    Vec3 origin{};
+    Vec3 angles{};
+    std::uint16_t model = 0; // Index into BspFile::detail_prop_models.
+    std::uint16_t leaf = 0;
+    std::array<std::uint8_t, 4> lighting{}; // ColorRGBExp32.
+    std::uint32_t first_light_style = 0xFFFFFFFF; // Into detail_light_styles, or none.
+    std::uint8_t light_style_count = 0;
+};
+
+struct BspDetailLightStyle {
+    std::array<std::uint8_t, 4> lighting{}; // ColorRGBExp32.
+    std::uint8_t style = 0;
+};
+
+// Collision for one brush model (model 0 is the world).
+struct BspCollisionModel {
+    std::int32_t model = 0;
+    std::vector<PhySolid> solids;
+    KvDocument text; // "solid", "staticsolid", "fluid", "materialtable" blocks.
+};
+
+// Potentially visible / audible sets, run-length compressed per cluster.
+struct BspVisibility {
+    std::int32_t clusters = 0;
+    std::vector<std::array<std::int32_t, 2>> offsets; // Per cluster: PVS, PAS byte offsets into data.
+    std::vector<std::byte> data;                       // The whole lump.
+
+    // One bit per cluster. kind 0 = visible (PVS), 1 = audible (PAS).
+    // Throws FormatError on corrupt data.
+    std::vector<std::uint8_t> decompress(std::int32_t cluster, int kind = 0) const;
 };
 
 using BspEntity = std::map<std::string, std::string>;
@@ -210,6 +294,20 @@ struct BspFile {
     std::vector<BspWorldLight> world_lights;
     std::vector<BspNode> nodes;
     std::vector<BspLeaf> leafs;
+    std::vector<std::uint16_t> leaf_faces;
+    std::vector<std::uint16_t> leaf_brushes;
+    std::vector<BspBrush> brushes;
+    std::vector<BspBrushSide> brush_sides;
+    std::vector<BspArea> areas;
+    std::vector<BspAreaPortal> area_portals;
+    std::vector<Vec3> clip_portal_verts;
+    std::vector<BspLeafWater> leaf_water;
+    std::vector<BspCubemap> cubemaps;
+    BspVisibility visibility;
+    std::vector<std::string> detail_prop_models;
+    std::vector<BspDetailProp> detail_props;
+    std::vector<BspDetailLightStyle> detail_light_styles;
+    std::vector<BspCollisionModel> collision;
     std::vector<std::string> static_prop_models;
     std::vector<BspStaticProp> static_props;
     std::vector<std::byte> pakfile; // Uncompressed zip; see ZipArchive.

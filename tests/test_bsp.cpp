@@ -116,6 +116,8 @@ std::vector<std::byte> build_bsp() {
         l.put(contents);
         l.put(std::int16_t{static_cast<std::int16_t>(contents ? -1 : 0)});
         l.d.resize(at + 32);
+        const std::int16_t no_water = -1;
+        std::memcpy(l.d.data() + at + 28, &no_water, 2);
     }
 
     // One point light (88-byte record).
@@ -413,6 +415,8 @@ TEST_CASE("BSP integration: every map in the real install loads") {
     const vfs::GameFileSystem gfs(*game);
     std::size_t maps = 0, faces = 0, triangles = 0, props = 0, missing_materials = 0, materials = 0,
                 missing_props = 0;
+    std::size_t brushes = 0, clusters = 0, bad_vis = 0, detail_props = 0, bad_detail_styles = 0, cubemaps = 0,
+                collision_models = 0, collision_triangles = 0, world_collision = 0;
     for (const auto& path : gfs.list_files()) {
         if (!path.ends_with(".bsp")) {
             continue;
@@ -444,9 +448,39 @@ TEST_CASE("BSP integration: every map in the real install loads") {
         for (const auto& m : bsp.static_prop_models) {
             missing_props += !gfs.exists(m);
         }
+
+        brushes += bsp.brushes.size();
+        detail_props += bsp.detail_props.size();
+        cubemaps += bsp.cubemaps.size();
+        for (const auto& d : bsp.detail_props) {
+            bad_detail_styles += d.first_light_style != 0xFFFFFFFF &&
+                                 std::size_t{d.first_light_style} + d.light_style_count > bsp.detail_light_styles.size();
+        }
+        // Every cluster decompresses and sees itself.
+        clusters += static_cast<std::size_t>(bsp.visibility.clusters);
+        for (std::int32_t c = 0; c < bsp.visibility.clusters; ++c) {
+            std::vector<std::uint8_t> row;
+            REQUIRE_NOTHROW(row = bsp.visibility.decompress(c));
+            bad_vis += ((row[static_cast<std::size_t>(c) >> 3] >> (c & 7)) & 1) == 0;
+        }
+        collision_models += bsp.collision.size();
+        for (const auto& cm : bsp.collision) {
+            for (const auto& s : cm.solids) {
+                for (const auto& p : s.pieces) {
+                    collision_triangles += p.triangles.size();
+                }
+            }
+        }
+        world_collision += !bsp.collision.empty() && bsp.collision[0].model == 0;
     }
     MESSAGE(maps << " maps, " << faces << " faces, " << triangles << " triangles, " << props << " static props ("
                  << missing_props << " prop models missing), " << missing_materials << " of " << materials
                  << " materials missing");
+    MESSAGE(brushes << " brushes, " << clusters << " visibility clusters, " << detail_props << " detail props, "
+                    << cubemaps << " cubemaps, " << collision_models << " collision models with "
+                    << collision_triangles << " triangles");
     CHECK(maps > 100);
+    CHECK(bad_vis == 0);
+    CHECK(bad_detail_styles == 0);
+    CHECK(world_collision == maps);
 }

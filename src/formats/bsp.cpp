@@ -1,6 +1,7 @@
 #include "openbl/formats/bsp.hpp"
 
 #include "binary_reader.hpp"
+#include "physics_solid.hpp"
 #include "openbl/formats/error.hpp"
 #include "openbl/formats/path.hpp"
 
@@ -131,12 +132,58 @@ public:
             l.owner = r.i32();
             bsp.world_lights.push_back(l);
         });
+        for_each(bsp_lump::LeafFaces, 2, [&](detail::BinaryReader& r) {
+            const std::uint16_t f = r.u16();
+            if (f >= bsp.faces.size()) {
+                in_.fail("leaf face out of range");
+            }
+            bsp.leaf_faces.push_back(f);
+        });
+        parse_brushes(bsp);
+        for_each(bsp_lump::LeafWaterData, 12, [&](detail::BinaryReader& r) {
+            BspLeafWater w;
+            w.surface_z = r.f32();
+            w.min_z = r.f32();
+            w.texinfo = static_cast<std::int16_t>(r.u16());
+            bsp.leaf_water.push_back(w);
+        });
+        parse_areas(bsp);
         for_each(bsp_lump::Leafs, 32, [&](detail::BinaryReader& r) {
             BspLeaf leaf;
             leaf.contents = r.i32();
             leaf.cluster = static_cast<std::int16_t>(r.u16());
+            const std::uint16_t area_flags = r.u16();
+            leaf.area = area_flags & 0x1ff;
+            leaf.flags = static_cast<std::uint16_t>(area_flags >> 9);
+            for (auto& v : leaf.mins) {
+                v = static_cast<std::int16_t>(r.u16());
+            }
+            for (auto& v : leaf.maxs) {
+                v = static_cast<std::int16_t>(r.u16());
+            }
+            leaf.first_leaf_face = r.u16();
+            leaf.num_leaf_faces = r.u16();
+            leaf.first_leaf_brush = r.u16();
+            leaf.num_leaf_brushes = r.u16();
+            leaf.water_data = static_cast<std::int16_t>(r.u16());
+            if (std::size_t{leaf.first_leaf_face} + leaf.num_leaf_faces > bsp.leaf_faces.size() ||
+                std::size_t{leaf.first_leaf_brush} + leaf.num_leaf_brushes > bsp.leaf_brushes.size() ||
+                (leaf.water_data >= 0 && static_cast<std::size_t>(leaf.water_data) >= bsp.leaf_water.size()) ||
+                (!bsp.areas.empty() && leaf.area >= bsp.areas.size())) {
+                in_.fail("leaf references out of range");
+            }
             bsp.leafs.push_back(leaf);
         });
+        parse_visibility(bsp);
+        for_each(bsp_lump::Cubemaps, 16, [&](detail::BinaryReader& r) {
+            BspCubemap c;
+            for (auto& v : c.origin) {
+                v = r.i32();
+            }
+            c.size = r.i32();
+            bsp.cubemaps.push_back(c);
+        });
+        parse_collision(bsp);
         for_each(bsp_lump::Nodes, 32, [&](detail::BinaryReader& r) {
             BspNode node;
             node.plane = r.i32();
@@ -289,6 +336,212 @@ private:
         }
     }
 
+    void parse_brushes(BspFile& bsp) {
+        for_each(bsp_lump::BrushSides, 8, [&](detail::BinaryReader& r) {
+            BspBrushSide side;
+            side.plane = r.u16();
+            side.texinfo = static_cast<std::int16_t>(r.u16());
+            side.dispinfo = static_cast<std::int16_t>(r.u16());
+            side.bevel = static_cast<std::int16_t>(r.u16());
+            if (side.plane >= bsp.planes.size() ||
+                (side.texinfo >= 0 && static_cast<std::size_t>(side.texinfo) >= bsp.texinfos.size())) {
+                in_.fail("brush side out of range");
+            }
+            bsp.brush_sides.push_back(side);
+        });
+        for_each(bsp_lump::Brushes, 12, [&](detail::BinaryReader& r) {
+            BspBrush b;
+            b.first_side = r.i32();
+            b.num_sides = r.i32();
+            b.contents = r.i32();
+            if (b.first_side < 0 || b.num_sides < 0 ||
+                static_cast<std::size_t>(b.first_side) + static_cast<std::size_t>(b.num_sides) > bsp.brush_sides.size()) {
+                in_.fail("brush sides out of range");
+            }
+            bsp.brushes.push_back(b);
+        });
+        for_each(bsp_lump::LeafBrushes, 2, [&](detail::BinaryReader& r) {
+            const std::uint16_t b = r.u16();
+            if (b >= bsp.brushes.size()) {
+                in_.fail("leaf brush out of range");
+            }
+            bsp.leaf_brushes.push_back(b);
+        });
+    }
+
+    void parse_areas(BspFile& bsp) {
+        for_each(bsp_lump::ClipPortalVerts, 12, [&](detail::BinaryReader& r) { bsp.clip_portal_verts.push_back(vec3(r)); });
+        for_each(bsp_lump::AreaPortals, 12, [&](detail::BinaryReader& r) {
+            BspAreaPortal a;
+            a.key = r.u16();
+            a.other_area = r.u16();
+            a.first_clip_vert = r.u16();
+            a.num_clip_verts = r.u16();
+            a.plane = r.i32();
+            if (std::size_t{a.first_clip_vert} + a.num_clip_verts > bsp.clip_portal_verts.size() || a.plane < 0 ||
+                static_cast<std::size_t>(a.plane) >= bsp.planes.size()) {
+                in_.fail("area portal out of range");
+            }
+            bsp.area_portals.push_back(a);
+        });
+        for_each(bsp_lump::Areas, 8, [&](detail::BinaryReader& r) {
+            BspArea a;
+            a.num_portals = r.i32();
+            a.first_portal = r.i32();
+            if (a.num_portals < 0 || a.first_portal < 0 ||
+                static_cast<std::size_t>(a.first_portal) + static_cast<std::size_t>(a.num_portals) > bsp.area_portals.size()) {
+                in_.fail("area portals out of range");
+            }
+            bsp.areas.push_back(a);
+        });
+        for (const auto& portal : bsp.area_portals) {
+            if (portal.other_area >= bsp.areas.size()) {
+                in_.fail("area portal leads to a missing area");
+            }
+        }
+    }
+
+    // Header: i32 cluster count, then per cluster i32 PVS and PAS offsets
+    // into the lump. Rows are run-length compressed (see decompress).
+    void parse_visibility(BspFile& bsp) {
+        const auto bytes = lump_data(bsp_lump::Visibility);
+        if (bytes.empty()) {
+            return;
+        }
+        detail::BinaryReader r(bytes, "BSP visibility");
+        auto& vis = bsp.visibility;
+        vis.clusters = r.i32();
+        if (vis.clusters < 0 || static_cast<std::uint64_t>(vis.clusters) * 8 > r.remaining()) {
+            in_.fail("visibility cluster count out of range");
+        }
+        for (std::int32_t c = 0; c < vis.clusters; ++c) {
+            const std::int32_t pvs = r.i32();
+            const std::int32_t pas = r.i32();
+            if (pvs < 0 || pas < 0 || static_cast<std::size_t>(pvs) >= bytes.size() ||
+                static_cast<std::size_t>(pas) >= bytes.size()) {
+                in_.fail("visibility offset out of range");
+            }
+            vis.offsets.push_back({pvs, pas});
+        }
+        vis.data.assign(bytes.begin(), bytes.end());
+        for (const auto& leaf : bsp.leafs) {
+            if (leaf.cluster >= vis.clusters) {
+                in_.fail("leaf cluster out of range");
+            }
+        }
+    }
+
+    // Collision for brush models: blocks of {i32 model, i32 data size,
+    // i32 text size, i32 solid count}, the solids (each i32 size + data, as in
+    // .phy files), then KeyValues text; a model of -1 ends the list.
+    void parse_collision(BspFile& bsp) {
+        const auto bytes = lump_data(bsp_lump::PhysCollide);
+        detail::BinaryReader r(bytes, "BSP collision");
+        std::size_t at = 0;
+        while (at + 16 <= bytes.size()) {
+            r.seek(at);
+            const std::int32_t model = r.i32();
+            if (model == -1) {
+                return;
+            }
+            const std::int32_t data_size = r.i32();
+            const std::int32_t text_size = r.i32();
+            const std::int32_t solids = r.i32();
+            if (model < 0 || static_cast<std::size_t>(model) >= bsp.models.size() || data_size < 0 || text_size < 0 ||
+                solids < 0 || static_cast<std::uint64_t>(data_size) + static_cast<std::uint64_t>(text_size) >
+                                  bytes.size() - (at + 16)) {
+                in_.fail("collision block out of range");
+            }
+            BspCollisionModel cm;
+            cm.model = model;
+            std::size_t solid = at + 16;
+            const std::size_t data_end = solid + static_cast<std::size_t>(data_size);
+            for (std::int32_t k = 0; k < solids; ++k) {
+                r.seek(solid);
+                const std::int32_t size = r.i32();
+                if (size < 0 || solid + 4 + static_cast<std::size_t>(size) > data_end) {
+                    in_.fail("collision solid out of range");
+                }
+                cm.solids.push_back(detail::parse_physics_solid(bytes, solid + 4, static_cast<std::size_t>(size), r));
+                solid += 4 + static_cast<std::size_t>(size);
+            }
+            if (solid != data_end) {
+                in_.fail("collision solids do not fill their block");
+            }
+            std::string_view text(reinterpret_cast<const char*>(bytes.data() + data_end), static_cast<std::size_t>(text_size));
+            if (const auto nul = text.find('\0'); nul != std::string_view::npos) {
+                text = text.substr(0, nul);
+            }
+            cm.text = parse_keyvalues(text);
+            bsp.collision.push_back(std::move(cm));
+            at = data_end + static_cast<std::size_t>(text_size);
+        }
+        if (!bytes.empty()) {
+            in_.fail("collision lump has no end marker");
+        }
+    }
+
+    // Detail props, version 2: model names (128 bytes each), then 40-byte
+    // props. There is no sprite dictionary in this version.
+    void parse_detail_props(BspFile& bsp, std::span<const std::byte> bytes) {
+        detail::BinaryReader r(bytes, "BSP detail props");
+        const std::int32_t names = r.i32();
+        if (names < 0 || static_cast<std::uint64_t>(names) * kStaticPropNameSize > r.remaining()) {
+            in_.fail("detail prop model count out of range");
+        }
+        for (std::int32_t n = 0; n < names; ++n) {
+            const auto raw = r.bytes(kStaticPropNameSize);
+            std::string name;
+            for (std::byte b : raw) {
+                if (b == std::byte{0}) {
+                    break;
+                }
+                name.push_back(static_cast<char>(b));
+            }
+            bsp.detail_prop_models.push_back(normalize_game_path(name));
+        }
+        const std::int32_t props = r.i32();
+        if (props < 0 || static_cast<std::uint64_t>(props) * 40 != r.remaining()) {
+            in_.fail("detail prop count does not match the lump size");
+        }
+        for (std::int32_t p = 0; p < props; ++p) {
+            const std::size_t start = r.pos();
+            BspDetailProp d;
+            d.origin = vec3(r);
+            d.angles = vec3(r);
+            d.model = r.u16();
+            d.leaf = r.u16();
+            for (auto& c : d.lighting) {
+                c = r.u8();
+            }
+            d.first_light_style = r.u32();
+            d.light_style_count = r.u8();
+            // Three more bytes, often 0xCD (uninitialised memory in the compiler).
+            if (d.model >= bsp.detail_prop_models.size()) {
+                in_.fail("detail prop references missing model");
+            }
+            bsp.detail_props.push_back(d);
+            r.seek(start + 40);
+        }
+    }
+
+    // Detail prop light styles: i32 count, then 5-byte {ColorRGBExp32, style}.
+    void parse_detail_light_styles(BspFile& bsp, std::span<const std::byte> bytes) {
+        detail::BinaryReader r(bytes, "BSP detail prop lighting");
+        const std::int32_t count = r.i32();
+        if (count < 0 || static_cast<std::uint64_t>(count) * 5 != r.remaining()) {
+            in_.fail("detail light style count does not match the lump size");
+        }
+        for (std::int32_t i = 0; i < count; ++i) {
+            BspDetailLightStyle s;
+            for (auto& c : s.lighting) {
+                c = r.u8();
+            }
+            s.style = r.u8();
+            bsp.detail_light_styles.push_back(s);
+        }
+    }
+
     void parse_game_lump(BspFile& bsp) {
         const auto bytes = lump_data(bsp_lump::GameLump);
         if (bytes.empty()) {
@@ -302,6 +555,21 @@ private:
             const std::uint16_t version = dir.u16();
             const std::int32_t offset = dir.i32();
             const std::int32_t length = dir.i32();
+            if (offset < 0 || length < 0 || static_cast<std::uint64_t>(offset) + length > data_.size()) {
+                in_.fail("game lump out of range");
+            }
+            const auto sub = data_.subspan(static_cast<std::size_t>(offset), static_cast<std::size_t>(length));
+            if (id == 0x64707270u) { // 'dprp'
+                if (version != 2) {
+                    in_.fail("unsupported detail prop version " + std::to_string(version));
+                }
+                parse_detail_props(bsp, sub);
+                continue;
+            }
+            if (id == 0x64706c74u) { // 'dplt'
+                parse_detail_light_styles(bsp, sub);
+                continue;
+            }
             if (id != 0x73707270u) { // 'sprp'
                 continue;
             }
@@ -356,6 +624,39 @@ private:
     detail::BinaryReader in_;
     std::array<Lump, bsp_lump::Count> lumps_{};
 };
+
+} // namespace
+
+std::vector<std::uint8_t> BspVisibility::decompress(std::int32_t cluster, int kind) const {
+    if (cluster < 0 || cluster >= clusters || kind < 0 || kind > 1) {
+        throw FormatError("BSP visibility: cluster out of range");
+    }
+    const std::size_t bytes = (static_cast<std::size_t>(clusters) + 7) / 8;
+    std::vector<std::uint8_t> out;
+    out.reserve(bytes);
+    // A zero byte is followed by a count of zero bytes; other bytes are literal.
+    std::size_t i = static_cast<std::size_t>(offsets[static_cast<std::size_t>(cluster)][static_cast<std::size_t>(kind)]);
+    while (out.size() < bytes) {
+        if (i >= data.size()) {
+            throw FormatError("BSP visibility: row runs past the end of the data");
+        }
+        const auto b = std::to_integer<std::uint8_t>(data[i++]);
+        if (b != 0) {
+            out.push_back(b);
+            continue;
+        }
+        if (i >= data.size()) {
+            throw FormatError("BSP visibility: row runs past the end of the data");
+        }
+        out.insert(out.end(), std::to_integer<std::uint8_t>(data[i++]), 0);
+    }
+    if (out.size() != bytes) {
+        throw FormatError("BSP visibility: row overruns the cluster count");
+    }
+    return out;
+}
+
+namespace {
 
 Vec3 lerp(const Vec3& a, const Vec3& b, float t) {
     return {a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t};
