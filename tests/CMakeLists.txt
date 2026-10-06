@@ -20,6 +20,7 @@ add_executable(openbl_tests
     test_keyvalues.cpp
     test_lip.cpp
     test_mdl.cpp
+    test_text_data.cpp
     test_tth.cpp
     test_vcd.cpp
     test_vmt.cpp

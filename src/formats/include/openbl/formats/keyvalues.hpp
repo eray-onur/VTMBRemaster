@@ -30,12 +30,21 @@ struct KvDocument {
     std::vector<KvDiagnostic> diagnostics;
 };
 
+struct KvOptions {
+    // Treat \" inside quoted strings as a literal quote. vdata tables use it;
+    // materials must not, as their paths contain backslashes.
+    bool escaped_quotes = false;
+};
+
 // Never throws on malformed input: problems are recovered from and reported
 // as diagnostics. Text is treated as bytes (the game files are Windows-1252).
-//   - "//" starts a comment to end of line; there are no escape sequences.
+//   - "//" starts a comment to end of line, "/*" one that ends at "*/".
+//   - No escape sequences unless KvOptions::escaped_quotes is set.
 //   - Quoted strings may span lines. Unquoted tokens end at whitespace, '"', '{' or '}'.
+//   - A string whose closing quote is missing is recovered when the next quote is
+//     directly followed by a word character (see docs/formats/materials.md).
 //   - Unclosed blocks are closed at end of input; stray '}' at top level are ignored.
-KvDocument parse_keyvalues(std::string_view text);
+KvDocument parse_keyvalues(std::string_view text, const KvOptions& options = {});
 
 bool iequals(std::string_view a, std::string_view b);
 

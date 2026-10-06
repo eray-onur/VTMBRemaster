@@ -101,3 +101,51 @@ TEST_CASE("KeyValues recovery") {
         CHECK(doc.diagnostics.empty());
     }
 }
+
+TEST_CASE("KeyValues block comments") {
+    const auto doc = parse_keyvalues("a 1\n/*\nb { c 2 }\n*/\nd \"3\"");
+    CHECK(doc.diagnostics.empty());
+    REQUIRE(doc.roots.size() == 2);
+    CHECK(doc.roots[1].key == "d");
+    CHECK(doc.roots[1].line == 5);
+    CHECK(parse_keyvalues("a 1 /* never closed").diagnostics.size() == 1);
+}
+
+TEST_CASE("KeyValues missing closing quotes") {
+    SUBCASE("at the end of a line") {
+        const auto doc = parse_keyvalues("S\n{\n\t\"Filename\"\t\"buoy.wav\n\t\t\"Volume\"\t\"50\"\n}\n");
+        const auto* s = doc.roots.at(0).find("Filename");
+        REQUIRE(s);
+        CHECK(s->value == "buoy.wav");
+        CHECK(doc.roots[0].find("Volume")->value == "50");
+        CHECK(doc.roots[0].find("Volume")->line == 4);
+        CHECK(doc.diagnostics.size() == 1);
+    }
+    SUBCASE("multi-line text keeps its lines") {
+        const auto doc = parse_keyvalues("\"description\"\t\"Line one.\r\n\r\nLine two.\r\n\t\r\n\t\"bucket\"\t\"1\"");
+        REQUIRE(doc.roots.size() == 2);
+        CHECK(doc.roots[0].value == "Line one.\r\n\r\nLine two.");
+        CHECK(doc.roots[1].key == "bucket");
+    }
+    SUBCASE("after a key") {
+        const auto doc = parse_keyvalues("\"MinBlinkInterval\t\t\"2.5\"\n\"Max\" \"6\"");
+        REQUIRE(doc.roots.size() == 2);
+        CHECK(doc.roots[0].key == "MinBlinkInterval");
+        CHECK(doc.roots[0].value == "2.5");
+    }
+    SUBCASE("ordinary strings are untouched") {
+        const auto doc = parse_keyvalues("\"a\"\t\"b\"\n\"c\" \"multi\nline\"");
+        CHECK(doc.diagnostics.empty());
+        CHECK(doc.roots[1].value == "multi\nline");
+    }
+}
+
+TEST_CASE("KeyValues escaped quotes are opt-in") {
+    constexpr std::string_view text = "\"Text\" \"Keys are in the \\\"Equipment\\\" category.\"";
+    const auto plain = parse_keyvalues(text);
+    CHECK(plain.roots.at(0).value == "Keys are in the \\");
+    const auto escaped = parse_keyvalues(text, {.escaped_quotes = true});
+    CHECK(escaped.diagnostics.empty());
+    REQUIRE(escaped.roots.size() == 1);
+    CHECK(escaped.roots[0].value == "Keys are in the \"Equipment\" category.");
+}
