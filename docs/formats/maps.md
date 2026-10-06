@@ -65,6 +65,21 @@ The lump holds a model-name dictionary (`char[128]` each), a leaf list (`u16`), 
 
 TexData names are relative to `materials/`. About a third (3,831) are per-map patched materials, such as `maps/sm_pier_1/…`, that live in the pakfile and not in the game archives. Only 2 of 11,184 names resolve nowhere. All pakfile entries are stored uncompressed. The zip reader also handles deflate.
 
+## Skybox
+
+The worldspawn `skyname` (`santamonica`, `holly`, `la`, `pier`, `chinatown`, `warehouse`, `hav` or `moon`) names six `UnlitGeneric` materials, `materials/skybox/<name>{rt,lf,bk,ft,up,dn}.vmt`. Every map has all six. The faces map onto the cube as follows; each entry gives the direction of increasing u and of decreasing v, as seen from inside:
+
+| Face | Direction | u → | v ↑ |
+|---|---|---|---|
+| rt | +X | −Y | +Z |
+| lf | −X | +Y | +Z |
+| bk | +Y | +X | +Z |
+| ft | −Y | −X | +Z |
+| up | +Z | −Y | −X |
+| dn | −Z | −Y | +X |
+
+This was verified by colour continuity across all 12 cube edges of the `santamonica` and `holly` skyboxes. Mean edge difference is 3.4, against 35.9 for the worst alternative mapping. The `dn` rotation cannot be confirmed this way, because the face is a uniform colour.
+
 ## Entities
 
 The entity lump is plain text without the KeyValues extras: no comments and no nesting. One Bloodlines-specific detail matters: values containing Python code escape quotes as `\"`, for example `"python_script" "IsDead(\"Mandarin\")"` in `ch_fulab_1`. The parser turns `\"` into `"` and keeps all other backslashes literal, because paths use them as separators.

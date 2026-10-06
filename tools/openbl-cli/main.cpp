@@ -55,7 +55,7 @@ void usage() {
 }
 
 fs::path game_dir_arg(const std::vector<std::string_view>& args, std::size_t index) {
-    if (index < args.size()) {
+    if (index < args.size() && !args[index].empty()) {
         return fs::path(args[index]);
     }
     if (const char* env = std::getenv("OPENBL_GAME_DIR")) {

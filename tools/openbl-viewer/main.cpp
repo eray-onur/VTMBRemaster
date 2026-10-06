@@ -16,6 +16,7 @@
 #include "openbl/render/material_system.hpp"
 #include "openbl/render/texture_upload.hpp"
 #include "openbl/render/prop_renderer.hpp"
+#include "openbl/render/sky_renderer.hpp"
 #include "openbl/render/world_renderer.hpp"
 #include "openbl/rhi/vulkan.hpp"
 #include "openbl/vfs/game_filesystem.hpp"
@@ -121,7 +122,7 @@ std::array<float, 16> to_array(const glm::mat4& m) {
 class Scene {
 public:
     virtual ~Scene() = default;
-    virtual void draw(rhi::CommandList& cmd, const glm::mat4& view_projection) = 0;
+    virtual void draw(rhi::CommandList& cmd, const glm::mat4& projection, const glm::mat4& view) = 0;
 };
 
 // --- Test cube -------------------------------------------------------------
@@ -170,7 +171,8 @@ public:
         bind_group_ = device.create_bind_group(*pipeline_, *sampler_, textures);
     }
 
-    void draw(rhi::CommandList& cmd, const glm::mat4& vp) override {
+    void draw(rhi::CommandList& cmd, const glm::mat4& projection, const glm::mat4& view) override {
+        const glm::mat4 vp = projection * view;
         cmd.set_pipeline(*pipeline_);
         cmd.set_bind_group(*bind_group_);
         cmd.set_vertex_buffer(*vbuf_);
@@ -218,6 +220,13 @@ public:
         if (options.props) {
             props_ = std::make_unique<render::PropRenderer>(device, *materials_, *assets_, bsp_);
         }
+        if (auto sky = bsp_.entities.at(0).find("skyname"); sky != bsp_.entities.at(0).end()) {
+            try {
+                sky_ = std::make_unique<render::SkyRenderer>(device, *materials_, sky->second);
+            } catch (const std::exception& e) {
+                std::cerr << "sky: " << e.what() << "\n";
+            }
+        }
         const auto& s = world_->stats();
         std::cout << path << ": " << s.faces << " faces, " << s.triangles << " triangles, " << s.batches
                   << " batches, lightmap " << s.lightmap_width << "x" << s.lightmap_height << ", "
@@ -255,8 +264,11 @@ public:
         }
     }
 
-    void draw(rhi::CommandList& cmd, const glm::mat4& vp) override {
-        const auto m = to_array(vp);
+    void draw(rhi::CommandList& cmd, const glm::mat4& projection, const glm::mat4& view) override {
+        if (sky_) {
+            sky_->draw(cmd, to_array(projection * glm::mat4(glm::mat3(view))));
+        }
+        const auto m = to_array(projection * view);
         const render::PropDrawSettings prop_settings{settings_.light_scale, settings_.fullbright};
         world_->draw_opaque(cmd, m, settings_);
         if (props_) {
@@ -276,6 +288,7 @@ private:
     std::unique_ptr<render::MaterialSystem> materials_;
     std::unique_ptr<render::WorldRenderer> world_;
     std::unique_ptr<render::PropRenderer> props_;
+    std::unique_ptr<render::SkyRenderer> sky_;
 };
 
 int run(const Options& options) {
@@ -331,7 +344,7 @@ int run(const Options& options) {
                 continue;
             }
             const float aspect = static_cast<float>(device->frame_width()) / static_cast<float>(device->frame_height());
-            scene->draw(*cmd, camera.projection(aspect) * camera.view());
+            scene->draw(*cmd, camera.projection(aspect), camera.view());
             device->end_frame();
 
             if (capture) {
