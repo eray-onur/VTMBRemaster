@@ -20,7 +20,15 @@ constexpr std::size_t kFlagsOffset = 0xe4;
 constexpr std::size_t kBonesOffset = 0xf0;
 constexpr std::size_t kAnimationsOffset = 0x108;
 constexpr std::size_t kSequencesOffset = 0x110;
+constexpr std::size_t kHitboxSetsOffset = 0x100;
+constexpr std::size_t kAttachmentsOffset = 0x148;
+constexpr std::size_t kFlexDescsOffset = 0x158;
+constexpr std::size_t kFlexControllersOffset = 0x160;
+constexpr std::size_t kFlexRulesOffset = 0x168;
+constexpr std::size_t kIkChainsOffset = 0x170;
+constexpr std::size_t kMouthsOffset = 0x178;
 constexpr std::size_t kPoseParametersOffset = 0x180;
+constexpr std::size_t kSurfacePropOffset = 0x188;
 constexpr std::size_t kIncludeModelsOffset = 0x194;
 constexpr std::size_t kTexturesOffset = 0x124;
 constexpr std::size_t kTextureDirsOffset = 0x12c;
@@ -37,6 +45,17 @@ constexpr std::size_t kAnimationSize = 72;
 constexpr std::size_t kSequenceSize = 764;
 constexpr std::size_t kIncludeModelSize = 116;
 constexpr std::size_t kPoseParameterSize = 20;
+constexpr std::size_t kHitboxSetSize = 12;
+constexpr std::size_t kHitboxSize = 32;
+constexpr std::size_t kAttachmentSize = 60;
+constexpr std::size_t kFlexControllerSize = 20;
+constexpr std::size_t kFlexRuleSize = 12;
+constexpr std::size_t kFlexOpSize = 8;
+constexpr std::size_t kIkChainSize = 16;
+constexpr std::size_t kIkLinkSize = 28;
+constexpr std::size_t kMouthSize = 20;
+constexpr std::size_t kMeshFlexSize = 32;
+constexpr std::size_t kFlexVertexSize = 8;
 constexpr std::size_t kMovementSize = 44;
 constexpr std::size_t kEventSize = 76;
 constexpr std::size_t kMeleeSweepSize = 24;
@@ -78,6 +97,7 @@ public:
         parse_skins(mdl);
         parse_body_parts(mdl);
         parse_animations(mdl);
+        parse_rig(mdl);
         return mdl;
     }
 
@@ -358,6 +378,150 @@ private:
         }
     }
 
+    // Hitboxes, attachments, flex controllers and rules, mouths, IK chains, surface property.
+    void parse_rig(MdlFile& mdl) {
+        const auto bones = static_cast<std::int32_t>(mdl.bones.size());
+        auto check_bone = [&](std::int32_t bone) {
+            if (bone < 0 || bone >= bones) {
+                in_.fail("bone index out of range");
+            }
+            return bone;
+        };
+
+        if (const std::uint32_t prop = u32(kSurfacePropOffset); prop != 0) {
+            mdl.surface_prop = c_string(prop);
+        }
+
+        const std::uint32_t sets = count(kHitboxSetsOffset, "hitbox set");
+        const std::size_t set_base = u32(kHitboxSetsOffset + 4);
+        need(set_base, std::uint64_t{sets} * kHitboxSetSize);
+        for (std::uint32_t i = 0; i < sets; ++i) {
+            const std::size_t at = set_base + std::size_t{i} * kHitboxSetSize;
+            MdlHitboxSet set;
+            set.name = c_string(rel(at, i32(at)));
+            const std::uint32_t n = count(at + 4, "hitbox");
+            const std::size_t base = rel(at, i32(at + 8));
+            need(base, std::uint64_t{n} * kHitboxSize);
+            for (std::uint32_t k = 0; k < n; ++k) {
+                const std::size_t h = base + std::size_t{k} * kHitboxSize;
+                set.hitboxes.push_back({check_bone(i32(h)), i32(h + 4), vec3(h + 8), vec3(h + 20)});
+            }
+            mdl.hitbox_sets.push_back(std::move(set));
+        }
+
+        const std::uint32_t attachments = count(kAttachmentsOffset, "attachment");
+        const std::size_t attachment_base = u32(kAttachmentsOffset + 4);
+        need(attachment_base, std::uint64_t{attachments} * kAttachmentSize);
+        for (std::uint32_t i = 0; i < attachments; ++i) {
+            const std::size_t at = attachment_base + std::size_t{i} * kAttachmentSize;
+            MdlAttachment a;
+            a.name = c_string(rel(at, i32(at)));
+            a.flags = i32(at + 4);
+            a.bone = check_bone(i32(at + 8));
+            for (std::size_t r = 0; r < 3; ++r) {
+                for (std::size_t c = 0; c < 4; ++c) {
+                    a.local[r][c] = f32(at + 12 + 16 * r + 4 * c);
+                }
+            }
+            mdl.attachments.push_back(std::move(a));
+        }
+
+        const std::uint32_t flex_names = count(kFlexDescsOffset, "flex");
+        const std::size_t flex_base = u32(kFlexDescsOffset + 4);
+        need(flex_base, std::uint64_t{flex_names} * 4);
+        for (std::uint32_t i = 0; i < flex_names; ++i) {
+            const std::size_t at = flex_base + 4 * std::size_t{i};
+            mdl.flex_names.push_back(c_string(rel(at, i32(at))));
+        }
+
+        const std::uint32_t controllers = count(kFlexControllersOffset, "flex controller");
+        const std::size_t controller_base = u32(kFlexControllersOffset + 4);
+        need(controller_base, std::uint64_t{controllers} * kFlexControllerSize);
+        for (std::uint32_t i = 0; i < controllers; ++i) {
+            const std::size_t at = controller_base + std::size_t{i} * kFlexControllerSize;
+            mdl.flex_controllers.push_back(
+                {c_string(rel(at, i32(at))), c_string(rel(at, i32(at + 4))), f32(at + 12), f32(at + 16)});
+        }
+
+        const std::uint32_t rules = count(kFlexRulesOffset, "flex rule");
+        const std::size_t rule_base = u32(kFlexRulesOffset + 4);
+        need(rule_base, std::uint64_t{rules} * kFlexRuleSize);
+        for (std::uint32_t i = 0; i < rules; ++i) {
+            const std::size_t at = rule_base + std::size_t{i} * kFlexRuleSize;
+            MdlFlexRule rule;
+            rule.flex = i32(at);
+            if (rule.flex < 0 || static_cast<std::uint32_t>(rule.flex) >= flex_names) {
+                in_.fail("flex rule target out of range");
+            }
+            const std::uint32_t ops = count(at + 4, "flex op");
+            const std::size_t op_base = rel(at, i32(at + 8));
+            need(op_base, std::uint64_t{ops} * kFlexOpSize);
+            int depth = 0;
+            for (std::uint32_t k = 0; k < ops; ++k) {
+                const std::size_t o = op_base + std::size_t{k} * kFlexOpSize;
+                MdlFlexOp op;
+                op.kind = i32(o);
+                switch (op.kind) {
+                case MdlFlexOp::Const:
+                    op.value = f32(o + 4);
+                    ++depth;
+                    break;
+                case MdlFlexOp::Controller:
+                case MdlFlexOp::Flex:
+                    op.index = i32(o + 4);
+                    if (op.index < 0 || static_cast<std::uint32_t>(op.index) >=
+                                            (op.kind == MdlFlexOp::Controller ? controllers : flex_names)) {
+                        in_.fail("flex op index out of range");
+                    }
+                    ++depth;
+                    break;
+                case MdlFlexOp::Add:
+                case MdlFlexOp::Sub:
+                case MdlFlexOp::Mul:
+                case MdlFlexOp::Div:
+                    // The value field of operator ops holds leftover bytes; ignore it.
+                    if (--depth < 1) {
+                        in_.fail("flex rule stack underflow");
+                    }
+                    break;
+                default:
+                    in_.fail("unknown flex op " + std::to_string(op.kind));
+                }
+                rule.ops.push_back(op);
+            }
+            if (depth != 1) {
+                in_.fail("flex rule leaves " + std::to_string(depth) + " values on the stack");
+            }
+            mdl.flex_rules.push_back(std::move(rule));
+        }
+
+        const std::uint32_t mouths = count(kMouthsOffset, "mouth");
+        const std::size_t mouth_base = u32(kMouthsOffset + 4);
+        need(mouth_base, std::uint64_t{mouths} * kMouthSize);
+        for (std::uint32_t i = 0; i < mouths; ++i) {
+            const std::size_t at = mouth_base + std::size_t{i} * kMouthSize;
+            mdl.mouths.push_back({check_bone(i32(at)), vec3(at + 4), i32(at + 16)});
+        }
+
+        const std::uint32_t chains = count(kIkChainsOffset, "IK chain");
+        const std::size_t chain_base = u32(kIkChainsOffset + 4);
+        need(chain_base, std::uint64_t{chains} * kIkChainSize);
+        for (std::uint32_t i = 0; i < chains; ++i) {
+            const std::size_t at = chain_base + std::size_t{i} * kIkChainSize;
+            MdlIkChain chain;
+            chain.name = c_string(rel(at, i32(at)));
+            chain.link_type = i32(at + 4);
+            const std::uint32_t links = count(at + 8, "IK link");
+            const std::size_t link_base = rel(at, i32(at + 12));
+            need(link_base, std::uint64_t{links} * kIkLinkSize);
+            for (std::uint32_t k = 0; k < links; ++k) {
+                const std::size_t l = link_base + std::size_t{k} * kIkLinkSize;
+                chain.links.push_back({check_bone(i32(l)), vec3(l + 4), vec3(l + 16)});
+            }
+            mdl.ik_chains.push_back(std::move(chain));
+        }
+    }
+
     MdlModel parse_model(std::size_t at, std::size_t bone_count) {
         MdlModel model;
         model.name = fixed_string(at, 128);
@@ -381,6 +545,32 @@ private:
             mesh.material = i32(m);
             mesh.vertex_count = u32(m + 8);
             mesh.vertex_offset = u32(m + 12);
+            mesh.material_type = i32(m + 24);
+            mesh.material_param = i32(m + 28);
+            const std::uint32_t flexes = count(m + 16, "mesh flex");
+            const std::size_t flex_base = flexes ? rel(m, i32(m + 20)) : 0;
+            need(flex_base, std::uint64_t{flexes} * kMeshFlexSize);
+            for (std::uint32_t f = 0; f < flexes; ++f) {
+                const std::size_t fx = flex_base + std::size_t{f} * kMeshFlexSize;
+                MdlMeshFlex flex;
+                flex.flex = i32(fx);
+                for (std::size_t k = 0; k < 4; ++k) {
+                    flex.targets[k] = f32(fx + 4 + 4 * k);
+                }
+                const std::uint32_t verts = count(fx + 20, "flex vertex");
+                const std::size_t vert_base = rel(fx, i32(fx + 24));
+                flex.pair = i32(fx + 28);
+                need(vert_base, std::uint64_t{verts} * kFlexVertexSize);
+                flex.vertices.resize(verts);
+                for (std::uint32_t v = 0; v < verts; ++v) {
+                    const std::size_t at_v = vert_base + std::size_t{v} * kFlexVertexSize;
+                    flex.vertices[v].index = u16(at_v);
+                    for (std::size_t k = 0; k < 6; ++k) {
+                        flex.vertices[v].raw[k] = u8(at_v + 2 + k);
+                    }
+                }
+                mesh.flexes.push_back(std::move(flex));
+            }
             if (std::uint64_t{mesh.vertex_offset} + mesh.vertex_count > vertex_count) {
                 in_.fail("mesh vertices exceed model vertex count");
             }

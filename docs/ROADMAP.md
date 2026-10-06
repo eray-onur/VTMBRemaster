@@ -17,7 +17,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Animations: descriptions, sequences, include models, run-length channel decoding, root-relative spine rotation, skinning matrices
 - [x] Animations: blend grids and pose parameters, events, movement (root motion), fade times, Bloodlines melee hit data
 - [ ] Animations: root facing convention; unknown sequence fields (+620, +660 block, +752…)
-- [ ] Models: packed normal tables for quantized vertices; attachments, hitboxes, flexes
+- [x] Models: hitboxes, attachments, flex controllers and rules, mesh flexes (which vertices), mouths, IK chains, surface property
+- [ ] Models: flex vertex delta encoding; packed normal tables for quantized vertices; eyeball data
 - [ ] Physics: `.phy`
 - [x] Maps: `.bsp` v17 geometry, faces, displacements, lightmap data, static props, entities, pakfile
 - [x] Maps: BSP nodes and leafs (line-of-sight traces), world lights

@@ -141,10 +141,90 @@ struct MdlVertex {
     std::uint16_t packed_normal = 0;
 };
 
+// One vertex moved by a flex. The 6-byte delta encoding is not decoded yet
+// (see docs/formats/models.md), so the bytes are kept as they are.
+struct MdlFlexVertex {
+    std::uint16_t index = 0; // Mesh-relative vertex index.
+    std::array<std::uint8_t, 6> raw{};
+};
+
+// A facial morph target on one mesh.
+struct MdlMeshFlex {
+    std::int32_t flex = 0;               // Index into MdlFile::flex_names.
+    std::array<float, 4> targets{};      // Controller ramp points (meaning partly unknown).
+    std::int32_t pair = 0;               // Left/right pairing flag (unverified).
+    std::vector<MdlFlexVertex> vertices;
+};
+
 struct MdlMesh {
     std::int32_t material = 0; // Index into the skin table.
     std::uint32_t vertex_offset = 0; // Into MdlModel::vertices.
     std::uint32_t vertex_count = 0;
+    std::int32_t material_type = 0; // 1 on 496 meshes (eyes and similar); meaning unverified.
+    std::int32_t material_param = 0;
+    std::vector<MdlMeshFlex> flexes;
+};
+
+struct MdlHitbox {
+    std::int32_t bone = 0;
+    std::int32_t group = 0; // 0 generic, 1 head, 2 chest, 3 stomach, 4/5 left/right arm, 6/7 left/right leg.
+    std::array<float, 3> min{}, max{}; // In the bone's space.
+};
+
+struct MdlHitboxSet {
+    std::string name;
+    std::vector<MdlHitbox> hitboxes;
+};
+
+struct MdlAttachment {
+    std::string name; // e.g. "mouth", "eyes", "muzzleflash", "placementOrigin".
+    std::int32_t flags = 0;
+    std::int32_t bone = 0;
+    MdlMatrix local{}; // Relative to the bone.
+};
+
+struct MdlFlexController {
+    std::string type; // "eyelid", "mouth", "morph", ...
+    std::string name; // e.g. "right_lid_raiser"; matches the keys of expression sets.
+    float min = 0, max = 1;
+};
+
+// Computes a flex's weight from controller values with a small stack program.
+struct MdlFlexOp {
+    enum Kind : std::int32_t {
+        Const = 1,      // push value
+        Controller = 2, // push controller[index]
+        Flex = 3,       // push the computed weight of flex[index]
+        Add = 4,
+        Sub = 5,
+        Mul = 6,
+        Div = 7, // Binary; division is assumed, unverified.
+    };
+    std::int32_t kind = Const;
+    std::int32_t index = 0; // Controller or Flex.
+    float value = 0;        // Const.
+};
+
+struct MdlFlexRule {
+    std::int32_t flex = 0;
+    std::vector<MdlFlexOp> ops;
+};
+
+struct MdlMouth {
+    std::int32_t bone = 0;
+    std::array<float, 3> forward{};
+    std::int32_t flex = 0;
+};
+
+struct MdlIkLink {
+    std::int32_t bone = 0;
+    std::array<float, 3> a{}, b{}; // Zero in every shipped model.
+};
+
+struct MdlIkChain {
+    std::string name; // rhand, lhand, rfoot, lfoot.
+    std::int32_t link_type = 0;
+    std::vector<MdlIkLink> links;
 };
 
 struct MdlModel {
@@ -175,6 +255,14 @@ struct MdlFile {
     std::vector<MdlAnimation> animations;
     std::vector<MdlSequence> sequences;
     std::vector<MdlPoseParameter> pose_parameters;
+    std::string surface_prop; // "metal", "wood", "flesh", ... or empty.
+    std::vector<MdlHitboxSet> hitbox_sets;
+    std::vector<MdlAttachment> attachments;
+    std::vector<std::string> flex_names;
+    std::vector<MdlFlexController> flex_controllers;
+    std::vector<MdlFlexRule> flex_rules;
+    std::vector<MdlMouth> mouths;
+    std::vector<MdlIkChain> ik_chains;
     // Other model files whose sequences and animations this model uses
     // (e.g. models/character/shared/male/npc_allsequences.mdl). Normalized game paths.
     std::vector<std::string> include_models;

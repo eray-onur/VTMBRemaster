@@ -220,6 +220,50 @@ std::vector<std::byte> build_mdl(MdlVertexFormat format) {
     b.f32(pose + 8, -45.0f);
     b.f32(pose + 12, 45.0f);
 
+    // Rig: one hitbox, one attachment, one flex driven by "controller * 0.5",
+    // one mouth, one IK chain with one link.
+    const std::size_t hset = b.size();
+    b.grow(hset + 12 + 32);
+    b.i32(0x100, 1);
+    b.i32(0x104, static_cast<std::int32_t>(hset));
+    b.i32(hset + 4, 1);
+    b.i32(hset + 8, 12);
+    b.i32(hset + 12 + 4, 1); // group: head
+    b.f32(hset + 12 + 20, 2.0f);
+    const std::size_t attach = b.size();
+    b.grow(attach + 60);
+    b.i32(0x148, 1);
+    b.i32(0x14c, static_cast<std::int32_t>(attach));
+    b.f32(attach + 12 + 12, 4.0f); // translation x
+    const std::size_t flex_desc = b.size();
+    b.grow(flex_desc + 4 + 20 + 12 + 3 * 8 + 20 + 16 + 28);
+    const std::size_t controller = flex_desc + 4;
+    const std::size_t rule = controller + 20;
+    const std::size_t mouth = rule + 12 + 24;
+    const std::size_t chain = mouth + 20;
+    b.i32(0x158, 1);
+    b.i32(0x15c, static_cast<std::int32_t>(flex_desc));
+    b.i32(0x160, 1);
+    b.i32(0x164, static_cast<std::int32_t>(controller));
+    b.f32(controller + 16, 1.0f);
+    b.i32(0x168, 1);
+    b.i32(0x16c, static_cast<std::int32_t>(rule));
+    b.i32(rule + 4, 3);
+    b.i32(rule + 8, 12);
+    b.i32(rule + 12, 2);
+    b.i32(rule + 20, 1);
+    b.f32(rule + 24, 0.5f);
+    b.i32(rule + 28, 6);
+    b.i32(rule + 32, 0x5a5a5a5a); // Leftover bytes in an operator's value field.
+    b.i32(0x178, 1);
+    b.i32(0x17c, static_cast<std::int32_t>(mouth));
+    b.f32(mouth + 8, -1.0f);
+    b.i32(0x170, 1);
+    b.i32(0x174, static_cast<std::int32_t>(chain));
+    b.i32(chain + 8, 1);
+    b.i32(chain + 12, 16);
+    b.i32(0x188, static_cast<std::int32_t>(b.str("metal")));
+
     const std::size_t include = b.size();
     b.grow(include + 116);
     b.i32(0x194, 1);
@@ -231,6 +275,12 @@ std::vector<std::byte> build_mdl(MdlVertexFormat format) {
     b.i32(include, static_cast<std::int32_t>(b.str("Models\\Shared\\Anims.mdl") - include));
     b.i32(hit + 120, static_cast<std::int32_t>(b.str("ACT_KNOCKBACK_SMALL_HIGH_BACK") - hit));
     b.i32(pose, static_cast<std::int32_t>(b.str("aim_yaw") - pose));
+    b.i32(hset, static_cast<std::int32_t>(b.str("default") - hset));
+    b.i32(attach, static_cast<std::int32_t>(b.str("mouth") - attach));
+    b.i32(flex_desc, static_cast<std::int32_t>(b.str("smile") - flex_desc));
+    b.i32(controller, static_cast<std::int32_t>(b.str("mouth") - controller));
+    b.i32(controller + 4, static_cast<std::int32_t>(b.str("smile") - controller));
+    b.i32(chain, static_cast<std::int32_t>(b.str("rhand") - chain));
     b.i32(bone, static_cast<std::int32_t>(b.str("root") - bone));
     b.i32(part, static_cast<std::int32_t>(b.str("body") - part));
     b.i32(0x8c, static_cast<std::int32_t>(b.size()));
@@ -362,6 +412,30 @@ TEST_CASE("MDL animations, sequences and include models") {
     CHECK(mdl.animations[0].movements[0].end_frame == 2);
     CHECK((mdl.animations[0].movements[0].flags & motion_flags::X) != 0);
     CHECK(mdl.animations[0].movements[0].displacement[0] == 8.0f);
+
+    CHECK(mdl.surface_prop == "metal");
+    REQUIRE(mdl.hitbox_sets.size() == 1);
+    CHECK(mdl.hitbox_sets[0].name == "default");
+    REQUIRE(mdl.hitbox_sets[0].hitboxes.size() == 1);
+    CHECK(mdl.hitbox_sets[0].hitboxes[0].group == 1);
+    CHECK(mdl.hitbox_sets[0].hitboxes[0].max[0] == 2.0f);
+    REQUIRE(mdl.attachments.size() == 1);
+    CHECK(mdl.attachments[0].name == "mouth");
+    CHECK(mdl.attachments[0].local[0][3] == 4.0f);
+    CHECK(mdl.flex_names == std::vector<std::string>{"smile"});
+    REQUIRE(mdl.flex_controllers.size() == 1);
+    CHECK(mdl.flex_controllers[0].type == "mouth");
+    CHECK(mdl.flex_controllers[0].max == 1.0f);
+    REQUIRE(mdl.flex_rules.size() == 1);
+    REQUIRE(mdl.flex_rules[0].ops.size() == 3);
+    CHECK(mdl.flex_rules[0].ops[0].kind == MdlFlexOp::Controller);
+    CHECK(mdl.flex_rules[0].ops[1].value == 0.5f);
+    CHECK(mdl.flex_rules[0].ops[2].kind == MdlFlexOp::Mul);
+    REQUIRE(mdl.mouths.size() == 1);
+    CHECK(mdl.mouths[0].forward[1] == -1.0f);
+    REQUIRE(mdl.ik_chains.size() == 1);
+    CHECK(mdl.ik_chains[0].name == "rhand");
+    CHECK(mdl.ik_chains[0].links.size() == 1);
     CHECK(mdl.include_models == std::vector<std::string>{"models/shared/anims.mdl"});
     CHECK(mdl.bones[0].position_scale[0] == doctest::Approx(1.0f / 256.0f));
 
@@ -473,6 +547,7 @@ TEST_CASE("MDL integration: every model in the real install loads") {
     std::size_t animations = 0, sequences = 0, samples = 0, non_unit = 0, missing_includes = 0, broken_sequences = 0;
     std::size_t blended = 0, events = 0, bad_events = 0, bad_blend_params = 0, movements = 0, bad_movements = 0,
                 melee_hits = 0;
+    std::size_t hitboxes = 0, attachments = 0, flex_rules = 0, ik_chains = 0, mesh_flexes = 0, bad_flex_targets = 0;
     std::map<MdlVertexFormat, std::size_t> formats;
     for (const auto& path : gfs.list_files()) {
         if (!path.ends_with(".mdl")) {
@@ -505,6 +580,22 @@ TEST_CASE("MDL integration: every model in the real install loads") {
                 const bool used = s.grid[k] > 1 && !same;
                 bad_blend_params += used && (s.blend_param[k] < 0 ||
                                              s.blend_param[k] >= static_cast<std::int32_t>(mdl.pose_parameters.size()));
+            }
+        }
+        for (const auto& set : mdl.hitbox_sets) {
+            hitboxes += set.hitboxes.size();
+        }
+        attachments += mdl.attachments.size();
+        flex_rules += mdl.flex_rules.size();
+        ik_chains += mdl.ik_chains.size();
+        for (const auto& part : mdl.body_parts) {
+            for (const auto& m : part.models) {
+                for (const auto& mesh : m.meshes) {
+                    mesh_flexes += mesh.flexes.size();
+                    for (const auto& f : mesh.flexes) {
+                        bad_flex_targets += f.flex < 0 || f.flex >= static_cast<std::int32_t>(mdl.flex_names.size());
+                    }
+                }
             }
         }
         for (const auto& a : mdl.animations) {
@@ -591,6 +682,12 @@ TEST_CASE("MDL integration: every model in the real install loads") {
     CHECK(bad_events == 0);
     CHECK(bad_blend_params == 0);
     CHECK(bad_movements == 0);
+    MESSAGE(hitboxes << " hitboxes, " << attachments << " attachments, " << flex_rules << " flex rules, "
+                     << mesh_flexes << " mesh flexes, " << ik_chains << " IK chains");
+    CHECK(bad_flex_targets == 0);
+    CHECK(hitboxes == 12705);
+    CHECK(flex_rules == 9865);
+    CHECK(ik_chains == 824);
     CHECK(non_unit == 0);
     CHECK(models > 4000);
     CHECK(vtx_files >= 2 * models - 1);

@@ -27,14 +27,25 @@ All integers are little-endian. "rel" means an offset relative to the start of t
 | 0xb4 | `f32[3]`, `f32[3]` | bounds min/max (see note below) |
 | 0xe4 | `i32` | flags |
 | 0xf0 | `i32, i32` | bone count, bone offset (always 0x1a8) |
-| 0xf8 | `i32, i32` | bone controller count, offset |
-| 0x100 | `i32, i32` | hitbox set count, offset |
-| 0x108 – 0x120 | | animations and sequences (not yet decoded) |
+| 0xf8 | `i32, i32` | bone controller count (0 in every file), offset |
+| 0x100 | `i32, i32` | hitbox set count, offset (12-byte sets) |
+| 0x108 – 0x120 | | animations and sequences (see Animation) |
 | 0x124 | `i32, i32` | texture count, offset |
 | 0x12c | `i32, i32` | texture-directory count, offset (to an array of absolute string offsets) |
 | 0x134 | `i32, i32, i32` | skin reference count, skin family count, skin table offset (`i16[families][refs]`) |
 | 0x140 | `i32, i32` | body part count, offset |
-| 0x148 – 0x1a4 | | attachments, flexes, IK chains, pose parameters, … (not yet decoded) |
+| 0x148 | `i32, i32` | attachment count, offset (60 bytes each) |
+| 0x150 | `i32, i32` | always 0 |
+| 0x158 | `i32, i32` | flex count, offset (4 bytes each: name, rel) |
+| 0x160 | `i32, i32` | flex controller count, offset (20 bytes each) |
+| 0x168 | `i32, i32` | flex rule count, offset (12 bytes each, followed by their ops) |
+| 0x170 | `i32, i32` | IK chain count, offset (16 bytes each, followed by their links) |
+| 0x178 | `i32, i32` | mouth count, offset (20 bytes each) |
+| 0x180 | `i32, i32` | pose parameter count, offset (see Animation) |
+| 0x188 | `i32` | surface property: absolute offset of a string (`metal`, `wood`, `flesh`; empty on 2,412 models) |
+| 0x18c | `i32, i32` | count and offset of unknown data (85 models) |
+| 0x194 | `i32, i32` | include model count, offset (see Animation) |
+| 0x1a4 | `i32` | always 1 |
 
 **Bounds**: for static props (one bone), the box at 0xb4 matches the vertex bounds exactly in most models (1,592 of 1,829 scenery props). For animated models it often does not contain the reference-pose vertices, so it probably describes a posed or movement hull. Use the vertices themselves for rendering bounds.
 
@@ -58,7 +69,21 @@ All integers are little-endian. "rel" means an offset relative to the start of t
 | 0xa0 | `f32[3]` | quantization origin |
 | 0xac | `f32[3]` | quantization scale |
 
-**Mesh** (60 bytes): `i32 material` (skin reference), `i32 model offset (rel, negative)`, `i32 vertex count`, `i32 vertex offset` (into the model's vertices; meshes are consecutive), then 44 bytes not yet decoded.
+**Mesh** (60 bytes): `i32 material` (skin reference), `i32 model offset (rel, negative)`, `i32 vertex count`, `i32 vertex offset` (into the model's vertices; meshes are consecutive), `i32 flex count`, `i32 flex offset (rel)`, `i32 material type` (1 on 496 meshes), `i32 material parameter`, 16 zero bytes, then three offsets set on 74 meshes (probably eyeball data; not decoded).
+
+**Hitbox set** (12 bytes): `i32 name (rel)` (`default` on every model but one vehicle with six), `i32 count`, `i32 offset (rel)`. **Hitbox** (32 bytes): `i32 bone`, `i32 group`, `f32 min[3]`, `f32 max[3]` in the bone's space. Groups follow the body: 0 generic, 1 head, 2 chest, 3 stomach, 4/5 left/right arm, 6/7 left/right leg (8 and 9 appear 11 times each). 12,705 hitboxes, all with valid bones and boxes.
+
+**Attachment** (60 bytes): `i32 name (rel)` (`mouth`, `eyes`, `muzzleflash`, `camera_position`, `placementOrigin`, numbers), `i32 flags`, `i32 bone`, `f32 local[3][4]` relative to the bone. 1,137 attachments.
+
+**Flex controller** (20 bytes): `i32 type (rel)` (`eyelid`, `mouth`, `morph`, …), `i32 name (rel)` (`right_lid_raiser`, …), `i32` −1, `f32 min`, `f32 max`. Every key named by the expression sets (see [expressions.md](expressions.md)) is a controller name in some model.
+
+**Flex rule** (12 bytes): `i32 flex`, `i32 op count`, `i32 op offset (rel)`. A rule computes the weight of one flex from the controllers with a small stack program of 8-byte ops, `{i32 op, i32/f32 value}`: 1 pushes a constant, 2 pushes a controller, 3 pushes another flex's weight, 4/5/6 add, subtract and multiply, and 7 is a further two-operand operator (division is assumed, unverified). The value field of operator ops holds leftover bytes. All 9,865 rules leave exactly one value on the stack. Example: `upper_right_raiser = right_lid_raiser × (1 − 0.8 × c4) × (1 − c6)`.
+
+**Mesh flex** (32 bytes): `i32 flex`, `f32 targets[4]`, `i32 vertex count`, `i32 vertex offset (rel)`, `i32 pair`. 15,184 mesh flexes. **Flex vertex** (8 bytes): `u16 vertex index` (mesh-relative), then 6 bytes of delta whose encoding is **not decoded**: three signed 16-bit values, signed bytes, 10/11-bit fields and half-floats all fail a test against spatial neighbours. About 2% of indices exceed the mesh's vertex count, and a few blocks are spaced 20 bytes per vertex, so there may be a second record form.
+
+**Mouth** (20 bytes): `i32 bone`, `f32 forward[3]` (0, −1, 0), `i32 flex`.
+
+**IK chain** (16 bytes): `i32 name (rel)`, `i32 link type` (0), `i32 link count`, `i32 link offset (rel)`. **IK link** (28 bytes): `i32 bone`, two `f32[3]` (zero in every file). The 206 character models each have `rhand`, `lhand`, `rfoot` and `lfoot`, with three links (upper arm, forearm, hand).
 
 ## Vertex formats
 
