@@ -95,6 +95,23 @@ There is no station 3 any more. The haven TV is a `func_monitor` (`tv_screen`) s
 | `Shadow`, `ShadowModel` | Engine render-to-texture shadows, not material animation | Covered by general lighting parity instead |
 | `Camo`, `PlayerPosition`, `PlayerSpeed`, `ParticleSphereProxy`, `Multiply` | Development or test materials only; none is placed in a shipped map | Not needed |
 
+## Results so far
+
+Measured from the clips with a per-pixel spectrum over time (`clipfreq.py`-style analysis: dominant frequencies in a region across all frames):
+
+| Proxy | Material | Prediction from the material | Measured in the original | Verdict |
+|---|---|---|---|---|
+| `LinearRamp` | `dev/dev_tvmonitor1a` scanlines (`rate −0.91` on the second texture's offset) | rolls at 0.91 Hz | TV region peaks at 0.90–0.95 Hz, with its harmonic at 1.8 Hz | **confirmed** |
+| `AnimatedTexture` | `dev/dev_water2` normal map (29 frames at 30 fps) | cycles at 1.034 Hz | the pool peaks at 1.00–1.13 Hz | **confirmed** |
+| `AnimatedTexture` | `objects/oilriga` (4 frames at 15 fps) | cycles at 3.75 Hz | no measurable signal: the rig is about 40 pixels tall and dim | not measurable from this clip |
+| `Sine` | security camera light (period 1.1494 s on self-illumination) | pulses at 0.87 Hz | no signal; the light never lit | needs the camera triggered |
+| `PlayerProximity`, `LampBeam`, `LampHalo` | street-light sprites | fade with distance or angle | no sprite visible near the Asylum station; the Hollywood lamp is in view while backing away | to analyse |
+| `GlobalWetness` | street materials | brighter reflections in rain | captured dry only | needs rain |
+| `TextureScroll` | `signs/newsticker` (0.02 widths/s) | ticker scrolls | the ticker scrolls on the TV feed | direction and speed still to measure |
+| `TextConsole` | tutorial terminal screen | draws terminal text | static text "Brothers Downtown Garage" | rendering reference only |
+
+Spectrum resolution is 1/clip length (0.05 Hz for 20 s, 0.067 Hz for 15 s).
+
 ## What OpenBL needs for the comparison
 
 - **Viewer time and frame sequences:** `--time T` to start the clock, plus a frame-sequence screenshot mode, so proxies can be captured at matching times and in matching sequences.
