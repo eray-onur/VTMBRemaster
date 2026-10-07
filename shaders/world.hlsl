@@ -81,8 +81,9 @@ float4 ps_main(VSOutput input) : SV_Target {
             }
         }
         // The original stores the combined lightmap in an 8-bit texture as
-        // (luxel / 2)^(1/2.2), so anything above 2.0 saturates.
-        light = min(light, 2.0) * pc.light_scale;
+        // luxel^(1/2.2) / 2 and doubles it in the shader, so anything above
+        // 2^2.2 saturates (docs/RENDERING.md).
+        light = min(light, 4.5948) * pc.light_scale;
     }
     float3 color = base.rgb * light;
     if (pc.flags & kSelfIllum) {

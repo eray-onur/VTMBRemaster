@@ -25,24 +25,32 @@ openbl-cli image compare shots/original/pier_road.png shots/openbl/pier_road.png
 openbl-cli image compare shots/original/pier_road.png shots/openbl/pier_road.png 600 300 400 300
 ```
 
-A brightness ratio close to 1.0 across many shots is how the lightmap scale (currently 2.3) gets confirmed or corrected.
+A brightness ratio close to 1.0 across many shots confirms the lighting. The world lightmap scale was measured this way (see "Results").
 
 ## Capturing reference shots in the original game
 
-> **Unverified.** The commands below are the standard ones for Source engine games of this era. They have not yet been tried in Bloodlines, so please report what works.
+Verified on the GOG release (1.2, without the Unofficial Patch), 2026-10-07.
 
-1. Start the original game with the developer console enabled: add `-console` to its launch options in Steam.
-2. Match OpenBL's settings: the same resolution as `--size`, and the same field of view as `--fov`. Check the game's field of view with the console command `fov` and pass that value to `--fov`.
-3. In the console:
+1. Start the game windowed with the console: `Vampire.exe -window -w 1280 -h 720 -console`. The console starts open.
+2. In the console: `map sp_tutorial_1`, `noclip` (a toggle), `cl_showpos 1`. The overlay shows the player's feet (`plr pos`), the camera (`cam pos`, 64 units above the feet) and the view angles (`cam ang`).
+3. Bloodlines has no `setpos`, `setang` or `getpos`. The console runs unknown commands as Python, so this teleports the player (feet position):
    ```
-   map sm_pier_1
-   sv_cheats 1
-   setpos 3700 -700 -230
-   setang -5 0 0
-   cl_drawhud 0
-   screenshot
+   __main__.FindPlayer().SetOrigin((263, 200, 90))
    ```
-   The screenshot is written as a TGA file, normally to a `screenshots` folder under `Vampire`. Rename it to the shot's name.
-4. If `setpos` or `setang` are not available, use `noclip` with `cl_showpos 1` to read the position and angles from the screen, and write those into the shot list instead.
+   `SetAngles` does not turn the view; turn with the mouse and read the angles from the overlay.
+4. Grab the window's client area with any screen-capture tool, then close the console first.
+5. Render the same camera in OpenBL with the `cam pos` and `cam ang` values, but **negate the pitch**: OpenBL's pitch is positive looking up, the game's is positive looking down. Use the window's size for `--size`. `--fov` uses the game's convention (horizontal at 4:3, `default_fov` 75), so the default needs no change.
 
-Things that make two shots differ even when the renderers agree: NPCs that moved, animated light styles at a different moment, and HUD or crosshair elements. Compare regions without NPCs and with steady light, or capture several shots and compare the medians.
+Notes:
+
+- `brightness` and gamma settings change the display's gamma ramp, which does not apply in windowed mode, so they do not affect captures. `mat_monitorgamma` does not exist in this engine.
+- Things that make two shots differ even when the renderers agree: NPCs that moved, animated light styles and rotating props (ceiling fans) at a different moment, and the HUD and crosshair. Compare regions away from the HUD, and per-block statistics that tolerate small misregistration.
+
+## Results
+
+| What | Finding | How |
+|---|---|---|
+| Field of view | The game's 75 is horizontal at a 4:3 aspect: 59.86° vertical at any window shape | edge correlation of `sp_tutorial_1` captures against renders at 46.7°, 59.86° and 75° vertical (0.30 against about 0.05) |
+| World lightmaps | Screen colour in gamma space = base × luxel^(1/2.2), i.e. **base × luxel** in linear terms (scale 1.0, not 2.3) | per-block fit of capture ÷ base texture against OpenBL's luxels, two captures of `sp_tutorial_1`: coefficient 0.97–0.99, exponent 0.43–0.45 in every channel |
+| Props | With OpenBL's provisional model scale (2.3), the original is 1.16 / 1.10 / 0.89 as bright (red / green / blue, linear): OpenBL's props are slightly dark and too blue | same captures, prop pixels only (where renders with and without props differ) |
+| World, after the fix | Original ÷ OpenBL = 1.02–1.04 / 1.06–1.08 / 1.16 (linear means); the blue excess is in dark tones, from sRGB against pure gamma 2.2 ([RENDERING.md](RENDERING.md)) | same captures |

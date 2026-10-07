@@ -30,11 +30,11 @@ struct WorldStats {
 };
 
 struct WorldDrawSettings {
-    // Lightmap overbright in linear space. The original pixel shaders compute
-    // base * texel * 2 in gamma space, and the engine uploads texel =
-    // (luxel / 2)^(1/2.2) (see docs/RENDERING.md), which is luxel * 2^1.2 in
-    // linear terms. The combined lightmap is clamped at 2.0 in the shader.
-    float light_scale = 2.2974f;
+    // Lightmap scale in linear space. The original pixel shaders compute
+    // base * texel * 2 in gamma space, and texel = luxel^(1/2.2) / 2, so the
+    // result is base * luxel in linear terms (measured against the original;
+    // see docs/RENDERING.md). The combined lightmap saturates at 2^2.2.
+    float light_scale = 1.0f;
     bool fullbright = false;
     std::array<float, 3> camera_position{}; // For water.
     float time = 0.0f;                      // Seconds; animates water and light styles.

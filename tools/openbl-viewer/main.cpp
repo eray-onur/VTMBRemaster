@@ -55,7 +55,7 @@ struct Options {
     std::optional<std::string> map;
     std::optional<glm::vec3> position;
     std::optional<glm::vec2> angles; // pitch, yaw
-    float light_scale = 2.2974f;
+    float light_scale = 1.0f;
     float fov = 75.0f;
     std::uint32_t width = 1600;
     std::uint32_t height = 900;
@@ -311,8 +311,10 @@ public:
             sky_->draw(cmd, to_array(projection * glm::mat4(glm::mat3(view))));
         }
         const auto m = to_array(projection * view);
-        const render::PropDrawSettings prop_settings{settings_.light_scale, settings_.fullbright};
-        const render::CharacterDrawSettings character_settings{settings_.light_scale, settings_.fullbright};
+        // Models keep their own scale: their lighting is still an estimate (docs/RENDERING.md).
+        const render::PropDrawSettings prop_settings{render::PropDrawSettings{}.light_scale, settings_.fullbright};
+        const render::CharacterDrawSettings character_settings{render::CharacterDrawSettings{}.light_scale,
+                                                               settings_.fullbright};
         if (characters_) {
             characters_->update(time);
         }
@@ -356,7 +358,10 @@ int run(const Options& options) {
             gfs = std::make_unique<vfs::GameFileSystem>(*options.game_dir, options.mods);
         }
         viewer::Camera camera;
-        camera.fov = options.fov;
+        // --fov follows the game's convention (default_fov 75): horizontal at a
+        // 4:3 aspect, whatever the window shape. The camera takes the vertical
+        // angle (59.86 degrees for 75), confirmed against original screenshots.
+        camera.fov = glm::degrees(2.0f * std::atan(std::tan(glm::radians(options.fov) * 0.5f) * 0.75f));
         std::unique_ptr<Scene> scene;
         if (options.map) {
             auto map = std::make_unique<MapScene>(*device, *gfs, *options.map, options);

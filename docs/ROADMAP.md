@@ -73,7 +73,9 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Real water: reflection and refraction render targets, underwater fog, `$bottommaterial`, cheap-water distances
 - [ ] Light styles, translucent sorting, cubemap reflections, prop fade distances
 - [x] Parity tooling: viewer shot lists (`--shots`, `--fov`, `--size`), `openbl-cli image compare` (see docs/PARITY.md)
-- [ ] Confirm the lightmap brightness (overbright scale 2.3) against original-game screenshots; verify the capture commands
+- [x] Lightmap brightness measured against original-game captures: base × luxel in linear terms (scale 1.0, was 2.3); capture method verified; `--fov` follows the game's 4:3-horizontal convention ([PARITY.md](PARITY.md))
+- [ ] Prop lighting parity: props are slightly dark and too blue against the captures (original ÷ OpenBL 1.16 / 1.10 / 0.89)
+- [ ] Gamma-space shading option (the original multiplies in pure gamma 2.2; OpenBL's sRGB pipeline is up to ~15% darker in dark tones)
 - [x] Static models in maps
 - [x] Skinned and animated models: GPU skinning (per-draw bone data), NPCs from map entities playing their first `ACT_IDLE` sequence
 - [ ] Animation: blending between sequences, multi-blend sequences, facial flexes, eyes

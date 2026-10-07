@@ -7,10 +7,12 @@ The original works in **gamma space**: colours from textures are used as stored,
 ## World surfaces (`LightmappedGeneric`)
 
 - **Lit colour** = base texture × vertex colour × lightmap × 2 × (overbright ÷ 2). The engine passes the overbright factor as a constant. With the usual overbright of 2, the last factor is 1, so the shader doubles base × lightmap.
-- **Lightmap texels.** The lightmaps are stored as linear `ColorRGBExp32` luxels, and the engine converts them to an 8-bit texture before drawing. That conversion is inside the engine binary, so it has not been read. It is **inferred** to be texel = (luxel ÷ 2)^(1/2.2):
-  - the bump-mapped lightmap shader contains a commented-out "quadratic approximation to pow(x, 1/2.2)", which shows that the gamma conversion was moved out of the shader;
-  - with this conversion, the shader's output in linear terms is base × luxel × 2^(2.2 − 1) = **base × luxel × 2.297**. That matches the scale found earlier by eye (2.3) without knowing any of this.
-- **Saturation.** An 8-bit texel cannot exceed 1, so the combined lightmap saturates at a linear value of 2.0. OpenBL clamps the summed light styles at 2.0 before applying the 2.297 scale.
+- **Lightmap texels.** The lightmaps are stored as linear `ColorRGBExp32` luxels, and the engine converts them to an 8-bit texture before drawing. That conversion is inside the engine binary, so it has not been read, but it has been **measured**: texel = luxel^(1/2.2) ÷ 2.
+  - Method: captures of the original compared with OpenBL renders of the same camera ([PARITY.md](PARITY.md)). Per 8×8 block of world surface, the original's gain (capture ÷ base texture) against OpenBL's summed luxels fits gain = 0.97–0.99 × luxel^(0.43–0.45) in every channel, on two captures.
+  - The bump-mapped lightmap shader contains a commented-out "quadratic approximation to pow(x, 1/2.2)", which shows that the gamma conversion was moved out of the shader.
+  - With the shader's doubling, the output in linear terms is **base × luxel** (scale 1.0). An earlier estimate, texel = (luxel ÷ 2)^(1/2.2), gave a scale of 2.297 and rendered the world 2.3× too bright.
+- **Saturation.** An 8-bit texel cannot exceed 1, so the combined lightmap saturates at a linear value of 2^2.2 ≈ 4.59 (inferred from the texel formula, not yet seen in a capture). OpenBL clamps the summed light styles there.
+- **Gamma.** The original multiplies in pure gamma 2.2 space; OpenBL multiplies in linear space with sRGB textures and output. The two agree except in dark tones, where the sRGB curve's linear toe makes OpenBL up to about 15% darker (seen in the blue channel of the brown `sp_tutorial_1` office).
 - **Self-illumination**: the result blends from the lit colour to base × self-illumination tint, by the base texture's alpha.
 - **Detail textures** (`$detail`): multiplied in at 2× (a mid-grey detail texture leaves the colour unchanged), before the lightmap doubling.
 - **Environment maps** (`$envmap`): the envmap × `$envmaptint` is added to the base before the lightmap is applied, so reflections are lit by the lightmap too.
@@ -26,7 +28,7 @@ Bump-mapped faces have three lightmaps, one per basis direction in tangent space
 
 ## Models (`VertexLitGeneric`)
 
-Lit colour = base texture × colour modulation (`$color`, alpha) × per-vertex lighting × 2 × (overbright ÷ 2). The per-vertex lighting is computed by vertex shaders that are only shipped compiled. How it is scaled has not been worked out; OpenBL uses the same 2.297 as the world for now. Self-illumination blends to base × tint by base alpha, as for the world. Alpha-tested models discard pixels with a texture-kill instruction driven by a separate coordinate.
+Lit colour = base texture × colour modulation (`$color`, alpha) × per-vertex lighting × 2 × (overbright ÷ 2). The per-vertex lighting is computed by vertex shaders that are only shipped compiled. How it is scaled has not been worked out. OpenBL scales its estimated ambient cube by a provisional 2.297; against two captures of `sp_tutorial_1`, props then average 1.16 / 1.10 / 0.89 of OpenBL's brightness in the original (red / green / blue linear), so OpenBL's props are slightly dark and too blue. The scale may stay, but the ambient term itself is still an estimate. Self-illumination blends to base × tint by base alpha, as for the world. Alpha-tested models discard pixels with a texture-kill instruction driven by a separate coordinate.
 
 ## Unlit surfaces (`UnlitGeneric`)
 
