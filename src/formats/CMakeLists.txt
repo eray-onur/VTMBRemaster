@@ -18,6 +18,7 @@ add_library(openbl_formats
     save_state.cpp
     script_text.cpp
     phy.cpp
+    pickle.cpp
     text_encoding.cpp
     tth.cpp
     vcd.cpp

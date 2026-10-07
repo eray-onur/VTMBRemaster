@@ -1,4 +1,5 @@
 #include "openbl/formats/error.hpp"
+#include "openbl/formats/pickle.hpp"
 #include "openbl/formats/sav.hpp"
 #include "openbl/formats/save_state.hpp"
 #include "test_support.hpp"
@@ -252,6 +253,7 @@ TEST_CASE("Save state integration: every map state in the user's saves parses") 
         return;
     }
     std::size_t states = 0, entities = 0, fields = 0, pickles = 0, players = 0, trailing_entities = 0;
+    std::size_t story_states = 0;
     for (const auto& entry : std::filesystem::directory_iterator(dir)) {
         if (entry.path().extension() != ".sav" || entry.file_size() == 0) {
             continue;
@@ -271,6 +273,10 @@ TEST_CASE("Save state integration: every map state in the user's saves parses") 
             CHECK(!state.python_pickles.empty());
             for (const auto& p : state.python_pickles) {
                 CHECK((!p.empty() && p.back() == std::byte{'.'})); // Protocol-0 pickles end with STOP.
+                PickleValue value;
+                REQUIRE_NOTHROW(value = parse_pickle(p)); // Values are private; only their shape is checked.
+                CHECK(value.kind == PickleValue::Kind::Dict);
+                story_states += value.get("Story_State") != nullptr;
             }
             pickles += state.python_pickles.size();
             for (const auto& e : state.entities) {
@@ -294,6 +300,7 @@ TEST_CASE("Save state integration: every map state in the user's saves parses") 
     }
     MESSAGE(states << " map states, " << entities << " entities, " << fields << " saved fields, " << pickles
                    << " Python pickles, " << players << " players, " << trailing_entities
-                   << " entities with trailing class data");
+                   << " entities with trailing class data, " << story_states << " pickles with Story_State");
     CHECK(players >= 1);
+    CHECK(story_states >= 1); // The global-variables pickle of each map state.
 }
