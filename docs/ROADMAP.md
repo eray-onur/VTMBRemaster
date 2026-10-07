@@ -2,7 +2,7 @@
 
 Each phase ends with something that can be demonstrated. Faithfulness is measured against the original game (see "Parity testing" below), not judged by eye.
 
-## Phase 0: game data formats *(in progress)*
+## Phase 0: game data formats *(complete)*
 
 Read every file type the game ships, and write the ones that tools will need. Each format gets a spec, unit tests and an integration test against the real install.
 
@@ -13,18 +13,15 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Materials: `.vmt` and the KeyValues text syntax
 - [x] Shaders: catalogue of every shader, parameter and proxy (`openbl-cli mat catalogue`, docs/formats/shaders.md, proxies.md)
 - [x] Shaders: proxy captures from the original (9 stations); `LinearRamp` and `AnimatedTexture` timing confirmed ([PROXY_CAPTURE.md](PROXY_CAPTURE.md))
-- [ ] Shaders: confirm the remaining proxies (`Sine` on the security camera, sprite fades, `GlobalWetness` in rain, ticker scroll speed)
 - [x] Models: `.mdl` v2531 geometry, bones, skins, textures; `.vtx` v107 triangle lists and LODs
 - [x] Animations: descriptions, sequences, include models, run-length channel decoding, root-relative spine rotation, skinning matrices
 - [x] Animations: blend grids and pose parameters, events, movement (root motion), fade times, Bloodlines melee hit data
 - [x] Animations: facing and movement conventions (+x forward, move_yaw clockwise)
 - [x] Animations: sequence layers, melee combo links (dodge, blocked reaction, next attack, follow-up), attack directions, combo window
-- [ ] Animations: confirm the third fade time (+620) and the last two combo-window values in the running game
 - [x] Models: hitboxes, attachments, flex controllers and rules, mesh flexes (which vertices), mouths, IK chains, surface property
 - [x] Models: packed normal tables for quantized vertices (closed form, recovered from the data)
 - [x] Models: flex vertex deltas (packed directions with byte lengths; a float form on one model)
 - [x] Models: cloth layout (particles, constraints, triangles, edges, per-vertex binding, collision capsules, per-LOD table)
-- [ ] Models: cloth semantics still to confirm against the running game (body parameter, byte array, vertex data, settings records)
 - [x] Physics: `.phy` solids, convex pieces (bounding-tree walk), model-space conversion, text block
 - [x] Physics: typed `.phy` text (solids, ragdoll constraints, joint merges, break pieces); ragdoll limits measured as rotations about the child bone's axes from the bind pose
 - [x] Physics: collision hulls for map brushes (bevel sides skipped), cross-checked against the compiled world collision
@@ -33,7 +30,6 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Maps: full leafs, brushes and sides, visibility (PVS/PAS), areas and area portals, cubemaps, detail props and their lighting, collision (IVPS and MOPP), vertex normals, primitives (crack-free triangulation), leaf water data
 - [x] Maps: displacement lightmap sample positions (lump 34)
 - [x] Maps: decals from `infodecal` entities on world and brush-entity faces (95.5% placed), rendered with lightmaps and DecalModulate
-- [ ] Maps: decals on static props (`$modelmaterial`, about 200 decals); confirm decal orientation against the original
 - [x] Coverage report: `openbl-cli fs coverage` lists every extension in the game data with its status
 - [x] AI node graphs: `.ain` (text in Bloodlines) and `.loc`
 - [x] Dialogue: `.dlg`. Lip-sync: `.lip`. Choreography: `.vcd`
@@ -42,7 +38,6 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Typed loaders for the flat parameter tables: path lookup (rules), rule tables, trait effects, reactions, stealth grids, dice rolls, dispositions
 - [x] Particle system definitions parse (`particles/*.txt`, 1,594 files)
 - [x] Particle definitions: typed blocks and keyframe curves (`min~max`, `(t)`, `!`), sprites and child emitters resolved ([particles.md](formats/particles.md))
-- [ ] Particle simulation and rendering, with the semantics confirmed against the original
 - [x] Facial expressions: `.vfe` and `expressions/*.txt`
 - [x] Sound schemes (`sound/schemes/*.txt`)
 - [x] Sound: `.wav` decoding (PCM and Microsoft ADPCM); `.sfk`/`.pk` identified as editor leftovers
@@ -59,7 +54,7 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Save games: the original game loads a save written by OpenBL
 - [x] Python: the engine embeds Python 2.1 (`.pyc` magic 60202); every compiled script has its source shipped (docs/formats/python.md)
 
-## Phase 1: rendering and map viewer
+## Phase 1: rendering and map viewer *(in progress)*
 
 - [x] Window and input (SDL3)
 - [x] Rendering hardware interface (RHI) with a Vulkan 1.3 backend
@@ -83,6 +78,12 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Skinned and animated models: GPU skinning (per-draw bone data), NPCs from map entities playing their first `ACT_IDLE` sequence
 - [ ] Animation: blending between sequences, multi-blend sequences, facial flexes, eyes
 - [ ] Free-fly viewer on Windows and Linux
+- [ ] Material proxies at runtime (Sine, LinearRamp, TextureScroll, AnimatedTexture, noise chains, GlobalWetness, PlayerProximity, LampBeam/LampHalo), checked against the proxy captures; confirm the ones the captures could not show (security-camera `Sine`, sprite fades, `GlobalWetness` in rain, ticker scroll speed)
+- [ ] Render-to-texture monitors (`func_monitor` + `point_camera`, e.g. the haven TV news feed)
+- [ ] Particle simulation and rendering, with the semantics confirmed against captures of the original
+- [ ] Decals on static props (`$modelmaterial`, about 200 decals); confirm decal orientation against the original
+- [ ] Cloth simulation for hair and clothing; confirm the cloth settings against the running game
+- [ ] Animation: confirm the third fade time (+620) and the last two combo-window values in the running game
 
 ## Phase 2: simulation core
 
