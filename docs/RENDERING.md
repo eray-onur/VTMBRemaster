@@ -39,6 +39,14 @@ Against two captures of `sp_tutorial_1`, props in the original are 1.04–1.08 /
 
 Base texture × vertex colour, with no doubling.
 
+## Monitors (`func_monitor` + `point_camera`)
+
+A `func_monitor` is a brush entity whose screen faces use a material with `$basetexture engine/camerarendertarget` (in the shipped maps always `dev/dev_tvmonitor1a`: the picture times rolling scanlines, additive). Its `target` names a `point_camera`. Bloodlines cameras aim with a `look_dest` point (their angles are always 0), and set the picture's angle with `FOV`. Some cameras are parented to moving props (`parentname`); OpenBL keeps them at their map position for now.
+
+OpenBL gives each visible monitor its own 512 × 512 render target. Each frame, before the main view, it draws the scene from that monitor's camera into the target, leaving out monitor screens. Checked against the original on two stations ([PROXY_CAPTURE.md](PROXY_CAPTURE.md)): the hospital monitor shows the same room with the same framing and orientation. The haven TV shows the newscaster, logo and scrolling ticker; OpenBL's picture is darker. Not yet confirmed: whether `FOV` is horizontal or vertical (the pictures are square), the original's render-target size, and how bright the picture should be.
+
+**Hidden entities.** Entities with `StartHidden 1` are invisible until a script shows them, so OpenBL does not draw them: brush entities (138 `func_brush`, 164 `func_physbox`, 41 `func_illusionary`, 11 `func_monitor`, ...), `prop_*` entities and NPCs. Examples are the haven TV (off until switched on) and the hospital's `monitor_1_dead`, a static screen shown once its camera is broken; without this the static covered the live picture. `openbl-viewer --show NAME` draws a hidden brush entity anyway, as `ent_fire NAME ScriptUnhide` does in the original.
+
 ## Still to read
 
 Water (`waterreflect.psh`, `waterrefract.psh`), eyes, the envmap and mask variants, and the compiled vertex shaders, which hold the vertex lighting and fog.

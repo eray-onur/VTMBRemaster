@@ -80,7 +80,7 @@ openbl-cli bsp export sm_pier_1 pier.obj                # world geometry to OBJ
 ```sh
 openbl-viewer --map ch_lotus_1                        # fly through a map, starting at the player start
 openbl-viewer --map sm_pier_1 --pos 3700 -700 -230 --angles -5 0 --screenshot pier.png
-openbl-viewer [--game DIR] [--map NAME] [--pos X Y Z] [--angles PITCH YAW] [--light-scale F]
+openbl-viewer [--game DIR] [--map NAME] [--show TARGETNAME]... [--pos X Y Z] [--angles PITCH YAW] [--light-scale F]
               [--fov DEG] [--size WxH] [--fullbright] [--no-light-styles] [--no-props] [--no-characters]
               [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR] [--validation] [--no-vsync]
 ```
@@ -89,7 +89,7 @@ Without `--map`, the viewer shows a textured test cube.
 
 Controls: hold the right mouse button to look around, **WASD** to move, **E**/**Q** to go up and down, **Shift** to move faster, the mouse wheel to change speed, **Esc** to quit.
 
-`--screenshot` renders N frames, saves the back buffer as a PNG, and exits. `--time` fixes the scene clock at T seconds, so animated materials and light styles render the same way every time; `--sequence N` then writes N frames, `1/F` seconds apart (default 30 fps), as `out_000.png`, `out_001.png`, …. `--fov` uses the game's convention (horizontal at a 4:3 aspect; default 75). `--shots` renders a list of camera positions to PNGs; together with `openbl-cli image compare` it is used to compare OpenBL against the original game (see [docs/PARITY.md](docs/PARITY.md)). `--validation` enables the Khronos validation layer, if it's installed (it ships with the Vulkan SDK).
+`--screenshot` renders N frames, saves the back buffer as a PNG, and exits. `--time` fixes the scene clock at T seconds, so animated materials and light styles render the same way every time; `--sequence N` then writes N frames, `1/F` seconds apart (default 30 fps), as `out_000.png`, `out_001.png`, …. `--fov` uses the game's convention (horizontal at a 4:3 aspect; default 75). `--shots` renders a list of camera positions to PNGs; together with `openbl-cli image compare` it is used to compare OpenBL against the original game (see [docs/PARITY.md](docs/PARITY.md)). `--show` draws a `StartHidden` brush entity anyway (like `ent_fire NAME ScriptUnhide` in the game). `--validation` enables the Khronos validation layer, if it's installed (it ships with the Vulkan SDK).
 
 ## Contributing
 

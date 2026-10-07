@@ -46,13 +46,14 @@ using namespace openbl;
 namespace {
 
 constexpr const char* kUsage =
-    "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
+    "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--show TARGETNAME]... [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
     "                     [--light-scale F] [--fullbright] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
     "                     [--validation] [--no-vsync]";
 
 struct Options {
     std::optional<std::filesystem::path> game_dir;
     std::vector<std::string> mods; // Mod folders mounted over the game, e.g. Unofficial_Patch.
+    std::vector<std::string> shown; // Targetnames of StartHidden brush entities to draw anyway.
     std::optional<std::string> map;
     std::optional<glm::vec3> position;
     std::optional<glm::vec2> angles; // pitch, yaw
@@ -94,6 +95,8 @@ Options parse_args(int argc, char** argv) {
             o.game_dir = next();
         } else if (a == "--mod") {
             o.mods.push_back(next());
+        } else if (a == "--show") {
+            o.shown.push_back(next());
         } else if (a == "--map") {
             o.map = next();
         } else if (a == "--pos") {
@@ -260,7 +263,7 @@ public:
         pak_ = std::make_unique<formats::ZipArchive>(bsp_.pakfile);
         assets_ = std::make_unique<render::AssetSource>(gfs, pak_.get());
         materials_ = std::make_unique<render::MaterialSystem>(device, *assets_);
-        world_ = std::make_unique<render::WorldRenderer>(device, *materials_, bsp_);
+        world_ = std::make_unique<render::WorldRenderer>(device, *materials_, bsp_, options.shown);
         if (options.props) {
             props_ = std::make_unique<render::PropRenderer>(device, *materials_, *assets_, bsp_);
         }
@@ -281,7 +284,8 @@ public:
         std::cout << path << ": " << s.faces << " faces, " << s.triangles << " triangles, " << s.batches
                   << " batches, lightmap " << s.lightmap_width << "x" << s.lightmap_height << ", "
                   << s.missing_materials << " missing materials, " << materials_->missing_textures()
-                  << " missing textures, " << s.skipped_faces << " faces skipped\n";
+                  << " missing textures, " << s.skipped_faces << " faces skipped, " << s.hidden_entities
+                  << " hidden brush entities, " << s.monitors << " monitors\n";
         std::cout << "materials: " << materials_->proxy_materials() << " with proxies ("
                   << materials_->animated_materials() << " animated textures), " << materials_->params().size() - 1
                   << " with non-default colour or transform\n";
@@ -320,10 +324,32 @@ public:
 
     void draw(rhi::CommandList& cmd, const glm::mat4& projection, const glm::mat4& view, const viewer::Camera& camera,
               float time) override {
-        settings_.camera_position = {camera.position.x, camera.position.y, camera.position.z};
         settings_.time = time;
         materials_->update({.time = time});
         settings_.material_params = &materials_->params();
+        if (characters_) {
+            characters_->update(time);
+        }
+        // Monitor pictures first: each camera's view into its monitor's render
+        // target, without monitor screens (a target is never drawn while sampled).
+        for (const render::MonitorView& monitor : world_->monitors()) {
+            const glm::vec3 eye(monitor.origin[0], monitor.origin[1], monitor.origin[2]);
+            const glm::vec3 at(monitor.look_at[0], monitor.look_at[1], monitor.look_at[2]);
+            glm::mat4 monitor_projection = glm::perspective(glm::radians(monitor.fov), 1.0f, 2.0f, 65536.0f);
+            monitor_projection[1][1] *= -1.0f; // Vulkan clip space has +Y down.
+            const float black[4] = {0, 0, 0, 1};
+            cmd.begin_render_target(*monitor.target, black);
+            draw_view(cmd, monitor_projection, glm::lookAt(eye, at, glm::vec3(0, 0, 1)), eye, false);
+            cmd.end_render_target();
+        }
+        draw_view(cmd, projection, view, camera.position, true);
+    }
+
+private:
+    void draw_view(rhi::CommandList& cmd, const glm::mat4& projection, const glm::mat4& view, const glm::vec3& eye,
+                   bool monitors) {
+        settings_.camera_position = {eye.x, eye.y, eye.z};
+        settings_.draw_monitors = monitors;
         if (sky_) {
             sky_->draw(cmd, to_array(projection * glm::mat4(glm::mat3(view))));
         }
@@ -331,9 +357,6 @@ public:
         const render::PropDrawSettings prop_settings{settings_.light_scale, settings_.fullbright, &materials_->params()};
         const render::CharacterDrawSettings character_settings{settings_.light_scale, settings_.fullbright,
                                                                &materials_->params()};
-        if (characters_) {
-            characters_->update(time);
-        }
         world_->draw_opaque(cmd, m, settings_);
         if (props_) {
             props_->draw_opaque(cmd, m, prop_settings);
@@ -350,7 +373,6 @@ public:
         }
     }
 
-private:
     render::WorldDrawSettings settings_;
     formats::BspFile bsp_;
     std::unique_ptr<formats::ZipArchive> pak_;

@@ -130,6 +130,9 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
         if (cls == e.end() || model_key == e.end() || !cls->second.starts_with("npc_")) {
             continue;
         }
+        if (auto hidden = e.find("StartHidden"); hidden != e.end() && hidden->second == "1") {
+            continue; // Invisible until a script shows it.
+        }
         const std::string path = formats::normalize_game_path(model_key->second);
         if (!path.ends_with(".mdl")) {
             continue;

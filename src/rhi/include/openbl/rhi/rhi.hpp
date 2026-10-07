@@ -67,6 +67,15 @@ public:
     virtual const TextureDesc& desc() const = 0;
 };
 
+// An off-screen colour target with its own depth buffer, in the window's
+// colour and depth formats, so every pipeline can draw into it. Its texture
+// can be bound like any other; it starts out black.
+class RenderTarget {
+public:
+    virtual ~RenderTarget() = default;
+    virtual const Texture& texture() const = 0;
+};
+
 enum class Filter : std::uint8_t { Nearest, Linear };
 enum class AddressMode : std::uint8_t { Repeat, Clamp };
 
@@ -144,6 +153,12 @@ public:
     // binds them for the following draws. The bound pipeline must use shader_data.
     virtual void set_shader_data(const void* data, std::size_t size) = 0;
     virtual void draw_indexed(std::uint32_t index_count, std::uint32_t first_index = 0, std::int32_t vertex_offset = 0) = 0;
+
+    // Draws the following commands into `target` (cleared to `clear_color`)
+    // until end_render_target(). In a frame, render targets are drawn before
+    // anything is drawn to the window.
+    virtual void begin_render_target(const RenderTarget& target, const float clear_color[4]) = 0;
+    virtual void end_render_target() = 0;
 };
 
 struct FrameDesc {
@@ -173,6 +188,7 @@ public:
     virtual std::unique_ptr<Texture> create_texture(const TextureDesc& desc,
                                                     std::span<const std::span<const std::byte>> mips) = 0;
     virtual std::unique_ptr<Sampler> create_sampler(const SamplerDesc& desc) = 0;
+    virtual std::unique_ptr<RenderTarget> create_render_target(std::uint32_t width, std::uint32_t height) = 0;
     virtual std::unique_ptr<Pipeline> create_pipeline(const PipelineDesc& desc) = 0;
     // `textures.size()` must equal the pipeline's texture_count.
     virtual std::unique_ptr<BindGroup> create_bind_group(const Pipeline& pipeline, const Sampler& sampler,

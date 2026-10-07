@@ -13,6 +13,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace openbl::render {
@@ -22,6 +23,8 @@ struct WorldStats {
     std::size_t triangles = 0;
     std::size_t batches = 0;
     std::size_t skipped_faces = 0; // Tool, sky and not-yet-supported surfaces.
+    std::size_t hidden_entities = 0; // Brush entities with StartHidden, not drawn.
+    std::size_t monitors = 0;        // func_monitor screens drawing a camera view.
     std::size_t decals = 0;        // infodecals placed on brush faces.
     std::size_t unplaced_decals = 0;
     std::size_t missing_materials = 0;
@@ -41,11 +44,25 @@ struct WorldDrawSettings {
     bool light_styles = true;               // false: lightmap style 0 only (debugging).
     // Material params table (MaterialSystem::params()); null: defaults only.
     const std::vector<MaterialParams>* material_params = nullptr;
+    // false while drawing into a monitor's render target, so no target is
+    // sampled while it is being drawn.
+    bool draw_monitors = true;
+};
+
+// A func_monitor screen showing its point_camera's view.
+struct MonitorView {
+    std::array<float, 3> origin{};  // Camera position.
+    std::array<float, 3> look_at{}; // Point the camera looks at.
+    float fov = 90.0f;               // Degrees, across the (square) picture.
+    std::unique_ptr<rhi::RenderTarget> target;
 };
 
 class WorldRenderer {
 public:
-    WorldRenderer(rhi::Device& device, MaterialSystem& materials, const formats::BspFile& bsp);
+    // `shown`: targetnames of StartHidden entities to draw anyway (as if a
+    // script had shown them, e.g. the haven TV's "tv_screen").
+    WorldRenderer(rhi::Device& device, MaterialSystem& materials, const formats::BspFile& bsp,
+                  const std::vector<std::string>& shown = {});
     ~WorldRenderer();
 
     // `view_projection` is a column-major 4x4 matrix. draw() runs both passes;
@@ -57,6 +74,8 @@ public:
                           const WorldDrawSettings& settings);
 
     const WorldStats& stats() const { return stats_; }
+    // Visible monitors; draw each camera's view into its target before the frame's main view.
+    const std::vector<MonitorView>& monitors() const { return monitors_; }
 
 private:
     struct Batch {
@@ -67,6 +86,7 @@ private:
         // One per frame of an animated texture (base, or the water normal map).
         std::vector<std::unique_ptr<rhi::BindGroup>> frame_bind_groups;
         bool decal = false;
+        int monitor = -1; // Screen faces of monitors_[monitor], showing its render target.
 
         const rhi::BindGroup& current_bind_group() const;
     };
@@ -90,6 +110,7 @@ private:
     std::vector<Batch> translucent_;
     std::vector<Batch> water_;
     std::vector<Batch> decals_; // infodecals, drawn over the opaque world.
+    std::vector<MonitorView> monitors_;
     std::unique_ptr<rhi::Pipeline> water_pipeline_;
     std::array<std::unique_ptr<rhi::Pipeline>, 2> decal_pipelines_; // [alpha, modulate]
     std::unique_ptr<rhi::Sampler> decal_sampler_;                    // Clamped, so edges do not wrap.

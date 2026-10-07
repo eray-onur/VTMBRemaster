@@ -85,7 +85,7 @@ Captured automatically by driving the running game window: console commands type
 - A teleport typed while the map is still loading is ignored.
 - Facing directions can't be derived blindly. The hospital monitor screens face away from their brush normals, and the haven TV faces opposite its prop yaw; the tutorial terminal faces along its prop yaw. Check each view with a frame grab before recording.
 
-There is no station 3 any more. The haven TV is a `func_monitor` (`tv_screen`) showing a live feed from a `point_camera` (`news_camera`) that films the news-ticker strip in a hidden room. The TV starts hidden until switched on, so watching it covers the ticker too. It also means OpenBL needs render-to-texture monitors before this station can match.
+There is no station 3 any more. The haven TV is a `func_monitor` (`tv_screen`) showing a live feed from a `point_camera` (`news_camera`) that films the news-ticker strip in a hidden room. The TV starts hidden until switched on, so watching it covers the ticker too. OpenBL now draws monitors through render targets: `openbl-viewer --map sm_apartment_1 --show tv_screen --pos -160 388 100 --angles -12.91 309.08` shows the same newscaster, logo and ticker as the clip, a little darker. Station 9's left monitor matches the clip's camera picture, and the right one is dark in both (see [RENDERING.md](RENDERING.md#monitors-func_monitor--point_camera)).
 
 **Not covered by stations:**
 

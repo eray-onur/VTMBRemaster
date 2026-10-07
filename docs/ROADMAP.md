@@ -84,7 +84,9 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Material proxies at runtime: Sine, LinearRamp, noise, arithmetic chains, AnimatedTexture (base and water normal frames), TextureScroll, TextureTransform, driving the base texture transform, `$color`/`$alpha` and `$selfillumtint` on the world and props; `--time` for fixed-clock renders
 - [x] Material proxies: characters, `UnlitTwoTexture` second layer with `$texture2transform` (TV scanlines), `--sequence` frame captures
 - [ ] Material proxies that need missing features: sprite fades (PlayerProximity, LampBeam, LampHalo; needs sprites), GlobalWetness (needs environment maps and rain), TextConsole (needs the terminal UI); confirm the ones the captures could not show (security-camera `Sine`, sprite fades, `GlobalWetness` in rain, ticker scroll speed)
-- [ ] Render-to-texture monitors (`func_monitor` + `point_camera`, e.g. the haven TV news feed)
+- [x] Render-to-texture monitors (`func_monitor` + `point_camera`, aimed by `look_dest`): render targets in the RHI, one per visible monitor; checked against the hospital and haven TV captures
+- [x] `StartHidden` entities are not drawn (brush entities, props, NPCs); `--show NAME` overrides it for a brush entity
+- [ ] Monitors: confirm the camera `FOV` convention, picture brightness and render-target size; cameras parented to moving props
 - [ ] Particle simulation and rendering, with the semantics confirmed against captures of the original
 - [ ] Decals on static props (`$modelmaterial`, about 200 decals); confirm decal orientation against the original
 - [ ] Cloth simulation for hair and clothing; confirm the cloth settings against the running game

@@ -135,6 +135,9 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
             !formats::normalize_game_path(model->second).ends_with(".mdl")) {
             continue;
         }
+        if (auto hidden = e.find("StartHidden"); hidden != e.end() && hidden->second == "1") {
+            continue; // Invisible until a script shows it.
+        }
         std::size_t skin = 0;
         if (auto s = e.find("skin"); s != e.end()) {
             skin = static_cast<std::size_t>(std::max(0, std::atoi(s->second.c_str())));

@@ -35,6 +35,7 @@ struct RenderMaterial {
     float decal_scale = 1.0f; // $decalscale: world units per base-texture texel when used as a decal.
     bool modulate = false;    // DecalModulate: multiplies what is behind it by 2 x the texture.
     bool missing = false;    // The .vmt could not be found or parsed.
+    bool camera_feed = false; // $basetexture is the camera render target (func_monitor screens).
 
     // Water shader parameters (linear RGB).
     bool water = false;

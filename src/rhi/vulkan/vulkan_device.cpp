@@ -98,6 +98,7 @@ public:
     ~VulkanTexture() override;
     const TextureDesc& desc() const override { return desc_; }
     VkImageView view() const { return view_; }
+    VkImage image() const { return image_; }
 
 private:
     VulkanDevice& device_;
@@ -105,6 +106,26 @@ private:
     VkImage image_;
     VkImageView view_;
     VmaAllocation allocation_;
+};
+
+class VulkanRenderTarget final : public RenderTarget {
+public:
+    VulkanRenderTarget(VulkanDevice& device, std::unique_ptr<VulkanTexture> color, VkImage depth, VkImageView depth_view,
+                       VmaAllocation depth_allocation)
+        : device_(device), color_(std::move(color)), depth_(depth), depth_view_(depth_view),
+          depth_allocation_(depth_allocation) {}
+    ~VulkanRenderTarget() override;
+    const Texture& texture() const override { return *color_; }
+    const VulkanTexture& color() const { return *color_; }
+    VkImage depth() const { return depth_; }
+    VkImageView depth_view() const { return depth_view_; }
+
+private:
+    VulkanDevice& device_;
+    std::unique_ptr<VulkanTexture> color_;
+    VkImage depth_;
+    VkImageView depth_view_;
+    VmaAllocation depth_allocation_;
 };
 
 class VulkanSampler final : public Sampler {
@@ -161,6 +182,7 @@ public:
     const VulkanPipeline* pipeline = nullptr;
 
     void set_pipeline(const Pipeline& p) override {
+        ensure_pass();
         pipeline = static_cast<const VulkanPipeline*>(&p);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->handle());
     }
@@ -169,11 +191,13 @@ public:
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, require_pipeline().layout(), 0, 1, &set, 0, nullptr);
     }
     void set_vertex_buffer(const Buffer& buffer, std::size_t offset) override {
+        ensure_pass();
         const VkBuffer b = static_cast<const VulkanBuffer&>(buffer).handle();
         const VkDeviceSize o = offset;
         vkCmdBindVertexBuffers(cmd, 0, 1, &b, &o);
     }
     void set_index_buffer(const Buffer& buffer, std::size_t offset) override {
+        ensure_pass();
         vkCmdBindIndexBuffer(cmd, static_cast<const VulkanBuffer&>(buffer).handle(), offset, VK_INDEX_TYPE_UINT32);
     }
     void push_constants(const void* data, std::uint32_t size) override {
@@ -184,6 +208,7 @@ public:
         vkCmdPushConstants(cmd, p.layout(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, size, data);
     }
     void draw_indexed(std::uint32_t index_count, std::uint32_t first_index, std::int32_t vertex_offset) override {
+        ensure_pass();
         vkCmdDrawIndexed(cmd, index_count, 1, first_index, vertex_offset, 0);
     }
     void set_shader_data(const void* data, std::size_t size) override {
@@ -203,6 +228,78 @@ public:
         const auto dynamic_offset = static_cast<std::uint32_t>(offset);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p.layout(), 1, 1, &data_set, 1, &dynamic_offset);
     }
+
+    void begin_render_target(const RenderTarget& rt, const float clear_color[4]) override {
+        if (main_begun) {
+            throw std::logic_error("render targets must be drawn before the window in a frame");
+        }
+        if (target) {
+            throw std::logic_error("render target already active");
+        }
+        target = static_cast<const VulkanRenderTarget*>(&rt);
+        image_barrier_fn(cmd, target->color().image(), VK_IMAGE_ASPECT_COLOR_BIT, 1,
+                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+        image_barrier_fn(cmd, target->depth(), VK_IMAGE_ASPECT_DEPTH_BIT, 1, VK_IMAGE_LAYOUT_UNDEFINED,
+                         VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                         VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                         VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                         VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                         VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT);
+        const VkExtent2D extent{target->texture().desc().width, target->texture().desc().height};
+        VkRenderingAttachmentInfo color_info{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        color_info.imageView = target->color().view();
+        color_info.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        color_info.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        color_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        std::memcpy(color_info.clearValue.color.float32, clear_color, 4 * sizeof(float));
+        VkRenderingAttachmentInfo depth_info{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        depth_info.imageView = target->depth_view();
+        depth_info.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth_info.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth_info.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depth_info.clearValue.depthStencil = {1.0f, 0};
+        VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        rendering.renderArea = {{0, 0}, extent};
+        rendering.layerCount = 1;
+        rendering.colorAttachmentCount = 1;
+        rendering.pColorAttachments = &color_info;
+        rendering.pDepthAttachment = &depth_info;
+        vkCmdBeginRendering(cmd, &rendering);
+        const VkViewport viewport{0, 0, static_cast<float>(extent.width), static_cast<float>(extent.height), 0, 1};
+        const VkRect2D scissor{{0, 0}, extent};
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
+        pipeline = nullptr;
+    }
+
+    void end_render_target() override {
+        if (!target) {
+            throw std::logic_error("no render target active");
+        }
+        vkCmdEndRendering(cmd);
+        image_barrier_fn(cmd, target->color().image(), VK_IMAGE_ASPECT_COLOR_BIT, 1,
+                         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                         VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        target = nullptr;
+        pipeline = nullptr;
+    }
+
+    // Starts the window pass on first use, unless a render target is active.
+    void ensure_pass() {
+        if (!target && !main_begun) {
+            begin_main();
+            main_begun = true;
+        }
+    }
+
+    std::function<void()> begin_main; // Begins rendering to the window (set by begin_frame).
+    bool main_begun = false;
+    const VulkanRenderTarget* target = nullptr;
+    void (*image_barrier_fn)(VkCommandBuffer, VkImage, VkImageAspectFlags, std::uint32_t, VkImageLayout, VkImageLayout,
+                             VkPipelineStageFlags2, VkAccessFlags2, VkPipelineStageFlags2, VkAccessFlags2) = nullptr;
 
     // Per-frame shader data ring, set up by begin_frame().
     std::byte* data_base = nullptr;
@@ -394,6 +491,52 @@ public:
         return std::make_unique<VulkanSampler>(*this, sampler);
     }
 
+    std::unique_ptr<RenderTarget> create_render_target(std::uint32_t width, std::uint32_t height) override {
+        if (width == 0 || height == 0) {
+            throw std::invalid_argument("bad render target size");
+        }
+        VmaAllocationCreateInfo alloc{};
+        alloc.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+
+        VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        info.imageType = VK_IMAGE_TYPE_2D;
+        info.format = swapchain_format_;
+        info.extent = {width, height, 1};
+        info.mipLevels = 1;
+        info.arrayLayers = 1;
+        info.samples = VK_SAMPLE_COUNT_1_BIT;
+        info.tiling = VK_IMAGE_TILING_OPTIMAL;
+        info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        VkImage image = VK_NULL_HANDLE;
+        VmaAllocation allocation = nullptr;
+        check(vmaCreateImage(allocator_, &info, &alloc, &image, &allocation, nullptr), "render target image");
+        const VkImageView view = create_view(image, swapchain_format_, VK_IMAGE_ASPECT_COLOR_BIT);
+        TextureDesc desc{width, height, 1, from_vk(swapchain_format_)};
+        auto color = std::make_unique<VulkanTexture>(*this, desc, image, view, allocation);
+
+        info.format = kDepthFormat;
+        info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        VkImage depth = VK_NULL_HANDLE;
+        VmaAllocation depth_allocation = nullptr;
+        check(vmaCreateImage(allocator_, &info, &alloc, &depth, &depth_allocation, nullptr), "render target depth");
+        const VkImageView depth_view = create_view(depth, kDepthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
+
+        // Start black and ready to sample.
+        submit_upload([&](VkCommandBuffer cmd) {
+            image_barrier(cmd, image, VK_IMAGE_ASPECT_COLOR_BIT, 1, VK_IMAGE_LAYOUT_UNDEFINED,
+                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_CLEAR_BIT,
+                          VK_ACCESS_2_TRANSFER_WRITE_BIT);
+            const VkClearColorValue black{{0, 0, 0, 1}};
+            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            vkCmdClearColorImage(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &range);
+            image_barrier(cmd, image, VK_IMAGE_ASPECT_COLOR_BIT, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_CLEAR_BIT,
+                          VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                          VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        });
+        return std::make_unique<VulkanRenderTarget>(*this, std::move(color), depth, depth_view, depth_allocation);
+    }
+
     std::unique_ptr<Pipeline> create_pipeline(const PipelineDesc& desc) override {
         std::vector<VkDescriptorSetLayoutBinding> bindings;
         bindings.push_back({0, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr});
@@ -577,6 +720,26 @@ public:
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         check(vkBeginCommandBuffer(frame.cmd, &begin), "vkBeginCommandBuffer");
 
+        command_list_.cmd = frame.cmd;
+        command_list_.pipeline = nullptr;
+        command_list_.data_base = frame.data_mapped;
+        command_list_.data_capacity = kShaderDataPerFrame;
+        command_list_.data_cursor = 0;
+        command_list_.data_alignment = storage_alignment_;
+        command_list_.data_set = frame.data_set;
+        command_list_.target = nullptr;
+        command_list_.main_begun = false;
+        command_list_.image_barrier_fn = &VulkanDevice::image_barrier;
+        const FrameDesc frame_desc = desc;
+        command_list_.begin_main = [this, frame_desc] { begin_window_pass(frame_desc); };
+        in_frame_ = true;
+        return &command_list_;
+    }
+
+    // Starts rendering to the acquired swapchain image (called lazily, so
+    // render targets can be drawn first).
+    void begin_window_pass(const FrameDesc& desc) {
+        Frame& frame = frames_[frame_index_];
         const VkImage image = swapchain_images_[image_index_];
         image_barrier(frame.cmd, image, VK_IMAGE_ASPECT_COLOR_BIT, 1, VK_IMAGE_LAYOUT_UNDEFINED,
                       VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
@@ -612,16 +775,6 @@ public:
         const VkRect2D scissor{{0, 0}, extent_};
         vkCmdSetViewport(frame.cmd, 0, 1, &viewport);
         vkCmdSetScissor(frame.cmd, 0, 1, &scissor);
-
-        command_list_.cmd = frame.cmd;
-        command_list_.pipeline = nullptr;
-        command_list_.data_base = frame.data_mapped;
-        command_list_.data_capacity = kShaderDataPerFrame;
-        command_list_.data_cursor = 0;
-        command_list_.data_alignment = storage_alignment_;
-        command_list_.data_set = frame.data_set;
-        in_frame_ = true;
-        return &command_list_;
     }
 
     void end_frame() override {
@@ -630,6 +783,10 @@ public:
         }
         in_frame_ = false;
         Frame& frame = frames_[frame_index_];
+        if (command_list_.target) {
+            command_list_.end_render_target();
+        }
+        command_list_.ensure_pass(); // Clears the window even if nothing was drawn to it.
         vkCmdEndRendering(frame.cmd);
         const VkImage image = swapchain_images_[image_index_];
         if (capture_requested_) {
@@ -1253,6 +1410,18 @@ VulkanBuffer::~VulkanBuffer() {
     VkBuffer b = buffer_;
     VmaAllocation m = allocation_;
     device_.defer([a, b, m] { vmaDestroyBuffer(a, b, m); });
+}
+
+VulkanRenderTarget::~VulkanRenderTarget() {
+    VkDevice d = device_.handle();
+    VmaAllocator a = device_.allocator();
+    VkImage i = depth_;
+    VkImageView v = depth_view_;
+    VmaAllocation m = depth_allocation_;
+    device_.defer([d, a, i, v, m] {
+        vkDestroyImageView(d, v, nullptr);
+        vmaDestroyImage(a, i, m);
+    });
 }
 
 VulkanTexture::~VulkanTexture() {

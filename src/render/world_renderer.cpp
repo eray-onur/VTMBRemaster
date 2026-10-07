@@ -90,10 +90,22 @@ std::size_t face_styles(const BspFace& face) {
 struct ModelInstance {
     std::size_t model = 0;
     formats::Vec3 origin{};
+    const formats::BspEntity* entity = nullptr;
 };
 
+std::string entity_value(const formats::BspEntity& e, const char* key) {
+    const auto it = e.find(key);
+    return it == e.end() ? std::string() : it->second;
+}
+
+formats::Vec3 entity_vec3(const formats::BspEntity& e, const char* key) {
+    formats::Vec3 v{};
+    std::istringstream(entity_value(e, key)) >> v[0] >> v[1] >> v[2];
+    return v;
+}
+
 std::vector<ModelInstance> model_instances(const BspFile& bsp) {
-    std::vector<ModelInstance> out{{0, {}}};
+    std::vector<ModelInstance> out{{0, {}, nullptr}};
     for (const auto& e : bsp.entities) {
         auto model = e.find("model");
         if (model == e.end() || model->second.size() < 2 || model->second[0] != '*') {
@@ -103,18 +115,18 @@ std::vector<ModelInstance> model_instances(const BspFile& bsp) {
         if (index == 0 || index >= bsp.models.size()) {
             continue;
         }
-        ModelInstance inst{index, {}};
-        if (auto origin = e.find("origin"); origin != e.end()) {
-            std::istringstream(origin->second) >> inst.origin[0] >> inst.origin[1] >> inst.origin[2];
-        }
-        out.push_back(inst);
+        out.push_back({index, entity_vec3(e, "origin"), &e});
     }
     return out;
 }
 
+// Render-target size of a monitor picture (square).
+constexpr std::uint32_t kMonitorResolution = 512;
+
 } // namespace
 
-WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, const BspFile& bsp)
+WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, const BspFile& bsp,
+                             const std::vector<std::string>& shown)
     : device_(device), styles_(bsp) {
     std::vector<std::array<float, 2>> lightmap_offsets;
     build_lightmap_atlas(bsp, lightmap_offsets);
@@ -126,8 +138,48 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
         std::size_t face;
         formats::Vec3 origin;
     };
-    std::map<std::string, std::vector<FaceRef>> by_material;
+    // Entities with StartHidden start invisible until a script shows them (the
+    // haven TV until switched on, a monitor's "dead" screen until its camera
+    // breaks), so they are not drawn. Monitors (func_monitor) show their
+    // point_camera's view.
+    std::map<std::string, const formats::BspEntity*> cameras;
+    for (const auto& e : bsp.entities) {
+        if (entity_value(e, "classname") == "point_camera") {
+            cameras[entity_value(e, "targetname")] = &e;
+        }
+    }
+    // Key: material name and the monitor whose picture its faces show (-1: none).
+    std::map<std::pair<std::string, int>, std::vector<FaceRef>> by_material;
     for (const ModelInstance& inst : model_instances(bsp)) {
+        int monitor = -1;
+        if (inst.entity && entity_value(*inst.entity, "StartHidden") == "1" &&
+            std::find(shown.begin(), shown.end(), entity_value(*inst.entity, "targetname")) == shown.end()) {
+            ++stats_.hidden_entities;
+            continue;
+        }
+        if (inst.entity && entity_value(*inst.entity, "classname") == "func_monitor") {
+            if (const auto cam = cameras.find(entity_value(*inst.entity, "target")); cam != cameras.end()) {
+                const formats::BspEntity& c = *cam->second;
+                MonitorView view;
+                view.origin = entity_vec3(c, "origin");
+                if (c.contains("look_dest")) {
+                    view.look_at = entity_vec3(c, "look_dest");
+                } else {
+                    // Source angles: pitch (down positive), yaw.
+                    const auto angles = entity_vec3(c, "angles");
+                    const float p = angles[0] * 3.14159265f / 180.0f, y = angles[1] * 3.14159265f / 180.0f;
+                    view.look_at = {view.origin[0] + std::cos(p) * std::cos(y), view.origin[1] + std::cos(p) * std::sin(y),
+                                    view.origin[2] - std::sin(p)};
+                }
+                if (const std::string fov = entity_value(c, "FOV"); !fov.empty()) {
+                    view.fov = static_cast<float>(std::atof(fov.c_str()));
+                }
+                view.target = device.create_render_target(kMonitorResolution, kMonitorResolution);
+                monitor = static_cast<int>(monitors_.size());
+                monitors_.push_back(std::move(view));
+                ++stats_.monitors;
+            }
+        }
         const auto& model = bsp.models[inst.model];
         for (std::int32_t i = 0; i < model.num_faces; ++i) {
             const std::size_t f = static_cast<std::size_t>(model.first_face + i);
@@ -136,7 +188,9 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
                 continue;
             }
             const auto texdata = static_cast<std::size_t>(bsp.texinfos[bsp.faces[f].texinfo].texdata);
-            by_material[bsp.texdatas[texdata].material].push_back({f, inst.origin});
+            const std::string& name = bsp.texdatas[texdata].material;
+            const int screen = monitor >= 0 && materials.material(name).camera_feed ? monitor : -1;
+            by_material[{name, screen}].push_back({f, inst.origin});
         }
     }
 
@@ -169,8 +223,8 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
             out.styles[0] = 0; // The white luxel, at full brightness.
         }
     };
-    for (const auto& [name, faces] : by_material) {
-        const RenderMaterial& mat = materials.material(name);
+    for (const auto& [key, faces] : by_material) {
+        const RenderMaterial& mat = materials.material(key.first);
         stats_.missing_materials += mat.missing;
         if (mat.skip) {
             stats_.skipped_faces += faces.size();
@@ -178,6 +232,7 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
         }
         Batch batch;
         batch.material = &mat;
+        batch.monitor = key.second;
         batch.first_index = static_cast<std::uint32_t>(indices.size());
         for (const FaceRef& ref : faces) {
             const auto mesh = formats::build_face_mesh(bsp, ref.face);
@@ -311,8 +366,13 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
     for (auto* list : {&opaque_, &translucent_}) {
         for (Batch& batch : *list) {
             const RenderMaterial& m = *batch.material;
-            const rhi::Texture* textures[] = {m.base, m.base2, lightmap_.get()};
+            const rhi::Texture* base =
+                batch.monitor >= 0 ? &monitors_[static_cast<std::size_t>(batch.monitor)].target->texture() : m.base;
+            const rhi::Texture* textures[] = {base, m.base2, lightmap_.get()};
             batch.bind_group = device.create_bind_group(*pipelines_[0][0], *sampler_, textures);
+            if (batch.monitor >= 0) {
+                continue; // The picture is the render target, not texture frames.
+            }
             for (const rhi::Texture* frame : m.base_frames) {
                 const rhi::Texture* frame_textures[] = {frame, (m.blend_layers || m.multiply_layers) ? m.base2 : frame, lightmap_.get()};
                 batch.frame_bind_groups.push_back(device.create_bind_group(*pipelines_[0][0], *sampler_, frame_textures));
@@ -447,6 +507,9 @@ void WorldRenderer::draw_batches(rhi::CommandList& cmd, const std::vector<Batch>
         std::memcpy(shader_data_.data() + kStyleFloats + r * kRowFloats, &p, sizeof(p));
     }
     for (const Batch& batch : batches) {
+        if (batch.monitor >= 0 && !settings.draw_monitors) {
+            continue;
+        }
         const RenderMaterial& m = *batch.material;
         const rhi::Pipeline& pipeline = batch.decal ? *decal_pipelines_[m.modulate ? 1 : 0] : pipeline_for(m);
         if (&pipeline != bound) {

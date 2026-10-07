@@ -262,6 +262,7 @@ RenderMaterial MaterialSystem::load(const std::string& name, std::optional<forma
         return out;
     }
     out.shader = mat->shader;
+    out.camera_feed = mat->texture_path("$basetexture") == "materials/engine/camerarendertarget";
     if (auto path = mat->texture_path("$basetexture")) {
         if (const auto* t = texture(*path)) {
             out.base = out.base2 = t;
