@@ -379,7 +379,7 @@ int cmd_mat_catalogue(const vfs::GameFileSystem& gfs, std::ostream& out) {
         << " and in map pakfiles with patches applied), " << shaders.size() << " shaders, " << proxies.size()
         << " proxy types. " << failed << " materials could not be read.\n\n"
         << "Value kinds: `texture` (resolves to a texture), `material` (resolves to another material), `int`, `float`,"
-        << " `vector` (`[x y z]` or `{r g b}`), `transform` (`center … scale … rotate … translate …`), `string`,"
+        << " `vector` (`[x y z]` or `{r g b}`), `transform` (`center â€¦ scale â€¦ rotate â€¦ translate â€¦`), `string`,"
         << " `empty`. The OpenBL column marks parameters the renderer reads today.\n\n"
         << "## Shaders\n\n| Shader | Materials | From maps | Parameters |\n|---|---|---|---|\n";
     for (const auto& [n, name] : order) {
@@ -1073,7 +1073,7 @@ constexpr FormatStatus kFormats[] = {
     {".ain", "parsed", "AI node graphs"},
     {".loc", "parsed", "AI graph companion number (meaning unknown)"},
     {".vfe", "parsed", "compiled facial expression sets"},
-    {".fnt", "todo", "bitmap fonts"},
+    {".fnt", "parsed", "bitmap fonts"},
     {".res", "parsed", "UI layouts (KeyValues)"},
     {".pyc", "todo", "compiled Python (version check only)"},
     {".py", "todo", "Python source"},

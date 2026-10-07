@@ -3,6 +3,7 @@ add_library(openbl_formats
     bsp.cpp
     dlg.cpp
     expressions.cpp
+    fnt.cpp
     image_decode.cpp
     image_read.cpp
     image_write.cpp

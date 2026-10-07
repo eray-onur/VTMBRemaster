@@ -13,6 +13,7 @@ add_executable(openbl_tests
     test_bsp.cpp
     test_dlg.cpp
     test_expressions.cpp
+    test_fnt.cpp
     test_path.cpp
     test_phy.cpp
     test_sav.cpp
