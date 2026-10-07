@@ -56,6 +56,8 @@ struct CharacterOptions {
     std::string sequence;
     // Pose parameter values, e.g. {"move_yaw", 90} (others stay 0).
     std::vector<std::pair<std::string, float>> pose_parameters;
+    // Targetnames of StartHidden NPCs to draw anyway (as if a script had shown them).
+    std::vector<std::string> shown;
 };
 
 struct CharacterDrawSettings {

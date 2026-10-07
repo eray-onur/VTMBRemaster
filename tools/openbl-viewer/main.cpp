@@ -98,6 +98,7 @@ Options parse_args(int argc, char** argv) {
             o.mods.push_back(next());
         } else if (a == "--show") {
             o.shown.push_back(next());
+            o.characters_options.shown.push_back(o.shown.back());
         } else if (a == "--npc-sequence") {
             o.characters_options.sequence = next();
         } else if (a == "--pose") {
@@ -275,7 +276,7 @@ public:
         materials_ = std::make_unique<render::MaterialSystem>(device, *assets_);
         world_ = std::make_unique<render::WorldRenderer>(device, *materials_, bsp_, options.shown);
         if (options.props) {
-            props_ = std::make_unique<render::PropRenderer>(device, *materials_, *assets_, bsp_);
+            props_ = std::make_unique<render::PropRenderer>(device, *materials_, *assets_, bsp_, options.shown);
         }
         if (options.characters) {
             characters_ = std::make_unique<render::CharacterRenderer>(device, *materials_, *assets_, bsp_, options.characters_options);

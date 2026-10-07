@@ -276,6 +276,14 @@ RenderMaterial MaterialSystem::load(const std::string& name, std::optional<forma
             }
         }
     }
+    if (out.shader == "eyes") {
+        if (auto path = mat->texture_path("$iris")) {
+            if (const auto* t = texture(*path)) {
+                out.base2 = t;
+                out.eyes = true;
+            }
+        }
+    }
     if (out.shader == "unlittwotexture") {
         if (auto path = mat->texture_path("$texture2")) {
             if (const auto* t = texture(*path)) {

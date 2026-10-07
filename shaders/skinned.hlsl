@@ -18,6 +18,11 @@ static const uint kAlphaTest = 1;
 static const uint kUnlit = 4;
 static const uint kSelfIllum = 8;
 static const uint kTranslucent = 16;
+static const uint kEyes = 32;
+
+// Iris size as a fraction of the eye mesh's UV square, measured on the
+// original (the iris spans about 0.58 of the eye opening; docs/RENDERING.md).
+static const float kIrisSize = 0.58;
 static const uint kBoneBase = 6;
 
 struct VSInput {
@@ -65,9 +70,18 @@ VSOutput vs_main(VSInput input) {
 
 [[vk::binding(0, 0)]] SamplerState texture_sampler;
 [[vk::binding(1, 0)]] Texture2D base_texture;
+[[vk::binding(2, 0)]] Texture2D iris_texture; // Eyes only; the base texture otherwise.
 
 float4 ps_main(VSOutput input) : SV_Target {
     float4 base = base_texture.Sample(texture_sampler, input.uv);
+    if (pc.flags & kEyes) {
+        // The eye mesh's UVs are a front projection of the eyeball, centred on
+        // where it looks; the iris disc sits in the middle.
+        const float2 iris_uv = (input.uv - 0.5) / kIrisSize + 0.5;
+        const float4 iris = iris_texture.Sample(texture_sampler, iris_uv);
+        const float inside = all(iris_uv >= 0.0) && all(iris_uv <= 1.0) ? 1.0 : 0.0; // The sampler repeats.
+        base.rgb = lerp(base.rgb, iris.rgb, iris.a * inside);
+    }
     if (pc.flags & kAlphaTest) {
         clip(base.a - pc.alpha_ref);
     }

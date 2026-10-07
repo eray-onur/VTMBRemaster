@@ -45,6 +45,7 @@ constexpr std::uint32_t kAlphaTest = 1;
 constexpr std::uint32_t kUnlit = 4;
 constexpr std::uint32_t kSelfIllum = 8;
 constexpr std::uint32_t kTranslucent = 16;
+constexpr std::uint32_t kEyes = 32;
 
 // Height above an NPC's origin at which its lighting is sampled (roughly chest height).
 constexpr float kLightingHeight = 40.0f;
@@ -87,7 +88,7 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
                      {2, rhi::Format::RGB32_Float, 20},
                      {3, rhi::Format::RGBA16_UInt, 32},
                      {4, rhi::Format::RGBA8_UNorm, 40}};
-    pd.texture_count = 1;
+    pd.texture_count = 2;
     pd.push_constant_size = sizeof(PushConstants);
     pd.shader_data = true;
     const rhi::BlendMode blends[] = {rhi::BlendMode::Opaque, rhi::BlendMode::Alpha, rhi::BlendMode::Additive};
@@ -110,7 +111,10 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
             continue;
         }
         if (auto hidden = e.find("StartHidden"); hidden != e.end() && hidden->second == "1") {
-            continue; // Invisible until a script shows it.
+            const auto name = e.find("targetname");
+            if (name == e.end() || std::find(options.shown.begin(), options.shown.end(), name->second) == options.shown.end()) {
+                continue; // Invisible until a script shows it.
+            }
         }
         const std::string path = formats::normalize_game_path(model_key->second);
         if (!path.ends_with(".mdl")) {
@@ -261,10 +265,10 @@ const CharacterRenderer::Model* CharacterRenderer::load_model(const std::string&
                         if (mesh.material->skip) {
                             continue;
                         }
-                        const rhi::Texture* textures[] = {mesh.material->base};
+                        const rhi::Texture* textures[] = {mesh.material->base, mesh.material->base2};
                         mesh.bind_group = device_.create_bind_group(*pipelines_[0][0], *sampler_, textures);
                         for (const rhi::Texture* frame : mesh.material->base_frames) {
-                            const rhi::Texture* frame_textures[] = {frame};
+                            const rhi::Texture* frame_textures[] = {frame, mesh.material->eyes ? mesh.material->base2 : frame};
                             mesh.frame_bind_groups.push_back(
                                 device_.create_bind_group(*pipelines_[0][0], *sampler_, frame_textures));
                         }
@@ -355,7 +359,7 @@ void CharacterRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float,
             }
             pc.alpha_ref = m.alpha_ref;
             pc.flags = (m.alpha_test ? kAlphaTest : 0) | ((m.unlit || settings.fullbright) ? kUnlit : 0) |
-                       (m.self_illum ? kSelfIllum : 0) | (m.translucent ? kTranslucent : 0);
+                       (m.self_illum ? kSelfIllum : 0) | (m.translucent ? kTranslucent : 0) | (m.eyes ? kEyes : 0);
             cmd.set_bind_group(mesh.frame_bind_groups.empty()
                                    ? *mesh.bind_group
                                    : *mesh.frame_bind_groups[m.base_frame % mesh.frame_bind_groups.size()]);

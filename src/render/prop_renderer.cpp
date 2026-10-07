@@ -71,7 +71,7 @@ formats::Vec3 parse_vec3(const formats::BspEntity& e, const char* key) {
 } // namespace
 
 PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const AssetSource& assets,
-                           const formats::BspFile& bsp)
+                           const formats::BspFile& bsp, const std::vector<std::string>& shown)
     : device_(device), materials_(materials), assets_(assets) {
     rhi::PipelineDesc pd;
     pd.vertex.spirv = openbl_prop_vs;
@@ -136,7 +136,10 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
             continue;
         }
         if (auto hidden = e.find("StartHidden"); hidden != e.end() && hidden->second == "1") {
-            continue; // Invisible until a script shows it.
+            const auto name = e.find("targetname");
+            if (name == e.end() || std::find(shown.begin(), shown.end(), name->second) == shown.end()) {
+                continue; // Invisible until a script shows it.
+            }
         }
         std::size_t skin = 0;
         if (auto s = e.find("skin"); s != e.end()) {

@@ -24,6 +24,7 @@ struct RenderMaterial {
     const rhi::Texture* base2 = nullptr; // Second layer (WorldVertexTransition, UnlitTwoTexture); equals base otherwise.
     bool blend_layers = false;           // WorldVertexTransition: blend base -> base2 by vertex alpha.
     bool multiply_layers = false;        // UnlitTwoTexture: base x base2, each with its own transform.
+    bool eyes = false;                   // Eyes: base2 is the $iris, drawn over the eyeball (docs/RENDERING.md).
     bool alpha_test = false;
     float alpha_ref = 0.5f;
     bool translucent = false;

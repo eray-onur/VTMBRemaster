@@ -35,6 +35,12 @@ Lit colour = base texture × colour modulation (`$color`, alpha) × per-vertex l
 
 Against two captures of `sp_tutorial_1`, props in the original are 1.04–1.08 / 0.99–1.06 / 1.08–1.15 as bright as in OpenBL (red / green / blue, geometric mean over props). The props differ from each other by about 18%. Weighting the surfaces by their reflectivity fitted worse. The previous model (direct light plus 30% of the floor lightmap below, at scale 2.297) differed by up to 84% between props and was too blue. Still open: whether the original lights per vertex (its console has `r_staticlighting 1`), sky ambient light for outdoor props, and captures from more rooms to confirm the 0.5. Self-illumination blends to base × tint by base alpha, as for the world. Alpha-tested models discard pixels with a texture-kill instruction driven by a separate coordinate.
 
+## Eyes (`Eyes`)
+
+391 materials: `$basetexture` is the white of the eye, `$iris` an iris disc with an alpha mask. Each eye is its own small mesh (a cap about 0.5 units in radius on human heads; `MdlMesh::material_type` 1, parameter 0 or 1 for the two eyes), and its texture coordinates are an exact front projection of the cap, spanning 0 to 1 across it. OpenBL draws the iris from those coordinates: iris texture at (uv − 0.5) / 0.58 + 0.5, blended by its alpha. The size 0.58 is measured in the original, where an iris spans about 0.58 of the eye opening's width (`sm_hub_1`, the haven bum's dialogue close-up).
+
+Not done: the eyes looking at a target (in dialogue they follow the player), the small specular glint near the pupil, and `$vampire` (10 materials). The model field at +0xd8 holds one record per head with eyelid flex ramps, not eyeball geometry, so the original's projection data is still unknown.
+
 ## Unlit surfaces (`UnlitGeneric`)
 
 Base texture × vertex colour, with no doubling.
@@ -45,7 +51,7 @@ A `func_monitor` is a brush entity whose screen faces use a material with `$base
 
 OpenBL gives each visible monitor its own 512 × 512 render target. Each frame, before the main view, it draws the scene from that monitor's camera into the target, leaving out monitor screens. Checked against the original on two stations ([PROXY_CAPTURE.md](PROXY_CAPTURE.md)): the hospital monitor shows the same room with the same framing and orientation. The haven TV shows the newscaster, logo and scrolling ticker; OpenBL's picture is darker. Not yet confirmed: whether `FOV` is horizontal or vertical (the pictures are square), the original's render-target size, and how bright the picture should be.
 
-**Hidden entities.** Entities with `StartHidden 1` are invisible until a script shows them, so OpenBL does not draw them: brush entities (138 `func_brush`, 164 `func_physbox`, 41 `func_illusionary`, 11 `func_monitor`, ...), `prop_*` entities and NPCs. Examples are the haven TV (off until switched on) and the hospital's `monitor_1_dead`, a static screen shown once its camera is broken; without this the static covered the live picture. `openbl-viewer --show NAME` draws a hidden brush entity anyway, as `ent_fire NAME ScriptUnhide` does in the original.
+**Hidden entities.** Entities with `StartHidden 1` are invisible until a script shows them, so OpenBL does not draw them: brush entities (138 `func_brush`, 164 `func_physbox`, 41 `func_illusionary`, 11 `func_monitor`, ...), `prop_*` entities and NPCs. Examples are the haven TV (off until switched on) and the hospital's `monitor_1_dead`, a static screen shown once its camera is broken; without this the static covered the live picture. Scripts often show such entities as soon as the map loads (the haven bum in `sm_hub_1` starts hidden and greets the player at once), so which ones are visible in play needs the map scripts (Phase 2). `openbl-viewer --show NAME` draws a hidden entity anyway (brush entities, props and NPCs), as `ent_fire NAME ScriptUnhide` does in the original.
 
 ## Still to read
 

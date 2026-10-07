@@ -35,8 +35,9 @@ struct PropDrawSettings {
 
 class PropRenderer {
 public:
+    // `shown`: targetnames of StartHidden prop entities to draw anyway.
     PropRenderer(rhi::Device& device, MaterialSystem& materials, const AssetSource& assets,
-                 const formats::BspFile& bsp);
+                 const formats::BspFile& bsp, const std::vector<std::string>& shown = {});
     ~PropRenderer();
 
     void draw_opaque(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
