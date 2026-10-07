@@ -23,8 +23,21 @@ Sequences can come from the model's include files (e.g. `models/character/shared
 
 NPCs play their idle (the first `ACT_IDLE` sequence), starting at a random cycle. Until AI drives them (Phase 2), `openbl-viewer --npc-sequence NAME` makes every NPC play a sequence by label or activity, and `--pose NAME=VALUE` sets pose parameters, e.g. `--npc-sequence ACT_RUN --pose move_yaw=90` for a sideways run. Root motion is not applied.
 
+## Facial flexes
+
+Code: `openbl/anim/flex.hpp`. A face is driven by **flex controllers** (44 on a typical head: `blink`, `smile`, `jaw_drop`, `right_lid_raiser`, ...), each with a range (0 to 1 on the shipped heads):
+
+1. **Rules** turn controller values into flex weights: one stack program per flex, run in file order so a rule can read flexes computed before it ([formats/models.md](formats/models.md)). Flexes without a rule weigh 0; division by zero gives 0.
+2. **Mesh flexes** turn a flex weight into a morph scale with their four-point ramp (fade in, hold, fade out).
+3. The **vertex offsets** of every active mesh flex, times its scale, are summed per vertex.
+
+On the GPU, every vertex any flex can move has a slot (a vertex attribute); a character's summed offsets go into its per-draw shader data, one float4 per slot, and the vertex shader adds them to the bind-pose position before skinning. Normal offsets are not applied yet.
+
+Nothing drives the controllers until expressions, dialogue and lip-sync exist (Phase 2). `openbl-viewer --flex NAME=VALUE` sets a controller on every NPC, e.g. `--flex smile=1 --flex jaw_drop=0.6` or `--flex blink=1`.
+
 ## Not done yet
 
 - **Layers** (`MdlSequence::layers`, e.g. `katana_bobble_layer`): how they combine with the base sequence (added or replacing) is unknown.
 - **Root motion** (`MdlAnimation::movements`), which needs entities that move.
+- **Flex drivers**: expressions (`.vfe`, `expressions/*.txt`), lip-sync (`.lip`), choreography (`.vcd`); normal offsets of flexes.
 - **Confirmation against the original**: fade timing, cycle convention ((N − 1) / fps), and the third fade time.

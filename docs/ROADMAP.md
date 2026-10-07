@@ -81,7 +81,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Skinned and animated models: GPU skinning (per-draw bone data), NPCs from map entities playing their first `ACT_IDLE` sequence
 - [x] Animation: blend grids across pose parameters, fades between sequences, viewer `--npc-sequence`/`--pose` ([ANIMATION.md](ANIMATION.md))
 - [x] Eyes: irises drawn over the eyeball from the eye mesh's front projection, sized from the original
-- [ ] Animation: sequence layers, root motion, facial flexes; eyes looking at a target, eye glints
+- [x] Facial flexes: controllers through the flex rules and mesh-flex ramps to GPU vertex offsets; viewer `--flex`
+- [ ] Animation: sequence layers, root motion, flex normal offsets, flex drivers (expressions, lip-sync; Phase 2); eyes looking at a target, eye glints
 - [ ] Free-fly viewer on Windows and Linux
 - [x] Material proxies at runtime: Sine, LinearRamp, noise, arithmetic chains, AnimatedTexture (base and water normal frames), TextureScroll, TextureTransform, driving the base texture transform, `$color`/`$alpha` and `$selfillumtint` on the world and props; `--time` for fixed-clock renders
 - [x] Material proxies: characters, `UnlitTwoTexture` second layer with `$texture2transform` (TV scanlines), `--sequence` frame captures

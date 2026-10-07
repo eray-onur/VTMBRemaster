@@ -1,4 +1,5 @@
 #include "openbl/anim/animation.hpp"
+#include "openbl/anim/flex.hpp"
 #include "openbl/formats/error.hpp"
 #include "openbl/formats/keyvalues.hpp"
 #include "openbl/vfs/game_filesystem.hpp"
@@ -147,4 +148,73 @@ TEST_CASE("Animation integration: Andrei's run blends across move_yaw and fades 
     const auto run_pose = anim::sample_sequence(*file, run, std::fmod(fade / anim::sequence_duration(*file, file->sequences[run]), 1.0f), zero);
     CHECK(pose_distance(player.pose(later), run_pose) < 1e-4f);
     CHECK(player.cycle(later) == doctest::Approx(std::fmod(fade / anim::sequence_duration(*file, file->sequences[run]), 1.0f)));
+}
+
+TEST_CASE("Flex rules and mesh flex ramps") {
+    // upper_right_raiser = right_lid_raiser * (1 - 0.8 * c1) * (1 - c2), then a flex reading it.
+    MdlFile file;
+    file.flex_names = {"upper_right_raiser", "half"};
+    file.flex_controllers = {{"eyelid", "right_lid_raiser", 0, 1}, {"eyelid", "c1", 0, 1}, {"eyelid", "c2", -1, 1}};
+    using Op = MdlFlexOp;
+    MdlFlexRule rule{0,
+                     {{Op::Controller, 0, 0}, {Op::Const, 0, 1}, {Op::Const, 0, 0.8f}, {Op::Controller, 1, 0}, {Op::Mul, 0, 0},
+                      {Op::Sub, 0, 0}, {Op::Mul, 0, 0}, {Op::Const, 0, 1}, {Op::Controller, 2, 0}, {Op::Sub, 0, 0}, {Op::Mul, 0, 0}}};
+    MdlFlexRule half{1, {{Op::Flex, 0, 0}, {Op::Const, 0, 2}, {Op::Div, 0, 0}}};
+    file.flex_rules = {rule, half};
+
+    auto controllers = anim::default_flex_controllers(file);
+    CHECK(anim::set_flex_controller(file, controllers, "RIGHT_LID_RAISER", 1.0f));
+    CHECK(anim::set_flex_controller(file, controllers, "c1", 0.5f));
+    CHECK(anim::set_flex_controller(file, controllers, "c2", 5.0f)); // Clamped to 1.
+    CHECK_FALSE(anim::set_flex_controller(file, controllers, "missing", 1.0f));
+    auto w = anim::evaluate_flex_rules(file, controllers);
+    CHECK(w[0] == doctest::Approx(0.0f));
+    anim::set_flex_controller(file, controllers, "c2", 0.25f);
+    w = anim::evaluate_flex_rules(file, controllers);
+    CHECK(w[0] == doctest::Approx(1.0f * (1 - 0.4f) * 0.75f));
+    CHECK(w[1] == doctest::Approx(w[0] / 2));
+
+    const std::array<float, 4> ramp{0, 1, 10, 11};
+    CHECK(anim::mesh_flex_scale(ramp, 0.0f) == 0.0f);
+    CHECK(anim::mesh_flex_scale(ramp, 0.5f) == doctest::Approx(0.5f));
+    CHECK(anim::mesh_flex_scale(ramp, 5.0f) == 1.0f);
+    CHECK(anim::mesh_flex_scale(ramp, 10.5f) == doctest::Approx(0.5f));
+    CHECK(anim::mesh_flex_scale({-11, -10, -0.27f, 0.18f}, -5.0f) == 1.0f); // An eyelid's lower ramp.
+}
+
+TEST_CASE("Flex integration: every model's rules evaluate to finite weights") {
+    auto game = test::game_dir();
+    if (!game) {
+        MESSAGE("OPENBL_GAME_DIR not set; skipping");
+        return;
+    }
+    const vfs::GameFileSystem gfs(*game);
+    std::size_t models = 0, weights = 0, non_finite = 0;
+    for (const auto& path : gfs.list_files()) {
+        if (!path.ends_with(".mdl") || !path.starts_with("models/character")) {
+            continue;
+        }
+        const auto data = gfs.read(path);
+        MdlFile mdl;
+        try {
+            mdl = parse_mdl(*data);
+        } catch (const FormatError&) {
+            continue;
+        }
+        if (mdl.flex_rules.empty()) {
+            continue;
+        }
+        ++models;
+        auto controllers = anim::default_flex_controllers(mdl);
+        for (std::size_t i = 0; i < controllers.size(); ++i) {
+            controllers[i] = mdl.flex_controllers[i].max; // Everything at full.
+        }
+        for (float v : anim::evaluate_flex_rules(mdl, controllers)) {
+            ++weights;
+            non_finite += !std::isfinite(v);
+        }
+    }
+    MESSAGE(models << " character models with flex rules, " << weights << " flex weights");
+    CHECK(models > 100);
+    CHECK(non_finite == 0);
 }

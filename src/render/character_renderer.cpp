@@ -1,5 +1,7 @@
 #include "openbl/render/character_renderer.hpp"
 
+#include "openbl/anim/flex.hpp"
+
 #include "openbl/formats/error.hpp"
 #include "openbl/formats/keyvalues.hpp"
 #include "openbl/formats/path.hpp"
@@ -30,15 +32,16 @@ struct Vertex {
     float normal[3];
     std::uint16_t bones[4];
     std::uint8_t weights[4];
+    float flex_slot; // Index of this vertex's flex offset, or -1 if no flex moves it.
 };
-static_assert(sizeof(Vertex) == 44);
+static_assert(sizeof(Vertex) == 48);
 
 struct PushConstants {
     float mvp[16];
     float alpha_ref;
     std::uint32_t flags;
     std::uint32_t params_row; // Shader-data element where this mesh's material params start.
-    float padding;
+    std::uint32_t flex_base;  // Shader-data element of flex slot 0; 0 when no flex is active.
 };
 
 constexpr std::uint32_t kAlphaTest = 1;
@@ -87,7 +90,8 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
                      {1, rhi::Format::RG32_Float, 12},
                      {2, rhi::Format::RGB32_Float, 20},
                      {3, rhi::Format::RGBA16_UInt, 32},
-                     {4, rhi::Format::RGBA8_UNorm, 40}};
+                     {4, rhi::Format::RGBA8_UNorm, 40},
+                     {5, rhi::Format::R32_Float, 44}};
     pd.texture_count = 2;
     pd.push_constant_size = sizeof(PushConstants);
     pd.shader_data = true;
@@ -162,6 +166,34 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
                 return label.find("idle") != std::string::npos;
             });
         }
+        if (!options.flex_controllers.empty() && !model->flexes.empty()) {
+            const auto& mdl = *model->mdl;
+            auto controllers = anim::default_flex_controllers(mdl);
+            for (const auto& [name, value] : options.flex_controllers) {
+                anim::set_flex_controller(mdl, controllers, name, value);
+            }
+            const auto weights = anim::evaluate_flex_rules(mdl, controllers);
+            inst.flex_deltas.assign(std::size_t{model->flex_slots} * 4, 0.0f);
+            bool any = false;
+            for (const ModelFlex& f : model->flexes) {
+                const float w = f.flex >= 0 && static_cast<std::size_t>(f.flex) < weights.size()
+                                    ? weights[static_cast<std::size_t>(f.flex)]
+                                    : 0.0f;
+                const float scale = anim::mesh_flex_scale(f.targets, w);
+                if (scale == 0.0f) {
+                    continue;
+                }
+                any = true;
+                for (const auto& [slot, delta] : f.deltas) {
+                    for (std::size_t k = 0; k < 3; ++k) {
+                        inst.flex_deltas[std::size_t{slot} * 4 + k] += scale * delta[k];
+                    }
+                }
+            }
+            if (!any) {
+                inst.flex_deltas.clear();
+            }
+        }
         seed = seed * 1664525u + 1013904223u;
         if (found) {
             inst.player.emplace(model->mdl->bones);
@@ -202,6 +234,8 @@ const CharacterRenderer::Model* CharacterRenderer::load_model(const std::string&
                 std::int32_t material;
             };
             std::vector<MeshRange> ranges;
+            std::vector<ModelFlex> flexes;
+            std::uint32_t flex_slots = 0;
             bool needs_normals = false;
             for (std::size_t b = 0; b < mdl->body_parts.size(); ++b) {
                 const auto& part = mdl->body_parts[b];
@@ -215,6 +249,7 @@ const CharacterRenderer::Model* CharacterRenderer::load_model(const std::string&
                                                               [](const formats::MdlVertex& v) { return !v.has_normal; });
                 for (const auto& v : mo.vertices) {
                     Vertex out{};
+                    out.flex_slot = -1.0f;
                     std::memcpy(out.position, v.position.data(), sizeof(out.position));
                     std::memcpy(out.uv, v.uv.data(), sizeof(out.uv));
                     std::memcpy(out.normal, v.normal.data(), sizeof(out.normal));
@@ -223,6 +258,23 @@ const CharacterRenderer::Model* CharacterRenderer::load_model(const std::string&
                         out.weights[k] = v.weights[k];
                     }
                     vertices.push_back(out);
+                }
+                // Flexes: give every vertex a flex moves a slot, and keep its offsets by slot.
+                for (const auto& mesh : mo.meshes) {
+                    for (const auto& f : mesh.flexes) {
+                        ModelFlex flex{f.flex, f.targets, {}};
+                        for (const auto& fv : f.vertices) {
+                            const std::size_t global = base + mesh.vertex_offset + fv.index;
+                            if (global >= vertices.size()) {
+                                continue;
+                            }
+                            if (vertices[global].flex_slot < 0) {
+                                vertices[global].flex_slot = static_cast<float>(flex_slots++);
+                            }
+                            flex.deltas.emplace_back(static_cast<std::uint32_t>(vertices[global].flex_slot), fv.delta);
+                        }
+                        flexes.push_back(std::move(flex));
+                    }
                 }
                 for (std::size_t me = 0; me < mo.meshes.size() && me < lod.meshes.size(); ++me) {
                     const auto tris = lod.meshes[me].triangles();
@@ -249,6 +301,8 @@ const CharacterRenderer::Model* CharacterRenderer::load_model(const std::string&
                 }
                 model = std::make_unique<Model>();
                 model->mdl = mdl;
+                model->flexes = std::move(flexes);
+                model->flex_slots = flex_slots;
                 model->vertices = device_.create_buffer({vertices.size() * sizeof(Vertex), rhi::BufferUsage::Vertex},
                                                         std::as_bytes(std::span(vertices)));
                 model->indices = device_.create_buffer({indices.size() * sizeof(std::uint32_t), rhi::BufferUsage::Index},
@@ -336,7 +390,14 @@ void CharacterRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float,
             const auto* f = reinterpret_cast<const float*>(&p);
             data.insert(data.end(), f, f + sizeof(p) / sizeof(float));
         }
+        std::uint32_t flex_base = 0;
+        if (!inst.flex_deltas.empty() &&
+            (data.size() + inst.flex_deltas.size()) * sizeof(float) <= rhi::kMaxShaderDataSize) {
+            flex_base = static_cast<std::uint32_t>(data.size() / 4);
+            data.insert(data.end(), inst.flex_deltas.begin(), inst.flex_deltas.end());
+        }
         PushConstants pc{};
+        pc.flex_base = flex_base;
         const glm::mat4 mvp = view_projection * glm::make_mat4(inst.transform.data());
         std::memcpy(pc.mvp, glm::value_ptr(mvp), sizeof(pc.mvp));
 

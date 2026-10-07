@@ -58,6 +58,8 @@ struct CharacterOptions {
     std::vector<std::pair<std::string, float>> pose_parameters;
     // Targetnames of StartHidden NPCs to draw anyway (as if a script had shown them).
     std::vector<std::string> shown;
+    // Facial flex controller values by name, e.g. {"right_lid_raiser", 1}; others stay 0.
+    std::vector<std::pair<std::string, float>> flex_controllers;
 };
 
 struct CharacterDrawSettings {
@@ -90,8 +92,16 @@ private:
         std::unique_ptr<rhi::BindGroup> bind_group;
         std::vector<std::unique_ptr<rhi::BindGroup>> frame_bind_groups; // Animated base texture.
     };
+    // One mesh flex: a morph of some vertices, by flex slot.
+    struct ModelFlex {
+        std::int32_t flex = 0; // Index into MdlFile::flex_names.
+        std::array<float, 4> targets{};
+        std::vector<std::pair<std::uint32_t, std::array<float, 3>>> deltas; // Slot, position offset.
+    };
     struct Model {
         std::shared_ptr<const formats::MdlFile> mdl;
+        std::vector<ModelFlex> flexes;
+        std::uint32_t flex_slots = 0; // Vertices any flex moves; each has a slot.
         std::unique_ptr<rhi::Buffer> vertices;
         std::unique_ptr<rhi::Buffer> indices;
         std::vector<std::vector<Mesh>> skins;
@@ -102,6 +112,7 @@ private:
         std::array<float, 16> transform{};
         AmbientCube lighting;
         std::optional<anim::AnimationPlayer> player; // Empty: bind pose.
+        std::vector<float> flex_deltas; // float4 per flex slot; empty when no flex is active.
         std::vector<formats::MdlMatrix> skinning;    // Updated by update().
     };
 

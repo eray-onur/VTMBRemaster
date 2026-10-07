@@ -8,7 +8,7 @@ struct PushConstants {
     float alpha_ref;
     uint flags;
     uint params_row; // Element where this mesh's material params start.
-    float padding;
+    uint flex_base;  // Element of flex slot 0's offset (float4 per slot); 0 when no flex is active.
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -31,6 +31,7 @@ struct VSInput {
     [[vk::location(2)]] float3 normal : NORMAL;
     [[vk::location(3)]] uint4 bones : BLENDINDICES;
     [[vk::location(4)]] float4 weights : BLENDWEIGHT;
+    [[vk::location(5)]] float flex_slot : TEXCOORD1; // -1: no flex moves this vertex.
 };
 
 struct VSOutput {
@@ -45,12 +46,17 @@ float3 transform(uint bone, float4 v) {
 }
 
 VSOutput vs_main(VSInput input) {
+    // Facial flexes move bind-pose positions before skinning.
+    float3 bind_position = input.position;
+    if (pc.flex_base != 0 && input.flex_slot >= 0) {
+        bind_position += shader_data[pc.flex_base + (uint)input.flex_slot].xyz;
+    }
     float3 position = float3(0, 0, 0);
     float3 normal = float3(0, 0, 0);
     [unroll] for (uint k = 0; k < 3; ++k) {
         const float w = input.weights[k];
         if (w > 0) {
-            position += w * transform(input.bones[k], float4(input.position, 1.0));
+            position += w * transform(input.bones[k], float4(bind_position, 1.0));
             normal += w * transform(input.bones[k], float4(input.normal, 0.0));
         }
     }

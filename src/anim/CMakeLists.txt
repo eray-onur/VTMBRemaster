@@ -1,5 +1,6 @@
 add_library(openbl_anim
-    animation.cpp)
+    animation.cpp
+    flex.cpp)
 add_library(openbl::anim ALIAS openbl_anim)
 
 target_include_directories(openbl_anim PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

@@ -46,7 +46,7 @@ using namespace openbl;
 namespace {
 
 constexpr const char* kUsage =
-    "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--show TARGETNAME]... [--npc-sequence NAME] [--pose NAME=VALUE]... [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
+    "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--show TARGETNAME]... [--npc-sequence NAME] [--pose NAME=VALUE]... [--flex CONTROLLER=VALUE]... [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
     "                     [--light-scale F] [--fullbright] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
     "                     [--validation] [--no-vsync]";
 
@@ -99,6 +99,11 @@ Options parse_args(int argc, char** argv) {
         } else if (a == "--show") {
             o.shown.push_back(next());
             o.characters_options.shown.push_back(o.shown.back());
+        } else if (a == "--flex") {
+            const std::string spec = next();
+            const auto eq = spec.find('=');
+            o.characters_options.flex_controllers.emplace_back(spec.substr(0, eq),
+                                                              eq == std::string::npos ? 1.0f : std::stof(spec.substr(eq + 1)));
         } else if (a == "--npc-sequence") {
             o.characters_options.sequence = next();
         } else if (a == "--pose") {
