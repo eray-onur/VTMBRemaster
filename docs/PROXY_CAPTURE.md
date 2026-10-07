@@ -18,9 +18,13 @@ Checked by scanning the GOG install's DLLs for command names:
 "C:\GOG Galaxy\Games\VtMB\Vampire.exe" -window -w 1280 -h 720 -console
 ```
 
+This works: footage recorded this way shows a titled 1280×720 window (1288×756 including the frame), with a normal picture throughout.
+
 `-condebug` would also log the console to `console.log`, but that file and `startmovie`/`screenshot` output are written into the game folder. Move captures out after each session, and never write anything else there.
 
 **Running minimized.** A Direct3D 9 game usually stops drawing while minimized, so a minimized window can't be captured. Run windowed instead, and the game can sit behind other windows. `start "" /min "C:\GOG Galaxy\Games\VtMB\Vampire.exe" -window ...` starts it minimized, but the game may restore itself, and it won't draw while minimized.
+
+**Footage so far.** `1_Prologue part 1.mp4` (7 minutes, windowed) runs from the menu through character creation, the embrace, the theatre trial and Jack's alleys up to the garage. It shows no proxy material: the embrace map has none, the theatre's only proxy (`GlobalWetness`) is on the street outside, and the tutorial terminal (`TextConsole`) comes after the garage.
 
 **Video recording.** The first footage file (`1_Prologue to Santa Monica Apartment.mp4`) has a fully black picture: peak luma is 16 on 579 of its 580 seconds, though the audio is intact. Screen capture can't see an exclusive-fullscreen Direct3D 9 game. In `-window` mode, OBS "Window Capture" or "Game Capture" works. For frame-exact comparisons, use the engine's own `startmovie` instead; see below.
 
