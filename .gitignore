@@ -20,3 +20,6 @@ CMakeUserPresets.json
 *.lip
 *.sav
 /gamedata/
+
+# Gameplay reference footage is stored separately, never committed.
+docs/gameplay_footages/
