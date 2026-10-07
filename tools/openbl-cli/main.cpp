@@ -1109,7 +1109,7 @@ constexpr FormatStatus kFormats[] = {
     {".phy", "parsed", "collision models"},
     {".lip", "parsed", "lip-sync: words, phonemes, captions"},
     {".vcd", "parsed", "choreography scenes"},
-    {".txt", "parsed", "KeyValues tables, expression tables, localisation (todo: titles, sentences, dsp presets, credits, experience table)"},
+    {".txt", "parsed", "KeyValues tables, expression tables, localisation, script and table formats"},
     {".dlg", "parsed", "dialogue trees"},
     {".ain", "parsed", "AI node graphs"},
     {".loc", "parsed", "AI graph companion number (meaning unknown)"},
@@ -1134,9 +1134,15 @@ constexpr FormatStatus kFormats[] = {
     {"(none)", "parsed", "scripts/dialog_* UI layouts (KeyValues)"},
     {".wc", "reference", "model compile scripts left in the data"},
     {".dsp", "reference", "Visual Studio project left in the data"},
-    {".rc", "todo", "console startup script"},
-    {".rad", "todo", "lights.rad: texture light emission (for tools)"},
-    {".vbsp", "todo", "detail.vbsp: detail prop types (for tools)"},
+    {".xls", "reference", "a designer's Excel sheet (stealth tuning)"},
+    {".old", "reference", "backup of a Python script"},
+    {".gam~", "reference", "editor backup of liblist.gam"},
+    {".tmp", "reference", "leftover temporary file"},
+    {".dt", "reference", "voice_ban.dt: engine voice-chat ban list"},
+    {".bin", "reference", "vidcfg.bin: engine video configuration"},
+    {".rc", "todo", "console startup script (with the console, Phase 2)"},
+    {".rad", "reference", "lights.rad: texture light emission for the map compiler"},
+    {".vbsp", "reference", "detail.vbsp: detail prop types for the map compiler"},
 };
 
 int cmd_fs(const std::vector<std::string_view>& args) {
