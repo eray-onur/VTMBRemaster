@@ -1,6 +1,7 @@
 #include "openbl/formats/error.hpp"
 #include "openbl/formats/pickle.hpp"
 #include "openbl/formats/sav.hpp"
+#include "openbl/formats/save_write.hpp"
 #include "openbl/formats/save_state.hpp"
 #include "test_support.hpp"
 
@@ -253,7 +254,7 @@ TEST_CASE("Save state integration: every map state in the user's saves parses") 
         return;
     }
     std::size_t states = 0, entities = 0, fields = 0, pickles = 0, players = 0, trailing_entities = 0;
-    std::size_t story_states = 0;
+    std::size_t story_states = 0, client_states = 0, client_entities = 0, decals = 0, transition_entities = 0;
     for (const auto& entry : std::filesystem::directory_iterator(dir)) {
         if (entry.path().extension() != ".sav" || entry.file_size() == 0) {
             continue;
@@ -267,6 +268,32 @@ TEST_CASE("Save state integration: every map state in the user's saves parses") 
             SaveState state;
             REQUIRE_NOTHROW(state = parse_save_state(f.data));
             ++states;
+            // The map's .HL2 (client state) and .HL3 (transition list).
+            const std::string stem = f.name.substr(0, f.name.size() - 4);
+            for (const auto& g : save.files) {
+                if (g.name == stem + ".HL2") {
+                    ClientSaveState client;
+                    REQUIRE_NOTHROW(client = parse_client_state(g.data));
+                    ++client_states;
+                    client_entities += client.state.entities.size();
+                    decals += client.decals.size();
+                    CHECK(client.decals.size() == static_cast<std::size_t>(client.decal_count));
+                    for (const auto& d : client.decals) {
+                        CHECK(d.name == "DECALLIST");
+                    }
+                } else if (g.name == stem + ".HL3") {
+                    std::vector<std::int32_t> travellers;
+                    REQUIRE_NOTHROW(travellers = parse_transition_list(g.data));
+                    bool has_player = travellers.empty();
+                    for (const std::int32_t i : travellers) {
+                        REQUIRE(i >= 0);
+                        REQUIRE(static_cast<std::size_t>(i) < state.entities.size());
+                        has_player = has_player || state.entities[static_cast<std::size_t>(i)].classname == "player";
+                    }
+                    CHECK(has_player);
+                    transition_entities += travellers.size();
+                }
+            }
             CHECK(!state.globals.empty());
             CHECK(state.globals.front().name == "Save Header");
             CHECK(!state.event_queue.empty());
@@ -300,7 +327,102 @@ TEST_CASE("Save state integration: every map state in the user's saves parses") 
     }
     MESSAGE(states << " map states, " << entities << " entities, " << fields << " saved fields, " << pickles
                    << " Python pickles, " << players << " players, " << trailing_entities
-                   << " entities with trailing class data, " << story_states << " pickles with Story_State");
+                   << " entities with trailing class data, " << story_states
+                   << " pickles with Story_State; " << client_states << " client states (" << client_entities
+                   << " client entity slots, " << decals << " decals), " << transition_entities
+                   << " entities in transition lists");
+    CHECK(client_states == states);
     CHECK(players >= 1);
     CHECK(story_states >= 1); // The global-variables pickle of each map state.
+}
+
+TEST_CASE("Save name hash and table") {
+    // Slots seen in the game's own files.
+    CHECK(save_name_hash("uv") % SaveTokenTable::kSlots == 118);
+    CHECK(save_name_hash("id") % SaveTokenTable::kSlots == 107);
+    // Colliding names probe to the next free slot.
+    SaveTokenTable small(std::vector<std::string>(7));
+    std::string a = "a", b;
+    for (char c = 'b'; c <= 'z' && b.empty(); ++c) {
+        if (save_name_hash(std::string(1, c)) % 7 == save_name_hash(a) % 7) {
+            b = std::string(1, c);
+        }
+    }
+    REQUIRE(!b.empty());
+    const auto sa = small.slot(a);
+    const auto sb = small.slot(b);
+    CHECK(sb == (sa + 1) % 7);
+    CHECK(small.slot(a) == sa); // Found again, not reinserted.
+}
+
+TEST_CASE("SAV writer round trip") {
+    std::vector<std::byte> big;
+    const auto original = parse_sav(build_save(big));
+    const auto again = parse_sav(write_sav(original));
+    REQUIRE(again.header.size() == original.header.size());
+    for (std::size_t i = 0; i < again.header.size(); ++i) {
+        CHECK(again.header[i].name == original.header[i].name);
+        CHECK(again.header[i].data == original.header[i].data);
+    }
+    REQUIRE(again.files.size() == original.files.size());
+    CHECK(again.files[1].data == big); // Spans several 512 KiB chunks.
+}
+
+TEST_CASE("Save writer integration: the user's saves round-trip") {
+    const char* dir = std::getenv("OPENBL_SAVE_DIR");
+    if (!dir || !*dir) {
+        MESSAGE("OPENBL_SAVE_DIR not set; skipping");
+        return;
+    }
+    std::size_t saves = 0, identical_prefixes = 0, entities = 0, entities_identical = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+        if (entry.path().extension() != ".sav" || entry.file_size() == 0) {
+            continue;
+        }
+        INFO(entry.path().string());
+        const auto data = test::read_raw(entry.path());
+        const auto save = parse_sav(data);
+        const auto written = write_sav(save);
+        ++saves;
+        // The uncompressed part (signature, sizes, name table, header fields)
+        // must match byte for byte; compressed chunks may differ.
+        std::int32_t header_size = 0, token_bytes = 0;
+        std::memcpy(&header_size, data.data() + 8, 4);
+        std::memcpy(&token_bytes, data.data() + 16, 4);
+        const std::size_t prefix = 20 + static_cast<std::size_t>(token_bytes) + static_cast<std::size_t>(header_size);
+        identical_prefixes += written.size() >= prefix && std::memcmp(written.data(), data.data(), prefix) == 0;
+        const auto reread = parse_sav(written);
+        REQUIRE(reread.files.size() == save.files.size());
+        for (std::size_t i = 0; i < save.files.size(); ++i) {
+            CHECK(reread.files[i].name == save.files[i].name);
+            CHECK(reread.files[i].data == save.files[i].data);
+        }
+        // Re-encoding each entity's records with the file's own name table
+        // reproduces the original bytes.
+        for (const auto& f : save.files) {
+            if (!f.name.ends_with(".HL1")) {
+                continue;
+            }
+            const auto state = parse_save_state(f.data);
+            std::int32_t tb = 0, hs = 0;
+            std::memcpy(&tb, f.data.data() + 8, 4);
+            std::memcpy(&hs, f.data.data() + 16, 4);
+            const std::size_t body = 24 + static_cast<std::size_t>(tb) + static_cast<std::size_t>(hs);
+            SaveTokenTable table(state.tokens);
+            for (const auto& e : state.entities) {
+                if (e.size <= 0) {
+                    continue;
+                }
+                ++entities;
+                const auto encoded = encode_save_structs(e.data, table);
+                const std::size_t from = body + static_cast<std::size_t>(e.location);
+                const std::size_t n = static_cast<std::size_t>(e.size) - e.trailing.size();
+                entities_identical += encoded.size() == n && std::memcmp(encoded.data(), f.data.data() + from, n) == 0;
+            }
+        }
+    }
+    MESSAGE(saves << " saves rewritten, " << identical_prefixes << " with identical uncompressed parts; "
+                  << entities_identical << " of " << entities << " entities re-encode byte for byte");
+    CHECK(identical_prefixes == saves);
+    CHECK(entities_identical == entities);
 }

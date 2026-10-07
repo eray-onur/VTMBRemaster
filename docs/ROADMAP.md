@@ -53,7 +53,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Special text formats: experience table, credits, sentences, titles, DSP presets
 - [x] Console scripts: `.cfg`, `valve.rc` (commands), `settings.scr` (server-options layout)
 - [x] Save games: `.sav` container and `.HL1` map state (self-describing records, entity table, globals, event queue, physics headers, Python pickles)
-- [ ] Save games: `.HL2`/`.HL3`, a restricted pickle reader, entity trailing data, writing saves
+- [x] Save games: `.HL2` client state (client entities, decals), `.HL3` transition lists, restricted pickle reader, entity trailing data, name-table hash, writer with byte-exact record round trip
+- [ ] Save games: confirm the original game loads a save written by OpenBL
 - [x] Python: the engine embeds Python 2.1 (`.pyc` magic 60202); every compiled script has its source shipped (docs/formats/python.md)
 
 ## Phase 1: rendering and map viewer

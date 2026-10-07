@@ -1,6 +1,6 @@
 # Save games (`.sav`)
 
-Bloodlines writes saves to `save/` in the active game folder: `Vampire/save`, or the mod's own folder when a mod is active (`Unofficial_Patch/save`). Parser: `openbl/formats/sav.hpp`. The container layout below was worked out from three saves made with the GOG release and the Unofficial Patch. The `.HL1` state files are decoded; `.HL2` and `.HL3` are not yet.
+Bloodlines writes saves to `save/` in the active game folder: `Vampire/save`, or the mod's own folder when a mod is active (`Unofficial_Patch/save`). Parser: `openbl/formats/sav.hpp`. The container layout below was worked out from three saves made with the GOG release and the Unofficial Patch. All three embedded file types are decoded, and saves can be written back.
 
 **Privacy.** The original engine writes uninitialised memory into unused parts of fixed-size fields. In practice that includes fragments of the player's environment variables, such as their Windows user name and installed tool paths. Do not share save files publicly, and never commit them or excerpts from them.
 
@@ -22,8 +22,8 @@ Bloodlines writes saves to `save/` in the active game folder: `Vampire/save`, or
 | File | Contents |
 |---|---|
 | `<map>.HL1` | entity state (up to about 1 MB): see below. Parser: `openbl/formats/save_state.hpp` |
-| `<map>.HL2` | further state. Starts with `VALV`; not decoded yet. |
-| `<map>.HL3` | a few bytes: a count and a short table; not decoded yet |
+| `<map>.HL2` | client-side state: client entities and decals. See below. Parser: `parse_client_state` |
+| `<map>.HL3` | transition list: `i32` count, then that many `.HL1` entity-table indices. Parser: `parse_transition_list` |
 
 In the three test saves, every byte is accounted for and every chunk decompresses to its declared size.
 
@@ -48,4 +48,50 @@ The light style strings saved here match the Quake patterns OpenBL uses for styl
 
 Totals over the three test saves: 9 map states, 5,224 entities, 245,206 saved fields, 18 pickles. 162 entities carry class-specific trailing bytes, kept raw.
 
-`.HL2` files start with `VALV` too, but their header counts differ; `.HL3` holds a few integers. Both are still to decode.
+**Trailing class data.** The bytes after an entity's last struct are always a single zero byte for the NPC classes (`npc_maker`, `npc_VPedestrian`, `npc_VHumanCombatant`, `npc_VVampire`, `npc_VRat`). For the player they are always 29 bytes: `u8 1`, `i32 0`, `i32 0`, `i32 −1`, one `f32` that varies, then `f32[3]` of zeros. They're kept raw.
+
+## Client state (`.HL2`)
+
+Client state uses the same record format as `.HL1`, with a longer file header: `"VALV"`, then these `i32` fields:
+
+| Field | Meaning |
+|---|---|
+| version | 117 |
+| entity data size | size of the client entity data |
+| header section size | size of the header section |
+| decal section size | size of the decal list |
+| name table size | bytes in the name table |
+| decal count | number of decals in the list |
+| name count | 16,383 |
+
+After the name table come the header section, the client entity data and the decal list. The file ends with a length-prefixed string (`i32` length, then the text).
+
+- **Header section:** a single `Entities` block and its entity table (`ETABLE` rows, as in `.HL1`).
+- **Client entities:** `C_BaseEntity` structs.
+- **Decal list:** `DECALLIST` structs (`position`, `flags`, `name` such as `rusta`, and `entityIndex`). These are the decals placed in the level.
+
+Totals in the test saves: 9 client states, 1,541 client entity slots, 426 decals, and each decal count matches its header.
+
+## Transition list (`.HL3`)
+
+An `i32` count followed by that many indices into the map's `.HL1` entity table. These are the entities that travel with the player through a level change: always the player, plus carried items such as `item_w_unarmed`, `item_g_wallet`, `item_g_keyring` and `item_w_fists`. All 33 indices in the test saves are valid.
+
+## Writing saves
+
+`openbl/formats/save_write.hpp` provides the writer.
+
+**Name tables.** Records refer to names by their slot in a 16,383-slot hash table, so a writer has to rebuild the table exactly. The hash, recovered from the saves, works on each byte in turn: rotate the 32-bit value right by 4 bits, then XOR in the byte. A name's slot is the hash modulo 16,383; if that slot is taken, it goes to the next free one. Across the 1,217 names in the test saves, 1,167 are at their hash slot and 50 are one or two slots after it.
+
+**Functions:**
+
+- `SaveTokenTable` rebuilds a name table.
+- `encode_save_structs` writes records.
+- `write_sav` writes a container, compressing in 512 KiB zlib chunks.
+
+**Round-trip checks.** Rewriting the test saves gives:
+
+- byte-identical uncompressed parts (signature, sizes, name table, header fields);
+- identical embedded files after decompression;
+- all 5,224 `.HL1` entities re-encoded byte for byte from their parsed records.
+
+Whether the original game loads a rewritten save hasn't been tested yet.

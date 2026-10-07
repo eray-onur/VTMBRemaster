@@ -16,6 +16,7 @@ add_library(openbl_formats
     path.cpp
     sav.cpp
     save_state.cpp
+    save_write.cpp
     script_text.cpp
     phy.cpp
     pickle.cpp

@@ -220,6 +220,7 @@ SaveState parse_save_state(std::span<const std::byte> data) {
         }
     }
 
+    state.tokens = tokens;
     Reader rd(data, std::move(tokens));
     const std::size_t header = 24 + static_cast<std::size_t>(token_bytes);
     const std::size_t header_end = header + static_cast<std::size_t>(header_size);
@@ -276,7 +277,7 @@ SaveState parse_save_state(std::span<const std::byte> data) {
         entity.id = get("id", -1);
         entity.edict = get("edictindex", -1);
         entity.save_index = get("saveentityindex", -1);
-        entity.location = get("location", -1);
+        entity.location = get("location", 0); // Omitted when 0 (fields at their defaults are not saved).
         entity.size = get("size", 0);
         if (const auto* c = row.field("classname")) {
             entity.classname = c->as_string();
@@ -345,6 +346,81 @@ SaveState parse_save_state(std::span<const std::byte> data) {
         }
     }
     return state;
+}
+
+ClientSaveState parse_client_state(std::span<const std::byte> data) {
+    detail::BinaryReader in(data, "CLIENT SAVE STATE");
+    const auto magic = in.bytes(4);
+    if (magic[0] != std::byte{'V'} || magic[1] != std::byte{'A'} || magic[2] != std::byte{'L'} ||
+        magic[3] != std::byte{'V'}) {
+        in.fail("missing VALV signature");
+    }
+    ClientSaveState out;
+    const std::int32_t version = in.i32();
+    const std::int32_t entity_bytes = in.i32(); // Client entity data.
+    const std::int32_t header_size = in.i32();  // Header section (block directory, entity table).
+    const std::int32_t decal_bytes = in.i32();
+    const std::int32_t token_bytes = in.i32();
+    out.decal_count = in.i32();
+    const std::int32_t token_count = in.i32();
+    if (version != kStateVersion) {
+        in.fail("unsupported version " + std::to_string(version));
+    }
+    if (header_size < 0 || entity_bytes < 0 || decal_bytes < 0 || token_bytes < 0 || out.decal_count < 0 ||
+        static_cast<std::uint64_t>(token_bytes) + static_cast<std::uint64_t>(header_size) +
+                static_cast<std::uint64_t>(entity_bytes) + static_cast<std::uint64_t>(decal_bytes) >
+            in.remaining()) {
+        in.fail("section sizes do not match the file size");
+    }
+    // After its longer header the layout is that of a .HL1 file, so rebuild an
+    // .HL1 header around it; the decals and the closing string count as body.
+    const std::size_t rest = in.remaining() - static_cast<std::size_t>(token_bytes);
+    const std::int32_t hl1_header = header_size;
+    const auto hl1_body = static_cast<std::int32_t>(rest - static_cast<std::size_t>(hl1_header));
+    std::vector<std::byte> hl1(24);
+    std::memcpy(hl1.data(), data.data(), 8); // "VALV", version.
+    const std::int32_t fields[] = {token_bytes, token_count, hl1_header, hl1_body};
+    std::memcpy(hl1.data() + 8, fields, sizeof(fields));
+    hl1.insert(hl1.end(), data.begin() + 32, data.end());
+
+    out.state = parse_save_state(hl1);
+
+    std::vector<std::string> tokens;
+    {
+        std::string current;
+        for (std::size_t i = 24; i < 24 + static_cast<std::size_t>(token_bytes); ++i) {
+            if (hl1[i] == std::byte{0}) {
+                tokens.push_back(std::move(current));
+                current.clear();
+            } else {
+                current.push_back(static_cast<char>(hl1[i]));
+            }
+        }
+    }
+    Reader rd(hl1, std::move(tokens));
+    const std::size_t decals = 24 + static_cast<std::size_t>(token_bytes) + static_cast<std::size_t>(hl1_header) +
+                               static_cast<std::size_t>(entity_bytes);
+    const std::size_t decals_end = decals + static_cast<std::size_t>(decal_bytes);
+    std::size_t p = decals;
+    out.decals = rd.structs_from(p, decals_end);
+    if (p != decals_end) {
+        rd.r().fail("decal section is not a sequence of structs");
+    }
+    out.trailing.assign(hl1.begin() + static_cast<std::ptrdiff_t>(decals_end), hl1.end());
+    return out;
+}
+
+std::vector<std::int32_t> parse_transition_list(std::span<const std::byte> data) {
+    detail::BinaryReader in(data, "TRANSITION LIST");
+    const std::int32_t n = in.i32();
+    if (n < 0 || static_cast<std::uint64_t>(n) * 4 != in.remaining()) {
+        in.fail("count does not match the file size");
+    }
+    std::vector<std::int32_t> out;
+    for (std::int32_t i = 0; i < n; ++i) {
+        out.push_back(in.i32());
+    }
+    return out;
 }
 
 } // namespace openbl::formats

@@ -55,6 +55,7 @@ struct SaveEntity {
 
 struct SaveState {
     std::int32_t version = 0;
+    std::vector<std::string> tokens; // The file's name table (hash slots; unused ones empty).
     std::vector<SaveBlock> blocks;
     std::vector<SaveStruct> globals;     // "Save Header", "ADJACENCY", "LIGHTSTYLE", ...
     std::vector<SaveEntity> entities;
@@ -68,5 +69,22 @@ struct SaveState {
 
 // Throws FormatError on malformed data.
 SaveState parse_save_state(std::span<const std::byte> data);
+
+// Client-side state (<map>.HL2): the same record format as .HL1 with a longer
+// header, holding client entities (C_BaseEntity) and the decals placed in the
+// level (DECALLIST structs: position, flags, name, entityIndex).
+struct ClientSaveState {
+    SaveState state;                 // Blocks, entity table and client entities.
+    std::int32_t decal_count = 0;    // As declared in the header.
+    std::vector<SaveStruct> decals;
+    std::vector<std::byte> trailing; // A length-prefixed string after the decals.
+};
+// Throws FormatError on malformed data.
+ClientSaveState parse_client_state(std::span<const std::byte> data);
+
+// Transition list (<map>.HL3): indices into the .HL1 entity table of the
+// entities that travel with the player through a level change (the player and
+// carried items). Throws FormatError on malformed data.
+std::vector<std::int32_t> parse_transition_list(std::span<const std::byte> data);
 
 } // namespace openbl::formats
