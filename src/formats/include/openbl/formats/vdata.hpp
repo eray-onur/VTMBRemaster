@@ -160,4 +160,70 @@ struct ItemTables {
 };
 ItemTables parse_item_tables(const KvDocument& doc);
 
+// --- Flat parameter tables ---------------------------------------------------
+
+// Value at a '/'-separated block path, e.g. "RuleData/VampFrenzy_Info/Dmg_Amount"
+// in rules.txt (case-insensitive, first match). Empty if absent.
+std::string_view vdata_lookup(const KvDocument& doc, std::string_view path);
+// The same as a number, or `fallback` if absent or not numeric.
+float vdata_number(const KvDocument& doc, std::string_view path, float fallback = 0.0f);
+// Values of keys prefix0, prefix1, ... in order, stopping at the first gap.
+std::vector<float> vdata_series(const KvNode& block, std::string_view prefix = "");
+
+// rules_tables.txt: lookup tables indexed by a trait value.
+struct RuleTable {
+    std::string name, internal_name;
+    bool clamping = false; // Indices past the end use the last entry.
+    std::vector<float> values;
+};
+std::vector<RuleTable> parse_rule_tables(const KvDocument& doc);
+
+// traiteffects000.txt: what clans, histories, disciplines, numina and items
+// do to stats. Modifiers are as written ("+1", "*2", "Max", a formula, ...).
+struct TraitEffect {
+    std::string trait, modifier, display_override;
+    std::string new_cost, raise_cost; // Only with a "Cost" modifier.
+};
+struct TraitEffectGroup {
+    std::string category, internal_name;
+    std::vector<TraitEffect> effects;
+};
+std::vector<TraitEffectGroup> parse_trait_effects(const KvDocument& doc); // UNUSED_ entries skipped.
+
+// reactions000.txt: how traits change other characters' reactions.
+struct ReactionRule {
+    std::string targets;      // e.g. "Kindred(!Gangrel)", "ALL".
+    std::string who_modifies; // e.g. "Others".
+    std::string modifier;     // e.g. "-5", "*2", "Reaction + ((Reaction - 50)*2)".
+};
+struct ReactionGroup {
+    std::string category, internal_name;
+    std::vector<ReactionRule> reactions;
+};
+std::vector<ReactionGroup> parse_reactions(const KvDocument& doc);
+
+// stealth.txt: detection scalars by light level (rows) and stealth (columns).
+struct StealthTables {
+    std::vector<std::vector<float>> vision_scalar, vision_cone_scalar; // [light][stealth]
+    std::vector<float> hearing_distance; // By stealth.
+    std::vector<float> light_range;      // By light level.
+};
+StealthTables parse_stealth_tables(const KvDocument& doc);
+
+// dicerolls.txt: dice-roll weighting tables and result names.
+struct DiceRollTables {
+    std::vector<float> health_modifiers;
+    std::vector<std::pair<std::string, std::vector<float>>> weightings; // Normal, Light, Heavy.
+    std::vector<std::string> difficulty_names, success_names, roll_result_names;
+};
+DiceRollTables parse_dice_rolls(const KvDocument& doc);
+
+// dispositiontable.txt: NPC moods. A disposition may appear several times
+// (variants); CopyDataFrom names another to inherit from.
+struct Disposition {
+    std::string name;
+    VdataFields fields, default_expression, eye_target, loud_expressions;
+};
+std::vector<Disposition> parse_dispositions(const KvDocument& doc);
+
 } // namespace openbl::formats

@@ -68,7 +68,17 @@ These tables define the game's rules. Phase 2's data-driven registries are built
 | `parse_histories` | `histories000.txt` | 72 histories (`UNUSED_HistoryData` skipped) |
 | `parse_item_tables` | `items.txt` | inventory sections, 11 item types, 21 starting kits, botch and activation types |
 
-The remaining tables are flat parameter blocks, read through KeyValues lookups: `rules*.txt`, `dicerolls.txt`, reactions, stealth, trait effects and dispositions. Typed versions will follow when Phase 2 has a consumer for them.
+The flat parameter tables:
+
+| Loader | Source | Release |
+|---|---|---|
+| `vdata_lookup`, `vdata_number` | `rules.txt`, `stealthkillrules.txt` and any other file | values by block path, e.g. `RuleData/VampFrenzy_Info/Dmg_Amount` = 26 |
+| `parse_rule_tables` | `rules_tables.txt` | 20 lookup tables indexed by trait value (barter prices, item reload, range and fire rate, …), each optionally clamped |
+| `parse_trait_effects` | `traiteffects000.txt` | 140 groups, 308 effects, in 5 categories (clan, history, discipline, numina, item) |
+| `parse_reactions` | `reactions000.txt` | 6 groups, 7 rules (targets, who modifies, modifier formula) |
+| `parse_stealth_tables` | `stealth.txt` | 11×11 vision and vision-cone scalars (light × stealth), 11 hearing distances, 11 light ranges |
+| `parse_dice_rolls` | `dicerolls.txt` | Normal, Heavy and Light weightings (100 entries each), health modifiers, and difficulty, success and result names |
+| `parse_dispositions` | `dispositiontable.txt` | 36 NPC mood blocks (some names repeat as variants; `CopyDataFrom` inherits) |
 
 ## Syntax used by these files beyond materials
 

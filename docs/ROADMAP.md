@@ -38,7 +38,7 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Dialogue: `.dlg`. Lip-sync: `.lip`. Choreography: `.vcd`
 - [x] `vdata` text tables parse (KeyValues with block comments, `\"` escapes, recovery from the shipped typos); catalogued in docs/formats/text_data.md
 - [x] Typed loaders for the `vdata/system` rule tables: stats, feats, clan/NPC templates with inheritance, quests, vendors, discipline powers, leveling, histories, item tables
-- [ ] Typed loaders for the flat parameter tables (rules, dice rolls, reactions, stealth, trait effects) when Phase 2 consumes them
+- [x] Typed loaders for the flat parameter tables: path lookup (rules), rule tables, trait effects, reactions, stealth grids, dice rolls, dispositions
 - [x] Particle system definitions parse (`particles/*.txt`, 1,594 files)
 - [ ] Particle system semantics and rendering
 - [x] Facial expressions: `.vfe` and `expressions/*.txt`

@@ -201,3 +201,73 @@ TEST_CASE("vdata integration: the rule tables load and cross-reference") {
     CHECK(items.item_types.size() == 11);
     CHECK(items.starting_equipment.size() == 21);
 }
+
+TEST_CASE("vdata: parameter lookup and series") {
+    const auto doc = kv(R"(RuleData {
+        VampFrenzy_Info { "Dmg_Amount" "26" }
+        Tables { Table { "InternalName" "Barter" "Clamping" "1" "0" "0.5" "1" "0.75" "3" "9" } }
+    })");
+    CHECK(vdata_lookup(doc, "ruledata/vampfrenzy_info/DMG_AMOUNT") == "26");
+    CHECK(vdata_number(doc, "RuleData/VampFrenzy_Info/Dmg_Amount") == 26.0f);
+    CHECK(vdata_number(doc, "RuleData/Missing", -1.0f) == -1.0f);
+    const auto tables = parse_rule_tables(doc);
+    REQUIRE(tables.size() == 1);
+    CHECK(tables[0].clamping);
+    CHECK(tables[0].values == std::vector<float>{0.5f, 0.75f}); // Stops at the gap before "3".
+}
+
+TEST_CASE("vdata integration: the flat parameter tables load") {
+    auto game = test::game_dir();
+    if (!game) {
+        MESSAGE("OPENBL_GAME_DIR not set; skipping");
+        return;
+    }
+    const vfs::GameFileSystem gfs(*game);
+    auto doc = [&](const std::string& path) {
+        const auto data = gfs.read(path);
+        REQUIRE(data);
+        return kv({reinterpret_cast<const char*>(data->data()), data->size()});
+    };
+    const auto rules = doc("vdata/system/rules.txt");
+    CHECK(vdata_number(rules, "RuleData/VampFrenzy_Info/Dmg_Amount") == 26.0f);
+    CHECK(vdata_number(rules, "RuleData/VampFrenzy_Info/AggrDmg_Amount") == 22.0f);
+
+    const auto tables = parse_rule_tables(doc("vdata/system/rules_tables.txt"));
+    const auto traits = parse_trait_effects(doc("vdata/system/traiteffects000.txt"));
+    std::size_t effects = 0;
+    for (const auto& g : traits) {
+        effects += g.effects.size();
+    }
+    const auto reactions = parse_reactions(doc("vdata/system/reactions000.txt"));
+    std::size_t reaction_rules = 0;
+    for (const auto& g : reactions) {
+        reaction_rules += g.reactions.size();
+    }
+    const auto stealth = parse_stealth_tables(doc("vdata/system/stealth.txt"));
+    const auto dice = parse_dice_rolls(doc("vdata/system/dicerolls.txt"));
+    const auto dispositions = parse_dispositions(doc("vdata/system/dispositiontable.txt"));
+    std::string weightings;
+    for (const auto& [name, v] : dice.weightings) {
+        weightings += name + "(" + std::to_string(v.size()) + ") ";
+    }
+    MESSAGE(tables.size() << " rule tables, " << traits.size() << " trait-effect groups with " << effects
+                          << " effects, " << reactions.size() << " reaction groups with " << reaction_rules
+                          << " rules; stealth vision " << stealth.vision_scalar.size() << "x"
+                          << (stealth.vision_scalar.empty() ? 0 : stealth.vision_scalar[0].size()) << ", hearing "
+                          << stealth.hearing_distance.size() << ", light " << stealth.light_range.size()
+                          << "; dice weightings " << weightings << "; " << dispositions.size() << " dispositions");
+    CHECK(tables.size() == 20);
+    CHECK(dispositions.size() == 36);
+    CHECK(traits.size() == 140);
+    CHECK(effects == 308);
+    CHECK(reactions.size() == 6);
+    CHECK(reaction_rules == 7);
+    CHECK(stealth.vision_scalar.size() == 11);
+    CHECK(stealth.vision_cone_scalar.size() == 11);
+    for (const auto& row : stealth.vision_scalar) {
+        CHECK(row.size() == 11);
+    }
+    CHECK(dice.weightings.size() == 3);
+    CHECK(dice.difficulty_names.size() == 10);
+    CHECK(dice.roll_result_names.size() == 5);
+}

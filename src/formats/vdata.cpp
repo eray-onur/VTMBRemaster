@@ -1,6 +1,7 @@
 #include "openbl/formats/vdata.hpp"
 
 #include <charconv>
+#include <cstdlib>
 #include <set>
 
 namespace openbl::formats {
@@ -353,6 +354,164 @@ ItemTables parse_item_tables(const KvDocument& doc) {
         each_block(root, "ActivationTypes", [&](const KvNode& list) {
             each_block(list, "ActivationType", [&](const KvNode& a) { out.activation_types.push_back(fields(&a)); });
         });
+    });
+    return out;
+}
+
+std::string_view vdata_lookup(const KvDocument& doc, std::string_view path) {
+    const KvNode* node = nullptr;
+    const std::vector<KvNode>* level = &doc.roots;
+    while (!path.empty()) {
+        const std::size_t slash = path.find('/');
+        const std::string_view part = path.substr(0, slash);
+        node = nullptr;
+        for (const KvNode& n : *level) {
+            if (iequals(n.key, part)) {
+                node = &n;
+                break;
+            }
+        }
+        if (!node) {
+            return {};
+        }
+        level = &node->children;
+        path = slash == std::string_view::npos ? std::string_view() : path.substr(slash + 1);
+    }
+    return node && !node->is_block ? std::string_view(node->value) : std::string_view();
+}
+
+float vdata_number(const KvDocument& doc, std::string_view path, float fallback) {
+    const std::string s(vdata_lookup(doc, path));
+    char* end = nullptr;
+    const float v = std::strtof(s.c_str(), &end);
+    return s.empty() || end == s.c_str() ? fallback : v;
+}
+
+std::vector<float> vdata_series(const KvNode& block, std::string_view prefix) {
+    std::vector<float> out;
+    for (int i = 0;; ++i) {
+        const std::string v = text(block, std::string(prefix) + std::to_string(i));
+        if (v.empty()) {
+            return out;
+        }
+        out.push_back(std::strtof(v.c_str(), nullptr));
+    }
+}
+
+std::vector<RuleTable> parse_rule_tables(const KvDocument& doc) {
+    std::vector<RuleTable> out;
+    each_root(doc, "RuleData", [&](const KvNode& root) {
+        each_block(root, "Tables", [&](const KvNode& tables) {
+            each_block(tables, "Table", [&](const KvNode& t) {
+                out.push_back({text(t, "Name"), text(t, "InternalName"), flag(t, "Clamping"), vdata_series(t)});
+            });
+        });
+    });
+    return out;
+}
+
+std::vector<TraitEffectGroup> parse_trait_effects(const KvDocument& doc) {
+    std::vector<TraitEffectGroup> out;
+    each_root(doc, "TraitEffectsData", [&](const KvNode& root) {
+        each_block(root, "TraitEffectCategory", [&](const KvNode& cat) {
+            each_block(cat, "TraitEffectGroup", [&](const KvNode& g) {
+                TraitEffectGroup group{text(cat, "InternalName"), text(g, "InternalName"), {}};
+                each_block(g, "TraitEffect", [&](const KvNode& e) {
+                    TraitEffect effect{text(e, "Trait"), text(e, "Modifier"), text(e, "DisplayOverride"), {}, {}};
+                    if (const KvNode* costs = e.find("Costs")) {
+                        effect.new_cost = text(*costs, "New");
+                        effect.raise_cost = text(*costs, "Raise");
+                    }
+                    group.effects.push_back(std::move(effect));
+                });
+                out.push_back(std::move(group));
+            });
+        });
+    });
+    return out;
+}
+
+std::vector<ReactionGroup> parse_reactions(const KvDocument& doc) {
+    std::vector<ReactionGroup> out;
+    each_root(doc, "ReactionsData", [&](const KvNode& root) {
+        each_block(root, "ReactionCategory", [&](const KvNode& cat) {
+            each_block(cat, "ReactionGroup", [&](const KvNode& g) {
+                ReactionGroup group{text(cat, "InternalName"), text(g, "InternalName"), {}};
+                each_block(g, "Reaction", [&](const KvNode& r) {
+                    group.reactions.push_back({text(r, "Targets"), text(r, "WhoModifies"), text(r, "Modifier")});
+                });
+                out.push_back(std::move(group));
+            });
+        });
+    });
+    return out;
+}
+
+StealthTables parse_stealth_tables(const KvDocument& doc) {
+    StealthTables out;
+    each_root(doc, "StealthData", [&](const KvNode& root) {
+        auto grid = [&](std::string_view key, std::vector<std::vector<float>>& rows) {
+            if (const KvNode* table = root.find(key)) {
+                for (int light = 0;; ++light) {
+                    const KvNode* row = table->find("Light" + std::to_string(light));
+                    if (!row) {
+                        break;
+                    }
+                    rows.push_back(vdata_series(*row, "Stealth"));
+                }
+            }
+        };
+        grid("StealthVisionScalarTable", out.vision_scalar);
+        grid("StealthVisionConeScalarTable", out.vision_cone_scalar);
+        if (const KvNode* t = root.find("StealthHearingDistTable")) {
+            out.hearing_distance = vdata_series(*t, "Stealth");
+        }
+        if (const KvNode* t = root.find("StealthLightRangeTable")) {
+            out.light_range = vdata_series(*t, "Light");
+        }
+    });
+    return out;
+}
+
+DiceRollTables parse_dice_rolls(const KvDocument& doc) {
+    DiceRollTables out;
+    each_root(doc, "DiceRollData", [&](const KvNode& root) {
+        if (const KvNode* rules = root.find("Rules")) {
+            if (const KvNode* h = rules->find("HealthModifiers")) {
+                out.health_modifiers = vdata_series(*h);
+            }
+            if (const KvNode* w = rules->find("TableWeightings")) {
+                for (const KvNode& t : w->children) {
+                    if (t.is_block) {
+                        out.weightings.emplace_back(t.key, vdata_series(t));
+                    }
+                }
+            }
+        }
+        if (const KvNode* tx = root.find("Text")) {
+            auto names = [&](std::string_view key, std::vector<std::string>& v) {
+                if (const KvNode* b = tx->find(key)) {
+                    v = numbered(*b, "Name");
+                }
+            };
+            names("Difficulty", out.difficulty_names);
+            names("Success", out.success_names);
+            names("RollResult", out.roll_result_names);
+        }
+    });
+    return out;
+}
+
+std::vector<Disposition> parse_dispositions(const KvDocument& doc) {
+    std::vector<Disposition> out;
+    each_root(doc, "DispositionTable", [&](const KvNode& root) {
+        for (const KvNode& d : root.children) {
+            if (!d.is_block) {
+                continue;
+            }
+            out.push_back({d.key, fields(&d), fields(d.find("DefaultExpression")), fields(d.find("EyeTarget")),
+                           fields(d.find("LoudExpressions"))});
+        }
     });
     return out;
 }
