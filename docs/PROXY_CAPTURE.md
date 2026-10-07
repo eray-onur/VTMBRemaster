@@ -30,71 +30,55 @@ This works: footage recorded this way shows a titled 1280×720 window (1288×756
 
 **A throwaway save.** `map <name>` loads a map without its story state; NPCs and scripts may behave oddly. That's fine for looking at materials, but don't overwrite a real save.
 
-## Step 0: confirm the tools (once)
+## What the first capture run established
 
-Open the console with `~`, then:
+From `proxies.mp4`, a recording of a full run through the stations:
 
-```
-sv_cheats 1
-noclip
-cl_showpos 1
-cl_drawhud 0
-r_drawviewmodel 0
-```
-
-1. **Python in the console.** Type `__main__.FindPlayer().GetOrigin()`.
-   - If it prints a position, or at least no "Unknown command", teleporting works: `__main__.FindPlayer().SetOrigin((x, y, z))` and `__main__.FindPlayer().SetAngles((pitch, yaw, 0))`.
-   - If not, fall back to flying with `noclip` and `cl_showpos 1` until the readout matches the station's coordinates. Every station is reachable that way, just slower.
-2. **Eye height.** `SetOrigin` moves the player's feet; the camera is higher. Teleport to a station and compare `cl_showpos` with the coordinates you set. Use the difference (Source uses 64 units standing) for all stations. The tables below give **camera** positions.
-3. **Angles.** Check that `SetAngles` turns the view and not just the body. If it only turns the body, aim by hand; `cl_showpos` shows the view angles.
-4. **Deterministic time.** `host_framerate 0.0333` advances game time exactly 1/30 s per rendered frame, so `startmovie` frames are evenly spaced in game time. `host_timescale 0.25` slows everything down for watching by eye.
+- **Teleporting works.** `__main__.FindPlayer().SetOrigin((x, y, z))` puts the player's feet exactly at the given point (`cl_showpos` reads back the same numbers).
+- **Eye height is 64.** In first person the camera sits exactly 64 units above the feet. In third person it sits about 76 above and 50 behind, so press the first-person key before recording.
+- **`SetAngles` does not turn the view.** Turn with the mouse until the second `cam ang` number in the `cl_showpos` readout matches the station's yaw. The first number is pitch: positive looks down, and it may display wrapped, e.g. 368 for 8.
+- **The view updates only after the console closes.** Close it before judging the view.
+- **Use OBS "Window Capture" on the game window, not a desktop capture.** In a desktop capture the game is hidden whenever another window covers it.
 
 ## Capture protocol (per station)
 
+Open the console with `~` and enter:
+
 ```
 map <map>
-sv_cheats 1; noclip; cl_drawhud 0; r_drawviewmodel 0
-__main__.FindPlayer().SetOrigin((x, y, z - 64))
-__main__.FindPlayer().SetAngles((pitch, yaw, 0))
-host_framerate 0.0333
-startmovie proxy_<station>
+sv_cheats 1
+noclip
+cl_showpos 1
+__main__.FindPlayer().SetOrigin((x, y, z))
 ```
 
-Wait about 3 seconds (90 frames), then:
-
-```
-endmovie
-host_framerate 0
-```
-
-`startmovie` writes numbered frames into the game folder. Move them to your footage storage outside the repo, the same place as `docs/gameplay_footages/` (git-ignored, never committed).
+Close the console and switch to first person. Turn until `cam ang` shows the station's pitch and yaw. Then stay still and record 15 seconds of the window. Name the clip after the station number.
 
 The OpenBL side of each station:
 
 ```
-openbl-viewer --map <map> --pos x y z --angles <-pitch> <yaw> --screenshot out.png
+openbl-viewer --map <map> --pos x y z+64 --angles <-pitch> <yaw> --screenshot out.png
 ```
 
 The viewer's pitch is the opposite sign of the console's: negative looks down. Yaw is the same.
 
 ## Stations
 
-In order of when the game reaches them. Camera positions are 80 units in front of the surface.
+Teleport points are feet positions. Each view was checked in the OpenBL viewer (except station 5, whose target is a sprite the viewer doesn't draw yet).
 
-| # | Station | Map | Camera (x y z) | Console pitch / yaw | Proxies covered | What to check |
+| # | Station | Map | `SetOrigin` (feet) | Turn to pitch / yaw | Proxies covered | What to check |
 |---|---|---|---|---|---|---|
-| 1 | Hacking terminal | `sp_tutorial_1` | 183 128 148 | 0 / 0, then aim at the monitor | `TextConsole` | Terminal text drawing and refresh |
-| 2 | Haven TV (`dev/dev_tvmonitor1a`) | `sm_apartment_1` | −43 45 0 | 0 / −45 | `Sine`, `LinearRamp`, `GaussianNoise`, `LessOrEqual`, `Subtract`, `Abs`, `Add`, `Exponential`, `TextureTransform` | Flicker rate and depth, picture roll speed and direction |
-| 3 | News ticker (`signs/newsticker`) | `sm_apartment_1` | 1643 68 184 | 0 / 180 | `TextureScroll` | Scroll direction and speed in texture widths per second |
-| 4 | Wet asphalt (`asphalt/asphaltasan`) | `sm_hub_1` | −1304 −888 −32 | about 60 / −180 (angled, so reflections show) | `GlobalWetness` | Reflection strength in rain and dry, and what drives it |
-| 5 | Street light sprite | `sm_asylum_1` | −810 537 −201 | 0 / 0 | `PlayerProximity` (+ `Subtract`) | Fade against distance: capture at 80, 300 and 800 units |
-| 6 | Security camera | `sm_basement_1` | 170 −663 −19 | 0 / 0 | `Sine` on a model | Blink period of the red light |
-| 7 | Oil rig (`objects/oilriga`) | `sm_beachhouse_1` | −157 −293 4975 | 0 / −2 | `AnimatedTexture` | Frame rate and wrapping |
-| 8 | Hollywood street light | `hw_hub_1` | −449 −1342 209 | 0 / 0 | `LampBeam`, `LampHalo` | Beam and halo fade against angle and distance |
-| 9 | TV static (`objects/tvnoise`) | `la_hospital_1` | 672 −898 48 | 0 / 180 | `UniformNoise` | Noise per frame, or held for longer |
-| 10 | Lotus water (`dev/dev_water2`) | `ch_lotus_1` | 866 0 −144 | about 60 / −180 | `WaterLOD` and the water shader | Cheap or expensive water; normal-map animation |
+| 1 | Hacking terminal | `sp_tutorial_1` | 183, 128, 84 | 0 / 0 (monitor slightly left of centre) | `TextConsole` | Terminal text drawing and refresh |
+| 2 | Haven TV, switched on (use the TV first) | `sm_apartment_1` | −163, 390, 36 | 15 / 315 | `Sine`, `LinearRamp`, `GaussianNoise`, `LessOrEqual`, `Subtract`, `Abs`, `Add`, `Exponential`, `TextureTransform`, plus `TextureScroll` on the news ticker it shows | Flicker, roll and ticker scroll speed |
+| 4 | Wet asphalt | `sm_hub_1` | −1304, −888, −56 | 60 / 0 | `GlobalWetness` | Reflection strength, in rain if possible |
+| 5 | Street light sprite (in the Asylum) | `sm_asylum_1` | −810, 537, −265 | 0 / 0 | `PlayerProximity` (+ `Subtract`) | Fade against distance: back away slowly while recording |
+| 6 | Security camera | `sm_basement_1` | 170, −663, −83 | 0 / 0 | `Sine` on a model | Blink period of the red light |
+| 7 | Oil rig, far out at sea | `sm_beachhouse_1` | −477, −282, 4911 | 0 / 358 | `AnimatedTexture` | Light frame rate (small on screen; zoom in OBS if possible) |
+| 8 | Hollywood street light | `hw_hub_1` | −449, −1342, 145 | 0 / 0 | `LampBeam`, `LampHalo` | Beam and halo fade; turn slowly left and right |
+| 9 | Hospital monitors | `la_hospital_1` | 664, −898, −16 | 0 / 180 | `UniformNoise` | Static: new noise every frame or held |
+| 10 | Lotus water | `ch_lotus_1` | 866, 0, −192 | 60 / 0 | `WaterLOD` and the water shader | Normal-map animation |
 
-Stations 2 and 3 are in the haven, so a save there covers the most proxies.
+There is no station 3 any more. The haven TV is a `func_monitor` (`tv_screen`) showing a live feed from a `point_camera` (`news_camera`) that films the news-ticker strip in a hidden room. The TV starts hidden until switched on, so watching it covers the ticker too. It also means OpenBL needs render-to-texture monitors before this station can match.
 
 **Not covered by stations:**
 
