@@ -30,6 +30,7 @@
 
 #include <array>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -46,7 +47,7 @@ namespace {
 
 constexpr const char* kUsage =
     "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
-    "                     [--light-scale F] [--fullbright] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--shots FILE --out DIR]\n"
+    "                     [--light-scale F] [--fullbright] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
     "                     [--validation] [--no-vsync]";
 
 struct Options {
@@ -68,6 +69,10 @@ struct Options {
     std::filesystem::path shots_dir = ".";
     int frames = 0; // With --screenshot: frames to render before capturing.
     std::optional<float> time; // Fixed scene clock in seconds (animated materials, light styles).
+    // With --screenshot: capture this many consecutive frames, `sequence_fps`
+    // apart in scene time starting at --time (or 0), as out_000.png, out_001.png, ...
+    int sequence = 0;
+    float sequence_fps = 30.0f;
     bool validation = false;
     bool vsync = true;
 };
@@ -132,6 +137,10 @@ Options parse_args(int argc, char** argv) {
             o.frames = std::stoi(next());
         } else if (a == "--time") {
             o.time = std::stof(next());
+        } else if (a == "--sequence") {
+            o.sequence = std::stoi(next());
+        } else if (a == "--fps") {
+            o.sequence_fps = std::stof(next());
         } else if (a == "--validation") {
             o.validation = true;
         } else if (a == "--no-vsync") {
@@ -320,7 +329,8 @@ public:
         }
         const auto m = to_array(projection * view);
         const render::PropDrawSettings prop_settings{settings_.light_scale, settings_.fullbright, &materials_->params()};
-        const render::CharacterDrawSettings character_settings{settings_.light_scale, settings_.fullbright};
+        const render::CharacterDrawSettings character_settings{settings_.light_scale, settings_.fullbright,
+                                                               &materials_->params()};
         if (characters_) {
             characters_->update(time);
         }
@@ -435,7 +445,9 @@ int run(const Options& options) {
                 shot_capture = ++shot_frame >= kShotSettleFrames;
             }
 
-            const bool capture = (options.screenshot && frame == options.frames) || shot_capture;
+            const bool in_sequence = options.screenshot && options.sequence > 0 && frame >= options.frames;
+            const bool capture =
+                (options.screenshot && (in_sequence || (options.sequence == 0 && frame == options.frames))) || shot_capture;
             if (capture) {
                 device->request_capture();
             }
@@ -444,7 +456,9 @@ int run(const Options& options) {
                 continue;
             }
             const float aspect = static_cast<float>(device->frame_width()) / static_cast<float>(device->frame_height());
-            const float time = options.time.value_or(std::chrono::duration<float>(now - start_time).count());
+            const float time =
+                in_sequence ? options.time.value_or(0.0f) + static_cast<float>(frame - options.frames) / options.sequence_fps
+                            : options.time.value_or(std::chrono::duration<float>(now - start_time).count());
             scene->draw(*cmd, camera.projection(aspect), camera.view(), camera, time);
             device->end_frame();
 
@@ -453,14 +467,23 @@ int run(const Options& options) {
                 if (!image) {
                     throw std::runtime_error("capture failed");
                 }
-                const std::filesystem::path out =
+                std::filesystem::path out =
                     shot_capture ? options.shots_dir / (shots[shot_index].name + ".png") : *options.screenshot;
+                if (in_sequence) {
+                    char index[16];
+                    std::snprintf(index, sizeof(index), "_%03d", frame - options.frames);
+                    out.replace_filename(out.stem().string() + index + out.extension().string());
+                }
                 formats::write_png(out, image->rgba, image->width, image->height);
                 std::cout << "wrote " << out.string() << " (" << image->width << "x" << image->height << ") at pos "
                           << camera.position.x << " " << camera.position.y << " " << camera.position.z << " angles "
                           << camera.pitch << " " << camera.yaw << "\n";
-                if (!shot_capture) {
+                if (!shot_capture && (!in_sequence || frame + 1 >= options.frames + options.sequence)) {
                     break;
+                }
+                if (!shot_capture) {
+                    ++frame;
+                    continue;
                 }
                 shot_frame = 0;
                 if (++shot_index == shots.size()) {

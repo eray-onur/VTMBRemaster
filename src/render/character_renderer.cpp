@@ -37,7 +37,8 @@ struct PushConstants {
     float mvp[16];
     float alpha_ref;
     std::uint32_t flags;
-    float padding[2];
+    std::uint32_t params_row; // Shader-data element where this mesh's material params start.
+    float padding;
 };
 
 constexpr std::uint32_t kAlphaTest = 1;
@@ -278,6 +279,11 @@ const CharacterRenderer::Model* CharacterRenderer::load_model(const std::string&
                         }
                         const rhi::Texture* textures[] = {mesh.material->base};
                         mesh.bind_group = device_.create_bind_group(*pipelines_[0][0], *sampler_, textures);
+                        for (const rhi::Texture* frame : mesh.material->base_frames) {
+                            const rhi::Texture* frame_textures[] = {frame};
+                            mesh.frame_bind_groups.push_back(
+                                device_.create_bind_group(*pipelines_[0][0], *sampler_, frame_textures));
+                        }
                         model->skins[f].push_back(std::move(mesh));
                     }
                 }
@@ -338,7 +344,8 @@ void CharacterRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float,
         if (!any) {
             continue;
         }
-        // Shader data: ambient cube (6 float4), then 3 float4 rows per bone.
+        // Shader data: ambient cube (6 float4), then 3 float4 rows per bone,
+        // then the material params of each mesh drawn in this pass.
         data.assign(6 * 4 + inst.skinning.size() * 12, 0.0f);
         for (std::size_t f = 0; f < 6; ++f) {
             for (std::size_t c = 0; c < 3; ++c) {
@@ -348,13 +355,25 @@ void CharacterRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float,
         for (std::size_t b = 0; b < inst.skinning.size(); ++b) {
             std::memcpy(&data[24 + b * 12], inst.skinning[b].data(), 12 * sizeof(float));
         }
+        std::vector<std::uint32_t> params_rows;
+        for (const Mesh& mesh : inst.model->skins[inst.skin]) {
+            const std::uint32_t index = mesh.material->params_index;
+            const MaterialParams p = settings.material_params && index < settings.material_params->size()
+                                         ? (*settings.material_params)[index]
+                                         : MaterialParams{};
+            params_rows.push_back(static_cast<std::uint32_t>(data.size() / 4));
+            const auto* f = reinterpret_cast<const float*>(&p);
+            data.insert(data.end(), f, f + sizeof(p) / sizeof(float));
+        }
         PushConstants pc{};
         const glm::mat4 mvp = view_projection * glm::make_mat4(inst.transform.data());
         std::memcpy(pc.mvp, glm::value_ptr(mvp), sizeof(pc.mvp));
 
         const rhi::Pipeline* bound = nullptr;
+        std::size_t mesh_index = 0;
         for (const Mesh& mesh : inst.model->skins[inst.skin]) {
             const RenderMaterial& m = *mesh.material;
+            pc.params_row = params_rows[mesh_index++];
             if (m.translucent != translucent) {
                 continue;
             }
@@ -370,7 +389,9 @@ void CharacterRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float,
             pc.alpha_ref = m.alpha_ref;
             pc.flags = (m.alpha_test ? kAlphaTest : 0) | ((m.unlit || settings.fullbright) ? kUnlit : 0) |
                        (m.self_illum ? kSelfIllum : 0) | (m.translucent ? kTranslucent : 0);
-            cmd.set_bind_group(*mesh.bind_group);
+            cmd.set_bind_group(mesh.frame_bind_groups.empty()
+                                   ? *mesh.bind_group
+                                   : *mesh.frame_bind_groups[m.base_frame % mesh.frame_bind_groups.size()]);
             cmd.push_constants(&pc, sizeof(pc));
             cmd.draw_indexed(mesh.index_count, mesh.first_index);
         }

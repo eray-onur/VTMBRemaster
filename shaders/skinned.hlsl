@@ -1,12 +1,14 @@
 // Skinned (animated) studio models. Per-draw shader data holds the model-space
-// ambient cube (6 float4) followed by one 3x4 skinning matrix per bone
-// (3 float4 rows each).
+// ambient cube (6 float4), one 3x4 skinning matrix per bone (3 float4 rows
+// each), then a material params row per mesh (texture transform u and v rows,
+// colour and alpha, self-illumination tint).
 
 struct PushConstants {
     float4x4 mvp;
     float alpha_ref;
     uint flags;
-    float2 padding;
+    uint params_row; // Element where this mesh's material params start.
+    float padding;
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -50,7 +52,9 @@ VSOutput vs_main(VSInput input) {
 
     VSOutput output;
     output.position = mul(pc.mvp, float4(position, 1.0));
-    output.uv = input.uv;
+    const float4 tu = shader_data[pc.params_row];
+    const float4 tv = shader_data[pc.params_row + 1];
+    output.uv = float2(dot(tu.xyz, float3(input.uv, 1.0)), dot(tv.xyz, float3(input.uv, 1.0)));
     const float3 n = normalize(normal);
     const float3 n2 = n * n;
     output.light = n2.x * shader_data[n.x >= 0 ? 0 : 1].rgb +
@@ -67,9 +71,10 @@ float4 ps_main(VSOutput input) : SV_Target {
     if (pc.flags & kAlphaTest) {
         clip(base.a - pc.alpha_ref);
     }
-    float3 color = (pc.flags & kUnlit) ? base.rgb : base.rgb * input.light;
+    const float4 tint = shader_data[pc.params_row + 2]; // $color, $alpha.
+    float3 color = base.rgb * tint.rgb * ((pc.flags & kUnlit) ? float3(1, 1, 1) : input.light);
     if (pc.flags & kSelfIllum) {
-        color = lerp(color, base.rgb, base.a);
+        color = lerp(color, base.rgb * shader_data[pc.params_row + 3].rgb, base.a);
     }
-    return float4(color, (pc.flags & kTranslucent) ? base.a : 1.0);
+    return float4(color, (pc.flags & kTranslucent) ? base.a * tint.a : 1.0);
 }
