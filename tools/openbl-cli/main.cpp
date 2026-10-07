@@ -70,6 +70,23 @@ void usage() {
                  "game-dir defaults to the OPENBL_GAME_DIR environment variable.\n";
 }
 
+// Mod folders to mount over the game, from OPENBL_MODS ("Unofficial_Patch",
+// several separated by ';').
+std::vector<std::string> game_mods() {
+    std::vector<std::string> mods;
+    if (const char* env = std::getenv("OPENBL_MODS")) {
+        std::string_view list(env);
+        while (!list.empty()) {
+            const auto sep = list.find(';');
+            if (const auto mod = list.substr(0, sep); !mod.empty()) {
+                mods.emplace_back(mod);
+            }
+            list = sep == std::string_view::npos ? std::string_view() : list.substr(sep + 1);
+        }
+    }
+    return mods;
+}
+
 fs::path game_dir_arg(const std::vector<std::string_view>& args, std::size_t index) {
     if (index < args.size() && !args[index].empty()) {
         return fs::path(args[index]);
@@ -142,7 +159,7 @@ const char* damage_name(formats::TextureDamage damage) {
 
 int cmd_tex(const std::vector<std::string_view>& args) {
     if (args.size() >= 3 && args[1] == "info") {
-        const vfs::GameFileSystem gfs(game_dir_arg(args, 3));
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 3), game_mods());
         const auto tex = load_texture(gfs, args[2]);
         const auto& h = tex.vtf.header();
         std::cout << "vtf version: " << h.version_major << "." << h.version_minor << "\n"
@@ -159,7 +176,7 @@ int cmd_tex(const std::vector<std::string_view>& args) {
         return 0;
     }
     if (args.size() >= 4 && args[1] == "export") {
-        const vfs::GameFileSystem gfs(game_dir_arg(args, 4));
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 4), game_mods());
         const auto tex = load_texture(gfs, args[2]);
         const std::uint32_t mip = tex.vtf.largest_available_mip();
         if (!tex.vtf.has_mip(mip)) {
@@ -446,7 +463,7 @@ int cmd_mat_catalogue(const vfs::GameFileSystem& gfs, std::ostream& out) {
 
 int cmd_mat(const std::vector<std::string_view>& args) {
     if (args.size() >= 2 && args[1] == "catalogue") {
-        const vfs::GameFileSystem gfs(game_dir_arg(args, 3));
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 3), game_mods());
         if (args.size() >= 3 && args[2] != "-") {
             std::ofstream out(fs::path(args[2]), std::ios::binary);
             return cmd_mat_catalogue(gfs, out);
@@ -457,7 +474,7 @@ int cmd_mat(const std::vector<std::string_view>& args) {
         usage();
         return 2;
     }
-    const vfs::GameFileSystem gfs(game_dir_arg(args, 3));
+    const vfs::GameFileSystem gfs(game_dir_arg(args, 3), game_mods());
     std::string path = formats::normalize_game_path(args[2]);
     if (!path.ends_with(".vmt")) {
         path += ".vmt";
@@ -617,12 +634,12 @@ std::string model_path(std::string_view arg) {
 
 int cmd_mdl(const std::vector<std::string_view>& args) {
     if (args.size() >= 3 && args[1] == "sequences") {
-        const vfs::GameFileSystem gfs(game_dir_arg(args, 3));
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 3), game_mods());
         list_sequences(gfs, model_path(args[2]));
         return 0;
     }
     if (args.size() >= 6 && args[1] == "pose") {
-        const vfs::GameFileSystem gfs(game_dir_arg(args, 6));
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 6), game_mods());
         const auto model = load_model(gfs, args[2]);
         const auto found = find_sequence(gfs, model_path(args[2]), args[3]);
         if (!found) {
@@ -685,7 +702,7 @@ int cmd_mdl(const std::vector<std::string_view>& args) {
         return 0;
     }
     if (args.size() >= 3 && args[1] == "info") {
-        const vfs::GameFileSystem gfs(game_dir_arg(args, 3));
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 3), game_mods());
         const auto model = load_model(gfs, args[2]);
         const auto& mdl = model.mdl;
         std::cout << "name:      " << mdl.name << "\n"
@@ -714,7 +731,7 @@ int cmd_mdl(const std::vector<std::string_view>& args) {
         return 0;
     }
     if (args.size() >= 4 && args[1] == "export") {
-        const vfs::GameFileSystem gfs(game_dir_arg(args, 4));
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 4), game_mods());
         const auto model = load_model(gfs, args[2]);
         std::ofstream out{fs::path(args[3])};
         out << "# Exported by openbl-cli from " << model.mdl.name << " (first model of each body part, LOD 0)\n";
@@ -777,7 +794,7 @@ bool face_is_drawn(const formats::BspFile& bsp, const formats::BspFace& face) {
 
 int cmd_bsp(const std::vector<std::string_view>& args) {
     if (args.size() >= 3 && args[1] == "info") {
-        const vfs::GameFileSystem gfs(game_dir_arg(args, 3));
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 3), game_mods());
         const auto bsp = load_map(gfs, args[2]);
         const formats::ZipArchive pak(bsp.pakfile);
         std::size_t in_game = 0, in_pak = 0, missing = 0;
@@ -822,7 +839,7 @@ int cmd_bsp(const std::vector<std::string_view>& args) {
         return 0;
     }
     if (args.size() >= 4 && args[1] == "export") {
-        const vfs::GameFileSystem gfs(game_dir_arg(args, 4));
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 4), game_mods());
         const auto bsp = load_map(gfs, args[2]);
         std::ofstream out{fs::path(args[3])};
         out << "# World geometry exported by openbl-cli\n";
@@ -1017,7 +1034,7 @@ int cmd_fs(const std::vector<std::string_view>& args) {
     const std::string_view sub = args[1];
 
     if (sub == "stat" || sub == "list") {
-        const vfs::GameFileSystem gfs(game_dir_arg(args, 2));
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 2), game_mods());
         if (sub == "stat") {
             std::cout << "content dir: " << gfs.content_dir().string() << "\n"
                       << "archives:    " << gfs.archives().size() << "\n"
@@ -1038,7 +1055,7 @@ int cmd_fs(const std::vector<std::string_view>& args) {
         return 0;
     }
     if (sub == "extract" && args.size() >= 3) {
-        const vfs::GameFileSystem gfs(game_dir_arg(args, 4));
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 4), game_mods());
         const fs::path out_dir(args[2]);
         // "materials/*.vmt": a prefix and an optional suffix around one '*'.
         std::string prefix = args.size() >= 4 ? std::string(args[3]) : std::string();
@@ -1064,7 +1081,7 @@ int cmd_fs(const std::vector<std::string_view>& args) {
         return 0;
     }
     if (sub == "coverage") {
-        const vfs::GameFileSystem gfs(game_dir_arg(args, 2));
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 2), game_mods());
         std::map<std::string, std::size_t> counts;
         for (const auto& path : gfs.list_files()) {
             const auto ext = fs::path(path).extension().string();
@@ -1091,7 +1108,7 @@ int cmd_fs(const std::vector<std::string_view>& args) {
         return 0;
     }
     if ((sub == "which" || sub == "cat") && args.size() >= 3) {
-        const vfs::GameFileSystem gfs(game_dir_arg(args, 3));
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 3), game_mods());
         if (sub == "which") {
             auto source = gfs.source_of(args[2]);
             if (!source) {

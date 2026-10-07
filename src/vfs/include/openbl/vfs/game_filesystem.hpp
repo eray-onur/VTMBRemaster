@@ -14,17 +14,23 @@
 
 namespace openbl::vfs {
 
-// Read-only view of a game content directory (the "Vampire" folder).
+// Read-only view of a game content directory (the "Vampire" folder), with
+// optional mod folders layered on top (e.g. "Unofficial_Patch", a sibling of
+// "Vampire" in the install root).
 //
 // Resolution order, highest priority first:
-//   1. Loose files under the content directory (how patches and mods ship).
-//   2. packNNN.vpk data archives, higher NNN first.
+//   1. Mod folders, the last one given first; within each, loose files, then
+//      its packNNN.vpk archives, higher NNN first.
+//   2. Loose files under the content directory (how patches ship).
+//   3. packNNN.vpk data archives, higher NNN first.
 // Directory-index archives (see VpkKind::DirectoryIndex) contribute directory listings only.
 class GameFileSystem {
 public:
     // Accepts either the install root or its "Vampire" content directory.
     // Throws formats::FormatError if an archive is malformed.
-    explicit GameFileSystem(const std::filesystem::path& game_dir);
+    // `mods` name folders in the install root (or are absolute paths).
+    // Throws formats::FormatError if a mod folder is missing.
+    explicit GameFileSystem(const std::filesystem::path& game_dir, const std::vector<std::string>& mods = {});
 
     struct Source {
         enum class Kind { Loose, Archive } kind;
@@ -32,6 +38,8 @@ public:
     };
 
     const std::filesystem::path& content_dir() const { return content_dir_; }
+    // Mounted mod folders, lowest priority first.
+    const std::vector<std::filesystem::path>& mod_dirs() const { return mod_dirs_; }
     const std::vector<std::unique_ptr<formats::VpkArchive>>& archives() const { return archives_; }
 
     bool exists(std::string_view path) const;
@@ -57,8 +65,10 @@ private:
     static constexpr std::size_t npos = static_cast<std::size_t>(-1);
 
     const Resolved* resolve(std::string_view path) const;
+    void mount(const std::filesystem::path& root);
 
     std::filesystem::path content_dir_;
+    std::vector<std::filesystem::path> mod_dirs_;
     std::vector<std::unique_ptr<formats::VpkArchive>> archives_;
     std::unordered_map<std::string, Resolved> files_;
     std::unordered_set<std::string> directories_;

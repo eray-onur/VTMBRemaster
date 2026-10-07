@@ -289,6 +289,12 @@ TEST_CASE("BSP entities") {
     const auto escaped = parse_bsp_entities("{ \"python_script\" \"IsDead(\\\"Mandarin\\\")\" \"model\" \"a\\b.mdl\" }");
     CHECK(escaped[0].at("python_script") == "IsDead(\"Mandarin\")");
     CHECK(escaped[0].at("model") == "a\\b.mdl");
+    const auto commented = parse_bsp_entities("{\n\"a\" \"1\"\n//\"OnTrigger\" \"x,Kill,,0,1,,\"\n\"b\" \"2\"\n}");
+    CHECK(commented[0].size() == 2);
+    CHECK(commented[0].at("b") == "2");
+    const auto glued = parse_bsp_entities("{\n\"a\" \"1\"mop\n\"b\" \"2\"\n}");
+    CHECK(glued[0].at("a") == "1");
+    CHECK(glued[0].at("b") == "2");
     CHECK_THROWS_AS(parse_bsp_entities("{ \"a\" }"), FormatError);
     CHECK_THROWS_AS(parse_bsp_entities("{ \"a\" \"b\""), FormatError);
 }

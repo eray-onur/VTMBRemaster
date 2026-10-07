@@ -542,7 +542,10 @@ private:
             bsp.detail_prop_models.push_back(normalize_game_path(name));
         }
         const std::int32_t props = r.i32();
-        if (props < 0 || static_cast<std::uint64_t>(props) * 40 != r.remaining()) {
+        // Maps recompiled by the Unofficial Patch carry 4 trailing bytes
+        // (usually zero, sometimes leftover memory) after the props.
+        if (props < 0 || (static_cast<std::uint64_t>(props) * 40 != r.remaining() &&
+                          static_cast<std::uint64_t>(props) * 40 + 4 != r.remaining())) {
             in_.fail("detail prop count does not match the lump size");
         }
         for (std::int32_t p = 0; p < props; ++p) {
@@ -805,9 +808,21 @@ BspFile parse_bsp(std::span<const std::byte> data) {
 std::vector<BspEntity> parse_bsp_entities(std::string_view text) {
     std::vector<BspEntity> out;
     std::size_t pos = 0;
+    // Also skips "//" comment lines, which the Unofficial Patch uses to disable
+    // entity outputs (la_bradbury_2).
     auto skip_space = [&] {
-        while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\t' || text[pos] == '\r' || text[pos] == '\n')) {
-            ++pos;
+        for (;;) {
+            while (pos < text.size() &&
+                   (text[pos] == ' ' || text[pos] == '\t' || text[pos] == '\r' || text[pos] == '\n')) {
+                ++pos;
+            }
+            if (pos + 1 < text.size() && text[pos] == '/' && text[pos + 1] == '/') {
+                while (pos < text.size() && text[pos] != '\n') {
+                    ++pos;
+                }
+                continue;
+            }
+            return;
         }
     };
     // Values may contain \" (Python code in entity I/O); other backslashes are literal.
@@ -853,6 +868,14 @@ std::vector<BspEntity> parse_bsp_entities(std::string_view text) {
             std::string value;
             if (!quoted(key) || !quoted(value)) {
                 throw FormatError("BSP entities: expected quoted key and value");
+            }
+            // Text glued to a closing quote is an editing slip (the Unofficial
+            // Patch's sp_giovanni_2b has `"...,"mop`); skip it to the end of the line.
+            if (pos < text.size() && text[pos] != ' ' && text[pos] != '\t' && text[pos] != '\r' &&
+                text[pos] != '\n' && text[pos] != '"' && text[pos] != '}') {
+                while (pos < text.size() && text[pos] != '\n') {
+                    ++pos;
+                }
             }
             entity[key] = std::move(value);
         }

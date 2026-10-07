@@ -45,12 +45,13 @@ using namespace openbl;
 namespace {
 
 constexpr const char* kUsage =
-    "usage: openbl-viewer [--game DIR] [--map NAME] [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
+    "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
     "                     [--light-scale F] [--fullbright] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--shots FILE --out DIR]\n"
     "                     [--validation] [--no-vsync]";
 
 struct Options {
     std::optional<std::filesystem::path> game_dir;
+    std::vector<std::string> mods; // Mod folders mounted over the game, e.g. Unofficial_Patch.
     std::optional<std::string> map;
     std::optional<glm::vec3> position;
     std::optional<glm::vec2> angles; // pitch, yaw
@@ -85,6 +86,8 @@ Options parse_args(int argc, char** argv) {
         };
         if (a == "--game") {
             o.game_dir = next();
+        } else if (a == "--mod") {
+            o.mods.push_back(next());
         } else if (a == "--map") {
             o.map = next();
         } else if (a == "--pos") {
@@ -350,7 +353,7 @@ int run(const Options& options) {
     {
         std::unique_ptr<vfs::GameFileSystem> gfs;
         if (options.game_dir) {
-            gfs = std::make_unique<vfs::GameFileSystem>(*options.game_dir);
+            gfs = std::make_unique<vfs::GameFileSystem>(*options.game_dir, options.mods);
         }
         viewer::Camera camera;
         camera.fov = options.fov;

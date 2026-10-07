@@ -48,20 +48,35 @@ std::optional<std::filesystem::path> GameFileSystem::find_content_dir(const std:
     return std::nullopt;
 }
 
-GameFileSystem::GameFileSystem(const std::filesystem::path& game_dir) {
+GameFileSystem::GameFileSystem(const std::filesystem::path& game_dir, const std::vector<std::string>& mods) {
     auto content = find_content_dir(game_dir);
     if (!content) {
         throw formats::FormatError(game_dir.string() + ": no pack000.vpk found here or in Vampire/");
     }
     content_dir_ = *content;
+    mount(content_dir_);
+    const std::filesystem::path install_root = content_dir_.parent_path();
+    for (const auto& mod : mods) {
+        std::filesystem::path dir = std::filesystem::path(mod).is_absolute() ? std::filesystem::path(mod)
+                                                                              : install_root / mod;
+        std::error_code ec;
+        if (!std::filesystem::is_directory(dir, ec)) {
+            throw formats::FormatError("mod folder not found: " + dir.string());
+        }
+        mod_dirs_.push_back(dir);
+        mount(dir);
+    }
+}
 
+// Adds a folder's archives and loose files on top of everything mounted so far.
+void GameFileSystem::mount(const std::filesystem::path& root) {
     std::vector<std::pair<int, std::filesystem::path>> packs;
     std::vector<std::filesystem::path> loose;
-    for (const auto& item : std::filesystem::recursive_directory_iterator(content_dir_)) {
+    for (const auto& item : std::filesystem::recursive_directory_iterator(root)) {
         if (!item.is_regular_file()) {
             continue;
         }
-        if (item.path().parent_path() == content_dir_) {
+        if (item.path().parent_path() == root) {
             if (auto n = pack_number(item.path())) {
                 packs.emplace_back(*n, item.path());
                 continue;
@@ -92,8 +107,7 @@ GameFileSystem::GameFileSystem(const std::filesystem::path& game_dir) {
     }
 
     for (const auto& file : loose) {
-        std::string path =
-            formats::normalize_game_path(std::filesystem::relative(file, content_dir_).generic_string());
+        std::string path = formats::normalize_game_path(std::filesystem::relative(file, root).generic_string());
         auto [it, inserted] = files_.insert_or_assign(path, Resolved{npos, 0, file});
         shadowed_count_ += inserted ? 0 : 1;
         add_parent_directories(directories_, path);
