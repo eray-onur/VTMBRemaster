@@ -27,6 +27,7 @@ add_executable(openbl_tests
     test_text_data.cpp
     test_tth.cpp
     test_vcd.cpp
+    test_vdata.cpp
     test_vmt.cpp
     test_vtf.cpp
     test_wav.cpp)

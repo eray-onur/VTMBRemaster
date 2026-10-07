@@ -52,6 +52,24 @@ These tables define the game's rules. Phase 2's data-driven registries are built
 | `credits.txt` | — | **not KeyValues**: credits script, `#` comments and `@font` commands |
 | `charaction_sounds.txt` | — | designer note, not data |
 
+### Typed loaders
+
+`openbl/formats/vdata.hpp` reads the rule tables into plain structs for the Phase 2 registries to consume. Values the game evaluates stay strings, such as the cost formula `Current_Rating * 4`. Counts and cross-checks from `tests/test_vdata.cpp`:
+
+| Loader | Source | Release |
+|---|---|---|
+| `parse_stats` | `stats.txt` | 4 categories: Attributes (35), Abilities (13), Disciplines (17), ActiveDisciplines (17) |
+| `parse_feats` | `feats.txt` | 23 feats, each with its base stats and dice weighting |
+| `parse_char_templates`, `resolve_char_template` | `clandoc000.txt`, `npctemplate*.txt` | 160 clan and NPC templates. Every `ParentTemplateName` exists, and a child's fields override its parent's |
+| `parse_quests` | `quests_*.txt` | 62 quests, 334 completion states, 401 XP in all. Two states write the type capitalised (`Success`, `Failure`) |
+| `parse_vendors` | `vendors.txt` | 10 vendors, 127 stock entries. 7 entries are the cut stake and rocket launchers, which have no `vdata/items` file |
+| `parse_discipline_powers` | `disciplinetgt_*.txt` | 30 targeted powers; effect blocks kept as KeyValues |
+| `parse_leveling_templates` | `levelingtemplate_000.txt` | 15 NPC leveling templates |
+| `parse_histories` | `histories000.txt` | 72 histories (`UNUSED_HistoryData` skipped) |
+| `parse_item_tables` | `items.txt` | inventory sections, 11 item types, 21 starting kits, botch and activation types |
+
+The remaining tables are flat parameter blocks, read through KeyValues lookups: `rules*.txt`, `dicerolls.txt`, reactions, stealth, trait effects and dispositions. Typed versions will follow when Phase 2 has a consumer for them.
+
 ## Syntax used by these files beyond materials
 
 - **`/* … */` block comments**, used in particle files to disable sections.

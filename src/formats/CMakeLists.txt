@@ -19,6 +19,7 @@ add_library(openbl_formats
     text_encoding.cpp
     tth.cpp
     vcd.cpp
+    vdata.cpp
     vmt.cpp
     vpk.cpp
     vtf.cpp
