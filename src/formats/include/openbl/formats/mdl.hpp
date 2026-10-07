@@ -169,6 +169,14 @@ struct MdlMesh {
     std::int32_t material_type = 0; // 1 on 496 meshes (eyes and similar); meaning unverified.
     std::int32_t material_param = 0;
     std::vector<MdlMeshFlex> flexes;
+    // Cloth binding, one entry per mesh vertex; empty if the mesh has no cloth.
+    // cloth_piece is 255 for an ordinary skinned vertex, otherwise the index of
+    // its cloth piece. For cloth vertices, cloth_particle & 0x7fff is the
+    // particle the vertex follows (bit 15: meaning unknown) and cloth_slot is
+    // the particle count plus its index into MdlCloth::vertex_data.
+    std::vector<std::uint8_t> cloth_piece;
+    std::vector<std::uint16_t> cloth_particle;
+    std::vector<std::uint16_t> cloth_slot;
 };
 
 struct MdlHitbox {
@@ -233,11 +241,49 @@ struct MdlIkChain {
     std::vector<MdlIkLink> links;
 };
 
+// A distance constraint between two cloth particles.
+struct MdlClothConstraint {
+    std::uint16_t a = 0, b = 0;      // Particle indices.
+    float weight_a = 0.0f;           // 0 when a is attached; usually in [0, 1].
+    float weight_b = 0.0f;           // Usually weight_a - 2.
+    float rest_length_squared = 0.0f;
+};
+
+// One cloth piece at one LOD: a particle system over some of the model's
+// vertices (docs/formats/models.md). Meanings marked "unknown" are laid out
+// but not yet tied to behaviour.
+struct MdlCloth {
+    std::uint32_t slot = 0;          // Position in the model's cloth table.
+    float parameter = 0.0f;          // 0.3 to 8; meaning unknown.
+    std::vector<std::uint16_t> particles; // Model vertex index of each particle.
+    std::uint32_t attached_particles = 0; // The first N follow the skeleton; the rest simulate.
+    std::vector<MdlClothConstraint> constraints;
+    std::uint32_t primary_constraints = 0; // Size of the first group.
+    std::vector<std::uint8_t> bytes;       // Unknown, values 1 to 4.
+    std::uint32_t primary_bytes = 0;
+    std::vector<std::array<std::uint16_t, 3>> triangles; // Particle indices.
+    std::vector<std::array<std::uint16_t, 2>> edges;     // Particle indices.
+    std::uint32_t primary_edges = 0;
+    // Two edge indices, then three particle indices.
+    std::vector<std::array<std::uint16_t, 5>> edge_triangles;
+    std::vector<std::array<float, 3>> vertex_data; // One per cloth mesh vertex; meaning unknown.
+};
+
+// A capsule the cloth collides with, in model space.
+struct MdlClothCapsule {
+    std::int32_t bone = 0;
+    float radius = 0.0f;
+    std::array<float, 3> start{}, end{};
+};
+
 struct MdlModel {
     std::string name;
     MdlVertexFormat vertex_format = MdlVertexFormat::Float;
     std::vector<MdlVertex> vertices;
     std::vector<MdlMesh> meshes;
+    std::int32_t cloth_pieces = 0;
+    std::vector<MdlCloth> cloth;              // Non-empty table slots.
+    std::vector<MdlClothCapsule> cloth_capsules;
 };
 
 struct MdlBodyPart {

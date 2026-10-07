@@ -283,6 +283,38 @@ std::vector<std::byte> build_mdl(MdlVertexFormat format) {
     b.u16(flex_vert + 12, 5313 * 12);
     b.u8(flex_vert + 14, 16); // 0.5 units down (direction code 0)
 
+    // Cloth: one piece whose particles are vertices 1 (attached) and 2, one
+    // constraint between them, and one collision capsule.
+    const std::size_t cloth_table = b.size();
+    const std::size_t cloth = cloth_table + 4;
+    const std::size_t cloth_arrays = cloth + 136;
+    const std::size_t capsule = cloth_arrays + 20;
+    b.grow(capsule + 36);
+    b.i32(model + 0xc8, 1);
+    b.i32(model + 0xcc, static_cast<std::int32_t>(cloth_table - model));
+    b.i32(cloth_table, static_cast<std::int32_t>(cloth - model));
+    b.f32(cloth, 2.0f);
+    const std::int32_t cloth_header[] = {2, 1, 1, 92, 1, 1, 0, 96, 0, 0, 112, 0, 112, 0, 0, 112, 0, 112, 2, 112};
+    for (std::size_t k = 0; k < std::size(cloth_header); ++k) {
+        b.i32(cloth + 4 + 4 * k, cloth_header[k]);
+    }
+    b.u16(cloth + 92, 1);
+    b.u16(cloth + 94, 2);
+    b.u16(cloth + 98, 1); // constraint: particles 0 and 1
+    b.f32(cloth + 104, -1.0f);
+    b.f32(cloth + 108, 16.0f);
+    b.i32(mesh + 48, static_cast<std::int32_t>(cloth_arrays - mesh));
+    b.i32(mesh + 52, static_cast<std::int32_t>(cloth_arrays + 4 - mesh));
+    b.i32(mesh + 56, static_cast<std::int32_t>(cloth_arrays + 12 - mesh));
+    b.u8(cloth_arrays, 255); // vertex 0 is skinned, 1 and 2 are cloth
+    b.u16(cloth_arrays + 8, 1);
+    b.u16(cloth_arrays + 14, 2);
+    b.u16(cloth_arrays + 16, 3);
+    b.i32(model + 0xd0, 1);
+    b.i32(model + 0xd4, static_cast<std::int32_t>(capsule - model));
+    b.f32(capsule + 8, 1.5f);
+    b.f32(capsule + 32, 3.0f);
+
     const std::size_t include = b.size();
     b.grow(include + 116);
     b.i32(0x194, 1);
@@ -474,6 +506,23 @@ TEST_CASE("MDL animations, sequences and include models") {
     CHECK(mesh_flexes[0].vertices[1].index == 1);
     CHECK(mesh_flexes[0].vertices[1].delta[2] == doctest::Approx(-0.5f));
     CHECK(mesh_flexes[0].vertices[1].normal_delta[2] == 0.0f);
+    const auto& rig_model = mdl.body_parts[0].models[0];
+    CHECK(rig_model.meshes[0].cloth_piece == std::vector<std::uint8_t>{255, 0, 0});
+    CHECK(rig_model.meshes[0].cloth_particle == std::vector<std::uint16_t>{0, 0, 1});
+    CHECK(rig_model.meshes[0].cloth_slot == std::vector<std::uint16_t>{0, 2, 3});
+    REQUIRE(rig_model.cloth.size() == 1);
+    const auto& rig_cloth = rig_model.cloth[0];
+    CHECK(rig_cloth.parameter == 2.0f);
+    CHECK(rig_cloth.particles == std::vector<std::uint16_t>{1, 2});
+    CHECK(rig_cloth.attached_particles == 1);
+    REQUIRE(rig_cloth.constraints.size() == 1);
+    CHECK(rig_cloth.constraints[0].b == 1);
+    CHECK(rig_cloth.constraints[0].weight_b == -1.0f);
+    CHECK(rig_cloth.constraints[0].rest_length_squared == 16.0f);
+    CHECK(rig_cloth.vertex_data.size() == 2);
+    REQUIRE(rig_model.cloth_capsules.size() == 1);
+    CHECK(rig_model.cloth_capsules[0].radius == 1.5f);
+    CHECK(rig_model.cloth_capsules[0].end[2] == 3.0f);
     REQUIRE(mdl.mouths.size() == 1);
     CHECK(mdl.mouths[0].forward[1] == -1.0f);
     REQUIRE(mdl.ik_chains.size() == 1);
@@ -593,6 +642,8 @@ TEST_CASE("MDL integration: every model in the real install loads") {
     std::size_t missing_normals = 0;
     std::size_t hitboxes = 0, attachments = 0, flex_rules = 0, ik_chains = 0, mesh_flexes = 0, bad_flex_targets = 0;
     std::size_t flex_vertices = 0, off_unit_flex_normals = 0;
+    std::size_t cloth_models = 0, cloth_bodies = 0, cloth_capsules = 0, bad_cloth_vertices = 0, bad_cloth_counts = 0;
+    std::size_t cloth_vertices = 0, far_cloth_vertices = 0;
     std::map<MdlVertexFormat, std::size_t> formats;
     for (const auto& path : gfs.list_files()) {
         if (!path.ends_with(".mdl")) {
@@ -635,6 +686,42 @@ TEST_CASE("MDL integration: every model in the real install loads") {
         ik_chains += mdl.ik_chains.size();
         for (const auto& part : mdl.body_parts) {
             for (const auto& m : part.models) {
+                cloth_models += !m.cloth.empty();
+                cloth_bodies += m.cloth.size();
+                cloth_capsules += m.cloth_capsules.size();
+                // LOD 0 of piece p is table slot p. Each cloth vertex sits on its
+                // particle, and the piece has one vertex_data entry per cloth vertex.
+                std::vector<std::size_t> free_vertices(static_cast<std::size_t>(std::max(m.cloth_pieces, 0)));
+                for (const auto& mesh : m.meshes) {
+                    for (std::size_t v = 0; v < mesh.cloth_piece.size(); ++v) {
+                        const std::uint8_t piece = mesh.cloth_piece[v];
+                        if (piece == 255) {
+                            continue;
+                        }
+                        const auto c = std::find_if(m.cloth.begin(), m.cloth.end(),
+                                                    [&](const MdlCloth& x) { return x.slot == piece; });
+                        if (piece >= free_vertices.size() || c == m.cloth.end()) {
+                            ++bad_cloth_vertices;
+                            continue;
+                        }
+                        ++free_vertices[piece];
+                        const std::size_t p = mesh.cloth_particle[v] & 0x7fffu;
+                        const auto& a = m.vertices[mesh.vertex_offset + v].position;
+                        const auto& b = p < c->particles.size() ? m.vertices[c->particles[p]].position : a;
+                        ++cloth_vertices;
+                        // Particles stand for welded vertices up to ~0.1 apart. (A modded
+                        // bilttablea.mdl has 14 vertices 0.6 to 10 units from theirs.)
+                        far_cloth_vertices += std::abs(a[0] - b[0]) > 0.1f || std::abs(a[1] - b[1]) > 0.1f ||
+                                              std::abs(a[2] - b[2]) > 0.1f;
+                        bad_cloth_vertices += p >= c->particles.size() || mesh.cloth_slot[v] < c->particles.size() ||
+                                              mesh.cloth_slot[v] >= c->particles.size() + c->vertex_data.size();
+                    }
+                }
+                for (std::size_t piece = 0; piece < free_vertices.size(); ++piece) {
+                    const auto c = std::find_if(m.cloth.begin(), m.cloth.end(),
+                                                [&](const MdlCloth& x) { return x.slot == piece; });
+                    bad_cloth_counts += c == m.cloth.end() || c->vertex_data.size() != free_vertices[piece];
+                }
                 for (const auto& mesh : m.meshes) {
                     mesh_flexes += mesh.flexes.size();
                     for (const auto& f : mesh.flexes) {
@@ -745,6 +832,14 @@ TEST_CASE("MDL integration: every model in the real install loads") {
                      << " morphed normals off unit length), " << ik_chains << " IK chains");
     CHECK(bad_flex_targets == 0);
     CHECK(flex_vertices == 2793996);
+    MESSAGE(cloth_models << " models with cloth (" << cloth_bodies << " cloth bodies over all LODs), "
+                         << cloth_capsules << " cloth capsules, " << cloth_vertices << " cloth vertices ("
+                         << far_cloth_vertices << " away from their particle)");
+    CHECK(cloth_models == 53);
+    CHECK(far_cloth_vertices == 0);
+    CHECK(bad_cloth_vertices == 0);
+    CHECK(bad_cloth_counts == 0);
+    CHECK(cloth_capsules == 196);
     CHECK(off_unit_flex_normals * 20 < flex_vertices);
     CHECK(missing_normals == 0); // Every quantized normal code is in its table.
     CHECK(hitboxes == 12705);

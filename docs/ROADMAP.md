@@ -21,7 +21,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Models: hitboxes, attachments, flex controllers and rules, mesh flexes (which vertices), mouths, IK chains, surface property
 - [x] Models: packed normal tables for quantized vertices (closed form, recovered from the data)
 - [x] Models: flex vertex deltas (packed directions with byte lengths; a float form on one model)
-- [ ] Models: cloth data on 74 hair/cloth meshes
+- [x] Models: cloth layout (particles, constraints, triangles, edges, per-vertex binding, collision capsules, per-LOD table)
+- [ ] Models: cloth semantics still to confirm against the running game (body parameter, byte array, vertex data, settings records)
 - [x] Physics: `.phy` solids, convex pieces (bounding-tree walk), model-space conversion, text block
 - [ ] Physics: ragdoll constraint semantics; collision for map brushes (with the BSP work)
 - [x] Maps: `.bsp` v17 geometry, faces, displacements, lightmap data, static props, entities, pakfile

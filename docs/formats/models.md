@@ -69,7 +69,65 @@ All integers are little-endian. "rel" means an offset relative to the start of t
 | 0xa0 | `f32[3]` | quantization origin |
 | 0xac | `f32[3]` | quantization scale |
 
-**Mesh** (60 bytes): `i32 material` (skin reference), `i32 model offset (rel, negative)`, `i32 vertex count`, `i32 vertex offset` (into the model's vertices; meshes are consecutive), `i32 flex count`, `i32 flex offset (rel)`, `i32 material type` (1 on 496 meshes), `i32 material parameter`, 16 zero bytes, then three offsets at +48, +52 and +56 set on 74 meshes. Those meshes belong to hair, fur and cloth (prostitute, stripper, wolf form, `scenery/structural/temple/panel_cloth`), so this is probably cloth-simulation data. The offsets are relative to the model and point at three consecutive arrays whose spacing scales with the vertex count (1 and 2, 6 and 12, or 7 and 14 bytes per vertex). Some hold increasing 16-bit vertex indices, others floats. Not decoded further.
+**Mesh** (60 bytes): `i32 material` (skin reference), `i32 model offset (rel, negative)`, `i32 vertex count`, `i32 vertex offset` (into the model's vertices; meshes are consecutive), `i32 flex count`, `i32 flex offset (rel)`, `i32 material type` (1 on 496 meshes), `i32 material parameter`, 16 zero bytes, then three cloth offsets (relative to the mesh) at +48, +52 and +56, set on 74 meshes. See "Cloth" below.
+
+### Cloth
+
+Hair, skirts, coats, fur and a few props (curtains, a lantern, `temple/panel_cloth`) are simulated as particle cloth: 53 models in the release. The parser is `MdlModel::cloth`; `tests/test_mdl.cpp` checks every reference.
+
+**Model fields** (in the 224-byte model, after the quantization scale):
+
+| Offset | Field |
+|---|---|
+| 0xc0 | flex vertex format (see "Mesh flex") |
+| 0xc4 | offset of 140-byte cloth settings records, which end where the cloth table starts (0 or 2 records; layout unknown: floats, then a count and a short bone list) |
+| 0xc8 | number of cloth pieces (1, or 2 on `tremere_female_armor_3`) |
+| 0xcc | offset of the cloth table |
+| 0xd0, 0xd4 | collision capsule count, offset |
+| 0xd8, 0xdc | count, offset of a further array (1–2 records, not decoded; probably eyes, as the records carry eyelid-style flex ramps) |
+
+All offsets are relative to the model.
+
+**Cloth table:** model-relative `i32` pointers to cloth bodies, ending where the first body starts. A slot holds one piece at one LOD, and 0 marks an LOD without cloth. There are 1, 2, 6 or 7 slots, and slot *p* is piece *p* at LOD 0.
+
+**Cloth body:** a 92-byte header followed by its arrays. Offsets in the header are relative to the body.
+
+| Header field | Contents |
+|---|---|
+| `f32` | parameter (0.3 to 8; meaning unknown) |
+| `i32 ×4` | particle count, attached count, free count (attached + free = count), array offset (always 92) |
+| `i32 ×4` | constraint count, first group size, second group size, offset |
+| `i32 ×3` | byte array: first group size, second group size, offset |
+| `i32 ×2` | triangle count, offset |
+| `i32 ×3` | edge count, first group size, offset |
+| `i32 ×2` | edge-triangle count, offset |
+| `i32 ×2` | vertex-data count, offset |
+| `i32 ×2` | zero, then 0 or an offset on 15 bodies (not decoded) |
+
+The arrays:
+
+- **Particles:** `u16` model vertex indices. The first *attached* particles follow the skeleton; the rest are simulated. Several welded vertices share one particle, so a cloth vertex lies within 0.1 units of its particle.
+- **Constraints (16 bytes):** `u16 a`, `u16 b` (particles), `f32 weight_a`, `f32 weight_b`, `f32 rest length squared`.
+  - `weight_a` is 0 exactly when *a* is attached. No constraint joins two attached particles.
+  - `weight_b` is usually `weight_a − 2`.
+  - The rest length matches the squared distance between the particles in the bind pose.
+- **Bytes:** one byte per entry, values 1 to 4; meaning unknown.
+- **Triangles (6 bytes):** three particles.
+- **Edges (4 bytes):** two particles.
+- **Edge triangles (10 bytes):** two edge indices, then three particles. There are about twice as many as triangles.
+- **Vertex data (12 bytes):** three floats, one record per cloth mesh vertex. The first float is always 0, and the other two are small. Meaning unknown.
+
+**Per-mesh arrays** (one entry per mesh vertex):
+
+| Array | Contents |
+|---|---|
+| `u8` | the vertex's cloth piece, or 255 for an ordinary skinned vertex |
+| `u16` | the particle the vertex follows (low 15 bits; bit 15 is set on whole meshes, meaning unknown) |
+| `u16` | the particle count plus the vertex's index into the vertex data |
+
+**Collision capsule (36 bytes):** `i32 bone`, `i32 bone` (always the same bone), `f32 radius`, `f32 start[3]`, `f32 end[3]`, in model space. There are 196 in all. For example, on `undead_female` one runs up the spine with a radius of 3.9.
+
+The layout is fully sized and cross-checked. What the simulation does with each field is partly inferred: the parameter, the bytes, the vertex data and the settings records still need comparing with the running game.
 
 **Hitbox set** (12 bytes): `i32 name (rel)` (`default` on every model but one vehicle with six), `i32 count`, `i32 offset (rel)`. **Hitbox** (32 bytes): `i32 bone`, `i32 group`, `f32 min[3]`, `f32 max[3]` in the bone's space. Groups follow the body: 0 generic, 1 head, 2 chest, 3 stomach, 4/5 left/right arm, 6/7 left/right leg (8 and 9 appear 11 times each). 12,705 hitboxes, all with valid bones and boxes.
 

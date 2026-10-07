@@ -56,6 +56,8 @@ constexpr std::size_t kIkChainSize = 16;
 constexpr std::size_t kIkLinkSize = 28;
 constexpr std::size_t kMouthSize = 20;
 constexpr std::size_t kMeshFlexSize = 32;
+constexpr std::size_t kClothHeaderSize = 92;
+constexpr std::size_t kClothCapsuleSize = 36;
 constexpr std::size_t kPackedFlexVertexSize = 8; // Model flex format 2.
 constexpr std::size_t kFloatFlexVertexSize = 20; // Model flex format 0.
 constexpr float kFlexPositionUnit = 1.0f / 32.0f;
@@ -526,6 +528,83 @@ private:
         }
     }
 
+    // A 92-byte cloth header: f32 parameter, then counts and offsets (relative
+    // to the header) of seven arrays. See docs/formats/models.md.
+    MdlCloth parse_cloth(std::size_t body, std::size_t slot, std::uint32_t vertex_count) {
+        need(body, kClothHeaderSize);
+        auto field = [&](std::size_t k) { return u32(body + 4 * k); };
+        auto array = [&](std::size_t k, std::uint64_t n, std::uint64_t size) {
+            const std::size_t start = body + field(k);
+            need(start, n * size);
+            return start;
+        };
+        MdlCloth cloth;
+        cloth.slot = static_cast<std::uint32_t>(slot);
+        cloth.parameter = f32(body);
+        const std::uint32_t particles = field(1);
+        cloth.attached_particles = field(2);
+        cloth.primary_constraints = field(6);
+        if (particles > kMaxCount || field(2) + field(3) != particles || field(4) != kClothHeaderSize ||
+            field(6) + field(7) != field(5)) {
+            in_.fail("malformed cloth header");
+        }
+        auto particle = [&](std::size_t at) {
+            const std::uint16_t p = u16(at);
+            if (p >= particles) {
+                in_.fail("cloth particle index out of range");
+            }
+            return p;
+        };
+
+        const std::size_t p_at = array(4, particles, 2);
+        for (std::uint32_t i = 0; i < particles; ++i) {
+            cloth.particles.push_back(u16(p_at + 2 * std::size_t{i}));
+            if (cloth.particles.back() >= vertex_count) {
+                in_.fail("cloth particle vertex out of range");
+            }
+        }
+        const std::uint32_t constraints = count(body + 4 * 5, "cloth constraint");
+        const std::size_t c_at = array(8, constraints, 16);
+        for (std::uint32_t i = 0; i < constraints; ++i) {
+            const std::size_t r = c_at + 16 * std::size_t{i};
+            cloth.constraints.push_back({particle(r), particle(r + 2), f32(r + 4), f32(r + 8), f32(r + 12)});
+        }
+        cloth.primary_bytes = field(9);
+        const std::uint64_t byte_count = std::uint64_t{field(9)} + field(10);
+        const std::size_t b_at = array(11, byte_count, 1);
+        for (std::uint64_t i = 0; i < byte_count; ++i) {
+            cloth.bytes.push_back(u8(b_at + i));
+        }
+        const std::uint32_t triangles = count(body + 4 * 12, "cloth triangle");
+        const std::size_t t_at = array(13, triangles, 6);
+        for (std::uint32_t i = 0; i < triangles; ++i) {
+            const std::size_t r = t_at + 6 * std::size_t{i};
+            cloth.triangles.push_back({particle(r), particle(r + 2), particle(r + 4)});
+        }
+        const std::uint32_t edges = count(body + 4 * 14, "cloth edge");
+        cloth.primary_edges = field(15);
+        const std::size_t e_at = array(16, edges, 4);
+        for (std::uint32_t i = 0; i < edges; ++i) {
+            const std::size_t r = e_at + 4 * std::size_t{i};
+            cloth.edges.push_back({particle(r), particle(r + 2)});
+        }
+        const std::uint32_t edge_triangles = count(body + 4 * 17, "cloth edge triangle");
+        const std::size_t et_at = array(18, edge_triangles, 10);
+        for (std::uint32_t i = 0; i < edge_triangles; ++i) {
+            const std::size_t r = et_at + 10 * std::size_t{i};
+            if (u16(r) >= edges || u16(r + 2) >= edges) {
+                in_.fail("cloth edge index out of range");
+            }
+            cloth.edge_triangles.push_back({u16(r), u16(r + 2), particle(r + 4), particle(r + 6), particle(r + 8)});
+        }
+        const std::uint32_t vertex_data = count(body + 4 * 19, "cloth vertex");
+        const std::size_t v_at = array(20, vertex_data, 12);
+        for (std::uint32_t i = 0; i < vertex_data; ++i) {
+            cloth.vertex_data.push_back(vec3(v_at + 12 * std::size_t{i}));
+        }
+        return cloth;
+    }
+
     MdlModel parse_model(std::size_t at, std::size_t bone_count) {
         MdlModel model;
         model.name = fixed_string(at, 128);
@@ -602,6 +681,19 @@ private:
                 }
                 mesh.flexes.push_back(std::move(flex));
             }
+            if (const std::int32_t piece_offset = i32(m + 48); piece_offset != 0) {
+                const std::size_t pieces = rel(m, piece_offset);
+                const std::size_t particles = rel(m, i32(m + 52));
+                const std::size_t slots = rel(m, i32(m + 56));
+                need(pieces, mesh.vertex_count);
+                need(particles, std::uint64_t{mesh.vertex_count} * 2);
+                need(slots, std::uint64_t{mesh.vertex_count} * 2);
+                for (std::uint32_t v = 0; v < mesh.vertex_count; ++v) {
+                    mesh.cloth_piece.push_back(u8(pieces + v));
+                    mesh.cloth_particle.push_back(u16(particles + 2 * std::size_t{v}));
+                    mesh.cloth_slot.push_back(u16(slots + 2 * std::size_t{v}));
+                }
+            }
             if (std::uint64_t{mesh.vertex_offset} + mesh.vertex_count > vertex_count) {
                 in_.fail("mesh vertices exceed model vertex count");
             }
@@ -610,6 +702,34 @@ private:
         }
         if (mesh_vertices != vertex_count) {
             in_.fail("mesh vertex counts do not add up to the model's");
+        }
+
+        // Cloth: a table of model-relative pointers, one per slot (pieces and
+        // LODs; 0 = empty), ending where the first body starts.
+        model.cloth_pieces = i32(at + 0xc8);
+        if (model.cloth_pieces > 0) {
+            const std::size_t table = rel(at, i32(at + 0xcc));
+            const std::size_t first = rel(at, i32(table));
+            if (first <= table || (first - table) % 4 != 0 || first - table > 64) {
+                in_.fail("malformed cloth table");
+            }
+            for (std::size_t s = 0; s < (first - table) / 4; ++s) {
+                if (const std::int32_t body = i32(table + 4 * s); body != 0) {
+                    model.cloth.push_back(parse_cloth(rel(at, body), s, vertex_count));
+                }
+            }
+        }
+        const std::uint32_t capsules = count(at + 0xd0, "cloth capsule");
+        const std::size_t capsule_base = capsules ? rel(at, i32(at + 0xd4)) : 0;
+        need(capsule_base, std::uint64_t{capsules} * kClothCapsuleSize);
+        for (std::uint32_t c = 0; c < capsules; ++c) {
+            // i32 bone twice (always equal), f32 radius, f32 start[3], f32 end[3].
+            const std::size_t r = capsule_base + std::size_t{c} * kClothCapsuleSize;
+            const std::int32_t bone = i32(r);
+            if (bone < 0 || static_cast<std::size_t>(bone) >= bone_count) {
+                in_.fail("cloth capsule bone out of range");
+            }
+            model.cloth_capsules.push_back({bone, f32(r + 8), vec3(r + 12), vec3(r + 24)});
         }
 
         static constexpr std::size_t kStride[] = {44, 12, 8};
