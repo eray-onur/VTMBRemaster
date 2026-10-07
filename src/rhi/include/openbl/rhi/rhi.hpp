@@ -103,7 +103,9 @@ struct VertexAttribute {
 
 enum class CullMode : std::uint8_t { None, Back, Front };
 // Modulate: destination * source * 2 (colour only; destination alpha kept).
-enum class BlendMode : std::uint8_t { Opaque, Alpha, Additive, Modulate };
+// Premultiplied: source + destination * (1 - source alpha), so one draw can
+// add light (colour) and darken (alpha) at once.
+enum class BlendMode : std::uint8_t { Opaque, Alpha, Additive, Modulate, Premultiplied };
 
 // Resource layout shared by all pipelines: set/table 0 holds one sampler at
 // binding 0 and `texture_count` sampled 2D textures at bindings 1..N, visible

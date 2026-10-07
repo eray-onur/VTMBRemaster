@@ -17,6 +17,7 @@ add_executable(openbl_tests
     test_expressions.cpp
     test_fnt.cpp
     test_particle.cpp
+    test_particle_system.cpp
     test_path.cpp
     test_phy.cpp
     test_pickle.cpp
@@ -36,7 +37,7 @@ add_executable(openbl_tests
     test_vmt_proxies.cpp
     test_vtf.cpp
     test_wav.cpp)
-target_link_libraries(openbl_tests PRIVATE openbl::formats openbl::vfs openbl::anim doctest::doctest ZLIB::ZLIB openbl_options)
+target_link_libraries(openbl_tests PRIVATE openbl::formats openbl::vfs openbl::anim openbl::particles doctest::doctest ZLIB::ZLIB openbl_options)
 # Include real std headers instead of doctest's forward declarations, which newer MSVC rejects.
 target_compile_definitions(openbl_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
 if(OPENBL_WITH_FFMPEG)

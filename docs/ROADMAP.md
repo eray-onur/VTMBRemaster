@@ -90,7 +90,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Render-to-texture monitors (`func_monitor` + `point_camera`, aimed by `look_dest`): render targets in the RHI, one per visible monitor; checked against the hospital and haven TV captures
 - [x] `StartHidden` entities are not drawn (brush entities, props, NPCs); `--show NAME` overrides it for a brush entity
 - [ ] Monitors: confirm the camera `FOV` convention, picture brightness and render-target size; cameras parented to moving props
-- [ ] Particle simulation and rendering, with the semantics confirmed against captures of the original
+- [x] Particle simulation and rendering: active `env_particle` effects, emitters, curves, motion, premultiplied sprites ([PARTICLES.md](PARTICLES.md))
+- [ ] Particles: calibrate units and colour scale on more captures (one done: barrel fire), collisions, refraction, `func_particle` rain, script-started effects, fire light
 - [ ] Decals on static props (`$modelmaterial`, about 200 decals); confirm decal orientation against the original
 - [ ] Cloth simulation for hair and clothing; confirm the cloth settings against the running game
 - [ ] Animation: confirm the third fade time (+620) and the last two combo-window values in the running game

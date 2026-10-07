@@ -68,5 +68,5 @@ The most common keys, with their probable meaning from names and values. All unc
 
 ## Still open
 
-- **Simulation and rendering** in OpenBL.
+- **Simulation and rendering** in OpenBL: done, see [PARTICLES.md](../PARTICLES.md).
 - **Confirming the semantics** against captures from the original: lifetime and key timing, units of the speeds, the spherical axes, blending (additive or alpha), and sorting.

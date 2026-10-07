@@ -2,6 +2,7 @@ add_library(openbl_render
     character_renderer.cpp
     light_styles.cpp
     material_system.cpp
+    particle_renderer.cpp
     prop_lighting.cpp
     prop_renderer.cpp
     sky_renderer.cpp
@@ -10,7 +11,7 @@ add_library(openbl_render
 add_library(openbl::render ALIAS openbl_render)
 
 target_include_directories(openbl_render PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(openbl_render PUBLIC openbl::formats openbl::vfs openbl::anim openbl::rhi PRIVATE openbl_options openbl_glm)
+target_link_libraries(openbl_render PUBLIC openbl::formats openbl::vfs openbl::anim openbl::particles openbl::rhi PRIVATE openbl_options openbl_glm)
 
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/world.hlsl vert vs_main openbl_world_vs)
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/world.hlsl frag ps_main openbl_world_ps)
@@ -22,3 +23,5 @@ openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/water.hlsl vert vs
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/water.hlsl frag ps_main openbl_water_ps)
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/skinned.hlsl vert vs_main openbl_skinned_vs)
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/skinned.hlsl frag ps_main openbl_skinned_ps)
+openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/particle.hlsl vert vs_main openbl_particle_vs)
+openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/particle.hlsl frag ps_main openbl_particle_ps)

@@ -15,6 +15,7 @@
 #include "openbl/render/asset_source.hpp"
 #include "openbl/render/character_renderer.hpp"
 #include "openbl/render/material_system.hpp"
+#include "openbl/render/particle_renderer.hpp"
 #include "openbl/render/texture_upload.hpp"
 #include "openbl/render/prop_renderer.hpp"
 #include "openbl/render/sky_renderer.hpp"
@@ -289,6 +290,9 @@ public:
             std::cout << "characters: " << c.instances << " instances of " << c.models << " models ("
                       << c.missing_models << " missing), " << c.without_sequence << " without an idle sequence\n";
         }
+        particles_ = std::make_unique<render::ParticleRenderer>(device, *assets_, bsp_, options.shown);
+        std::cout << "particles: " << particles_->stats().systems << " active effects ("
+                  << particles_->stats().missing_definitions << " with a missing definition)\n";
         if (auto sky = bsp_.entities.at(0).find("skyname"); sky != bsp_.entities.at(0).end()) {
             try {
                 sky_ = std::make_unique<render::SkyRenderer>(device, *materials_, sky->second);
@@ -346,6 +350,7 @@ public:
         if (characters_) {
             characters_->update(time);
         }
+        particles_->update(time);
         // Monitor pictures first: each camera's view into its monitor's render
         // target, without monitor screens (a target is never drawn while sampled).
         for (const render::MonitorView& monitor : world_->monitors()) {
@@ -387,6 +392,9 @@ private:
         if (characters_) {
             characters_->draw_translucent(cmd, m, character_settings);
         }
+        // Camera axes in world space are the rows of the view rotation.
+        particles_->draw(cmd, m, {view[0][0], view[1][0], view[2][0]}, {view[0][1], view[1][1], view[2][1]},
+                         {eye.x, eye.y, eye.z});
     }
 
     render::WorldDrawSettings settings_;
@@ -398,6 +406,7 @@ private:
     std::unique_ptr<render::PropRenderer> props_;
     std::unique_ptr<render::SkyRenderer> sky_;
     std::unique_ptr<render::CharacterRenderer> characters_;
+    std::unique_ptr<render::ParticleRenderer> particles_;
 };
 
 int run(const Options& options) {
