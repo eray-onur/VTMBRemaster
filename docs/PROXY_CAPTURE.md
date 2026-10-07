@@ -62,21 +62,28 @@ openbl-viewer --map <map> --pos x y z+64 --angles <-pitch> <yaw> --screenshot ou
 
 The viewer's pitch is the opposite sign of the console's: negative looks down. Yaw is the same.
 
-## Stations
+## Stations (captured)
 
-Teleport points are feet positions. Each view was checked in the OpenBL viewer (except station 5, whose target is a sprite the viewer doesn't draw yet).
+Captured automatically by driving the running game window: console commands typed as keystrokes, injected mouse turns, and screen capture of the game area at 30 fps. The clips are in `docs/gameplay_footages/proxy_captures/` (git-ignored). Positions and angles below are read from the game's `cl_showpos` readout during each clip; the camera is the feet position plus 64 in z.
 
-| # | Station | Map | `SetOrigin` (feet) | Turn to pitch / yaw | Proxies covered | What to check |
+| # | Clip | Map | Feet (x y z) | View pitch / yaw | Proxies | Notes |
 |---|---|---|---|---|---|---|
-| 1 | Hacking terminal | `sp_tutorial_1` | 183, 128, 84 | 0 / 0 (monitor slightly left of centre) | `TextConsole` | Terminal text drawing and refresh |
-| 2 | Haven TV, switched on (use the TV first) | `sm_apartment_1` | −163, 390, 36 | 15 / 315 | `Sine`, `LinearRamp`, `GaussianNoise`, `LessOrEqual`, `Subtract`, `Abs`, `Add`, `Exponential`, `TextureTransform`, plus `TextureScroll` on the news ticker it shows | Flicker, roll and ticker scroll speed |
-| 4 | Wet asphalt | `sm_hub_1` | −1304, −888, −56 | 60 / 0 | `GlobalWetness` | Reflection strength, in rain if possible |
-| 5 | Street light sprite (in the Asylum) | `sm_asylum_1` | −810, 537, −265 | 0 / 0 | `PlayerProximity` (+ `Subtract`) | Fade against distance: back away slowly while recording |
-| 6 | Security camera | `sm_basement_1` | 170, −663, −83 | 0 / 0 | `Sine` on a model | Blink period of the red light |
-| 7 | Oil rig, far out at sea | `sm_beachhouse_1` | −477, −282, 4911 | 0 / 358 | `AnimatedTexture` | Light frame rate (small on screen; zoom in OBS if possible) |
-| 8 | Hollywood street light | `hw_hub_1` | −449, −1342, 145 | 0 / 0 | `LampBeam`, `LampHalo` | Beam and halo fade; turn slowly left and right |
-| 9 | Hospital monitors | `la_hospital_1` | 664, −898, −16 | 0 / 180 | `UniformNoise` | Static: new noise every frame or held |
-| 10 | Lotus water | `ch_lotus_1` | 866, 0, −192 | 60 / 0 | `WaterLOD` and the water shader | Normal-map animation |
+| 1 | `st01_tutorial_terminal` | `sp_tutorial_1` | 263 200 90 | −7.66 / 268.32 | `TextConsole` | Black screen with "Brothers Downtown Garage" in the lower right |
+| 2 | `st02_haven_tv_ticker` | `sm_apartment_1` | −160 388 36 | 12.91 / 309.08 | TV chain + `TextureScroll` | TV switched on with `ent_fire tv_screen ScriptUnhide`; the newscaster feed and the scrolling ticker show |
+| 4 | `st04_hub_asphalt` | `sm_hub_1` | −1304 −888 −111 | 40.79 / 0 | `GlobalWetness` | Standing on the alley floor, no rain; manhole in view |
+| 5 | `st05_asylum_light_backing` | `sm_asylum_1` | from −810 537 −265, backing away along −x | 0 / 0 | `PlayerProximity` | No sprite glow visible up close or at about 240 units |
+| 6 | `st06_security_camera_side`, `_front` | `sm_basement_1` | 170 −663 −89 and 250 −743 −89 | 0 / 359.40 and 0 / 85.13 | `Sine` | No red light lit; it may need the camera to be triggered |
+| 7 | `st07_oil_rig` | `sm_beachhouse_1` | −477 −282 4911 | 0 / 356.08 | `AnimatedTexture` | Rig small, near the centre |
+| 8 | `st08_hollywood_light_still`, `_backing` | `hw_hub_1` | −449 −1342 145, then backing about 300 units | 0 / 356.66 | `LampBeam`, `LampHalo` | Lamp head centred |
+| 9 | `st09_hospital_monitors` | `la_hospital_1` | 520 −898 −16 | 0 / 351.52 | `UniformNoise` | Two monitors; the left shows a camera feed, the right is dark |
+| 10 | `st10_lotus_water` | `ch_lotus_1` | 866 0 −208 | 66.95 / 1.33 | `WaterLOD` + water shader | Looking down into the pool |
+
+**Setup that made the captures repeatable:**
+
+- `sensitivity 1`, `m_yaw 0.022` and `m_pitch 0.022` give about 0.068° of yaw and 0.061° of pitch per injected mouse count. That isn't quite linear, so each aim is checked against the readout.
+- `noclip` is a toggle, so don't send it twice.
+- A teleport typed while the map is still loading is ignored.
+- Facing directions can't be derived blindly. The hospital monitors and the tutorial terminal face the opposite way from their brush normals or prop yaw; the haven TV doesn't. Check each view with a frame grab before recording.
 
 There is no station 3 any more. The haven TV is a `func_monitor` (`tv_screen`) showing a live feed from a `point_camera` (`news_camera`) that films the news-ticker strip in a hidden room. The TV starts hidden until switched on, so watching it covers the ticker too. It also means OpenBL needs render-to-texture monitors before this station can match.
 
