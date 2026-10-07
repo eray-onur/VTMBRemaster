@@ -42,6 +42,41 @@ FetchContent_MakeAvailable(minimp3)
 add_library(openbl_minimp3 INTERFACE)
 target_include_directories(openbl_minimp3 SYSTEM INTERFACE ${minimp3_SOURCE_DIR})
 
+# FFmpeg (LGPL, dynamically linked): decodes the Bink intro movies. Windows
+# uses a pinned prebuilt LGPL shared build; other platforms the system FFmpeg.
+option(OPENBL_WITH_FFMPEG "Use FFmpeg (LGPL) to play Bink movies" ON)
+set(OPENBL_FFMPEG_DLLS "")
+if(OPENBL_WITH_FFMPEG)
+    add_library(openbl_ffmpeg INTERFACE)
+    if(WIN32)
+        FetchContent_Declare(ffmpeg_prebuilt
+            URL https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-07-13-07/ffmpeg-n8.1.3-14-g330caae0c1-win64-lgpl-shared-8.1.zip
+            URL_HASH SHA256=30fdaaeb116730fdd6432c2663af0e9ecdf1d6cc387ac085cc1faf8494942510
+            SOURCE_SUBDIR openbl-no-cmake)
+        FetchContent_MakeAvailable(ffmpeg_prebuilt)
+        set(_ff ${ffmpeg_prebuilt_SOURCE_DIR})
+        target_include_directories(openbl_ffmpeg SYSTEM INTERFACE ${_ff}/include)
+        foreach(lib avformat avcodec avutil swscale swresample)
+            target_link_libraries(openbl_ffmpeg INTERFACE ${_ff}/lib/${lib}.lib)
+        endforeach()
+        file(GLOB OPENBL_FFMPEG_DLLS ${_ff}/bin/*.dll)
+    else()
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(OPENBL_FFMPEG_PC REQUIRED IMPORTED_TARGET
+            libavformat libavcodec libavutil libswscale libswresample)
+        target_link_libraries(openbl_ffmpeg INTERFACE PkgConfig::OPENBL_FFMPEG_PC)
+    endif()
+endif()
+
+# Copies the FFmpeg DLLs next to an executable (Windows only).
+function(openbl_copy_ffmpeg_dlls target)
+    if(OPENBL_FFMPEG_DLLS)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${OPENBL_FFMPEG_DLLS} $<TARGET_FILE_DIR:${target}>
+            VERBATIM)
+    endif()
+endfunction()
+
 if(NOT OPENBL_BUILD_VIEWER)
     return()
 endif()

@@ -1,5 +1,8 @@
 add_subdirectory(formats)
 add_subdirectory(vfs)
+if(OPENBL_WITH_FFMPEG)
+    add_subdirectory(media)
+endif()
 
 if(OPENBL_BUILD_VIEWER)
     add_subdirectory(platform)

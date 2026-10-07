@@ -32,10 +32,11 @@ What works today:
 
 Requirements: CMake 3.25+, Ninja, and a C++20 compiler (MSVC 19.40+, Clang 17+ or GCC 13+). Builds are 64-bit only. To run the viewer you need a GPU and driver with Vulkan 1.3; the Vulkan SDK is **not** required.
 
-The first configure downloads pinned versions of the dependencies: zlib and doctest, plus SDL3, the Vulkan headers, volk, Vulkan Memory Allocator, GLM and glslang for the renderer. glslang is used only at build time, to compile the HLSL shaders in `shaders/` to SPIR-V. Useful options:
+The first configure downloads pinned versions of the dependencies: zlib, minimp3 (public domain, MP3 voice lines), FFmpeg (LGPL, Bink movies; a prebuilt shared build on Windows, the system FFmpeg elsewhere) and doctest, plus SDL3, the Vulkan headers, volk, Vulkan Memory Allocator, GLM and glslang for the renderer. glslang is used only at build time, to compile the HLSL shaders in `shaders/` to SPIR-V. Useful options:
 
 - `-DOPENBL_BUILD_VIEWER=OFF` builds only the format libraries and the CLI, without any renderer dependencies.
 - `-DOPENBL_USE_SYSTEM_ZLIB=ON` links the system zlib instead of building it.
+- `-DOPENBL_WITH_FFMPEG=OFF` builds without FFmpeg; the Bink intro movies then can't be played.
 
 On Windows, open a *x64 Native Tools* prompt for Visual Studio, then run:
 

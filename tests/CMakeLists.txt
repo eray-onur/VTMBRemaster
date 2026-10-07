@@ -10,6 +10,7 @@ FetchContent_MakeAvailable(doctest)
 add_executable(openbl_tests
     main.cpp
     test_ain.cpp
+    test_bik.cpp
     test_bsp.cpp
     test_dlg.cpp
     test_expressions.cpp
@@ -35,6 +36,11 @@ add_executable(openbl_tests
 target_link_libraries(openbl_tests PRIVATE openbl::formats openbl::vfs doctest::doctest ZLIB::ZLIB openbl_options)
 # Include real std headers instead of doctest's forward declarations, which newer MSVC rejects.
 target_compile_definitions(openbl_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
+if(OPENBL_WITH_FFMPEG)
+    target_link_libraries(openbl_tests PRIVATE openbl::media)
+    target_compile_definitions(openbl_tests PRIVATE OPENBL_WITH_FFMPEG)
+    openbl_copy_ffmpeg_dlls(openbl_tests)
+endif()
 
 # Tests that need real game data read OPENBL_GAME_DIR and are skipped when it is unset.
 add_test(NAME openbl_tests COMMAND openbl_tests)

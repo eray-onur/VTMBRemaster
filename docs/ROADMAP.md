@@ -46,7 +46,7 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Sound schemes (`sound/schemes/*.txt`)
 - [x] Sound: `.wav` decoding (PCM and Microsoft ADPCM); `.sfk`/`.pk` identified as editor leftovers
 - [x] Sound: `.mp3` decoding (minimp3, CC0); all 5,171 voice lines decode
-- [ ] Video: `.bik` intro movies (codec choice to be decided)
+- [x] Video: `.bik` container parser and decoding via FFmpeg libavcodec (LGPL, dynamic); all four intro movies decode
 - [x] UI layouts and localisation: `.res`, `scripts/dialog_*`, `resource/gameui_english.txt` (UTF-16)
 - [x] Fonts: `.fnt` bitmap fonts (glyph maps, pages, metrics)
 - [x] `.bmp`: uncompressed bitmaps (the 25 shipped files are face-poser toolbar icons)

@@ -5,10 +5,14 @@
 #include "openbl/formats/zip.hpp"
 #include "openbl/formats/image_decode.hpp"
 #include "openbl/formats/image_read.hpp"
+#include "openbl/formats/image_write.hpp"
 #include "openbl/formats/keyvalues.hpp"
 #include "openbl/formats/mdl.hpp"
 #include "openbl/formats/mp3.hpp"
 #include "openbl/formats/sav.hpp"
+#ifdef OPENBL_WITH_FFMPEG
+#include "openbl/media/video.hpp"
+#endif
 #include "openbl/formats/save_write.hpp"
 #include "openbl/formats/vtx.hpp"
 #include "openbl/formats/wav.hpp"
@@ -70,6 +74,7 @@ void usage() {
                  "  openbl-cli image compare <reference> <candidate> [x y w h]\n"
                  "  openbl-cli audio export <sound> <out.wav> [game-dir]\n"
                  "  openbl-cli save rewrite <in.sav> <out.sav>\n"
+                 "  openbl-cli video frame <movie> <n> <out.png> [game-dir]\n"
                  "\n"
                  "<texture> and <material> are game paths with or without extension, e.g.\n"
                  "materials/brick/bradwllb; the materials/ prefix is optional for <material>.\n"
@@ -1002,6 +1007,39 @@ int cmd_bsp(const std::vector<std::string_view>& args) {
 
 // Brightness and difference statistics between two screenshots (PNG or TGA),
 // optionally restricted to a region given in reference-image pixels.
+// Writes frame N of a movie (e.g. media/troika.bik) to a PNG.
+int cmd_video(const std::vector<std::string_view>& args) {
+    if (args.size() < 5 || args[1] != "frame") {
+        usage();
+        return 2;
+    }
+#ifdef OPENBL_WITH_FFMPEG
+    const vfs::GameFileSystem gfs(game_dir_arg(args, 5), game_mods());
+    const std::string path = formats::normalize_game_path(args[2]);
+    const auto data = gfs.read(path);
+    if (!data) {
+        std::cerr << "not found: " << path << '\n';
+        return 1;
+    }
+    media::VideoDecoder dec(*data);
+    const auto wanted = std::stoul(std::string(args[3]));
+    media::VideoFrame frame;
+    for (std::size_t i = 0; i <= wanted; ++i) {
+        if (!dec.next(frame)) {
+            std::cerr << "the movie has only " << i << " frames\n";
+            return 1;
+        }
+    }
+    formats::write_png(fs::path(args[4]), frame.rgba, frame.width, frame.height);
+    std::cout << dec.codec_name() << ' ' << frame.width << 'x' << frame.height << ", frame " << wanted << " at "
+              << frame.time << " s -> " << args[4] << '\n';
+    return 0;
+#else
+    std::cerr << "built without FFmpeg (OPENBL_WITH_FFMPEG=OFF)\n";
+    return 1;
+#endif
+}
+
 // Parses a save and writes it back with OpenBL's writer (round-trip testing).
 int cmd_save(const std::vector<std::string_view>& args) {
     if (args.size() < 4 || args[1] != "rewrite") {
@@ -1193,7 +1231,7 @@ constexpr FormatStatus kFormats[] = {
     {".pk", "reference", "audio editor peak files (leftovers)"},
     {".mp3", "parsed", "voice lines and music (minimp3)"},
     {".wav", "parsed", "audio: PCM and Microsoft ADPCM"},
-    {".bik", "codec", "Bink video"},
+    {".bik", "parsed", "Bink video (container; decoded with FFmpeg)"},
     {".psh", "reference", "original DX8 pixel shader assembly"},
     {".vcs", "reference", "original compiled shaders"},
     {".dll", "reference", "original engine binaries (never disassembled)"},
@@ -1345,6 +1383,9 @@ int main(int argc, char** argv) {
         }
         if (args[0] == "image") {
             return cmd_image(args);
+        }
+        if (args[0] == "video") {
+            return cmd_video(args);
         }
         if (args[0] == "save") {
             return cmd_save(args);
