@@ -11,6 +11,7 @@ add_library(openbl_formats
     lip.cpp
     localization.cpp
     mdl.cpp
+    mp3.cpp
     path.cpp
     sav.cpp
     save_state.cpp
@@ -29,4 +30,4 @@ add_library(openbl_formats
 add_library(openbl::formats ALIAS openbl_formats)
 
 target_include_directories(openbl_formats PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(openbl_formats PRIVATE openbl_options ZLIB::ZLIB)
+target_link_libraries(openbl_formats PRIVATE openbl_options ZLIB::ZLIB openbl_minimp3)

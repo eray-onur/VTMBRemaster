@@ -33,6 +33,15 @@ else()
     add_library(ZLIB::ZLIB ALIAS openbl_zlib)
 endif()
 
+# minimp3 (CC0, public domain): header-only MP3 decoder for the game's voice lines.
+FetchContent_Declare(minimp3
+    GIT_REPOSITORY https://github.com/lieff/minimp3.git
+    GIT_TAG ea99364f61c14656440e8d77e9c233ccf3124633
+    SOURCE_SUBDIR openbl-no-cmake)
+FetchContent_MakeAvailable(minimp3)
+add_library(openbl_minimp3 INTERFACE)
+target_include_directories(openbl_minimp3 SYSTEM INTERFACE ${minimp3_SOURCE_DIR})
+
 if(NOT OPENBL_BUILD_VIEWER)
     return()
 endif()

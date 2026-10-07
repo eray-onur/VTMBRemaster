@@ -23,7 +23,7 @@ Other chunks seen: `bext`, `minf`, `elm1`, `elmo` (editor metadata; ignored).
 
 ## MP3
 
-5,171 files, mostly voice lines: MPEG-1 Layer III at 44,100 Hz, almost all mono. Decoding is planned with a public-domain single-header decoder when audio playback is built.
+5,171 files, mostly voice lines: MPEG-1 Layer III at 44,100 Hz, 5,121 of them mono, about 861 minutes in all. `decode_mp3` (`openbl/formats/mp3.hpp`) decodes them with minimp3, a public-domain (CC0) single-header decoder fetched at build time. All 5,171 decode, and all but one pass the same smoothness check as the WAV files. The exception is Skelter's whispered line (`dlg/downtown la/skelter/whisper.mp3`), which really is noise-like. `openbl-cli audio export` writes either kind to a PCM WAV.
 
 ## Editor leftovers
 

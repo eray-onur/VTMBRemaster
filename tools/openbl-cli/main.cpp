@@ -7,6 +7,7 @@
 #include "openbl/formats/image_read.hpp"
 #include "openbl/formats/keyvalues.hpp"
 #include "openbl/formats/mdl.hpp"
+#include "openbl/formats/mp3.hpp"
 #include "openbl/formats/vtx.hpp"
 #include "openbl/formats/wav.hpp"
 #include "openbl/formats/path.hpp"
@@ -997,7 +998,7 @@ int cmd_bsp(const std::vector<std::string_view>& args) {
 
 // Brightness and difference statistics between two screenshots (PNG or TGA),
 // optionally restricted to a region given in reference-image pixels.
-// Decodes a game sound (WAV: PCM or Microsoft ADPCM) to a 16-bit PCM WAV file.
+// Decodes a game sound (WAV: PCM or Microsoft ADPCM; MP3) to a 16-bit PCM WAV file.
 int cmd_audio(const std::vector<std::string_view>& args) {
     if (args.size() < 4 || args[1] != "export") {
         usage();
@@ -1013,7 +1014,7 @@ int cmd_audio(const std::vector<std::string_view>& args) {
         std::cerr << "not found: " << path << "\n";
         return 1;
     }
-    const auto clip = formats::decode_wav(*data);
+    const auto clip = path.ends_with(".mp3") ? formats::decode_mp3(*data) : formats::decode_wav(*data);
     const auto bytes = static_cast<std::uint32_t>(clip.samples.size() * 2);
     std::ofstream out{fs::path(args[3]), std::ios::binary};
     auto u32 = [&](std::uint32_t v) { out.write(reinterpret_cast<const char*>(&v), 4); };
@@ -1169,7 +1170,7 @@ constexpr FormatStatus kFormats[] = {
     {".bmp", "parsed", "face-poser toolbar icons (tool leftovers)"},
     {".sfk", "reference", "Sound Forge peak files (editor leftovers)"},
     {".pk", "reference", "audio editor peak files (leftovers)"},
-    {".mp3", "codec", "audio"},
+    {".mp3", "parsed", "voice lines and music (minimp3)"},
     {".wav", "parsed", "audio: PCM and Microsoft ADPCM"},
     {".bik", "codec", "Bink video"},
     {".psh", "reference", "original DX8 pixel shader assembly"},

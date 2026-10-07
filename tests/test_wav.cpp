@@ -1,4 +1,5 @@
 #include "openbl/formats/error.hpp"
+#include "openbl/formats/mp3.hpp"
 #include "openbl/formats/wav.hpp"
 #include "openbl/vfs/game_filesystem.hpp"
 #include "test_support.hpp"
@@ -7,6 +8,8 @@
 
 #include <cmath>
 #include <cstring>
+#include <map>
+#include <span>
 #include <string>
 
 using namespace openbl;
@@ -123,4 +126,67 @@ TEST_CASE("WAV integration: every sound in the real install decodes") {
                   << adpcm_checked << " with a declared length, " << length_mismatch << " not matching it");
     CHECK(files > 3800);
     CHECK(length_mismatch == 0);
+}
+
+TEST_CASE("MP3 rejects data without frames") {
+    const std::string junk(4096, 'x');
+    CHECK_THROWS_AS(decode_mp3(std::as_bytes(std::span(junk.data(), junk.size()))), FormatError);
+}
+
+TEST_CASE("MP3 integration: every voice line in the real install decodes") {
+    auto game = test::game_dir();
+    if (!game) {
+        MESSAGE("OPENBL_GAME_DIR not set; skipping");
+        return;
+    }
+    const vfs::GameFileSystem gfs(*game);
+    std::size_t files = 0, empty = 0, failed = 0, mono = 0, rough = 0;
+    double seconds = 0;
+    std::map<std::uint32_t, std::size_t> rates;
+    std::string first_failure;
+    for (const auto& path : gfs.list_files()) {
+        if (!path.ends_with(".mp3")) {
+            continue;
+        }
+        const auto data = gfs.read(path);
+        if (data->empty()) {
+            ++empty;
+            continue;
+        }
+        AudioClip clip;
+        try {
+            clip = decode_mp3(*data);
+        } catch (const FormatError& e) {
+            if (first_failure.empty()) {
+                first_failure = path + ": " + e.what();
+            }
+            ++failed;
+            continue;
+        }
+        ++files;
+        ++rates[clip.sample_rate];
+        mono += clip.channels == 1;
+        seconds += static_cast<double>(clip.frames()) / clip.sample_rate;
+        // Decoded speech is smooth: neighbouring samples differ far less than
+        // the signal level (white noise would give about 1.4).
+        double diff = 0, level = 0;
+        for (std::size_t i = clip.channels; i < clip.samples.size(); ++i) {
+            diff += std::abs(double(clip.samples[i]) - clip.samples[i - clip.channels]);
+            level += std::abs(double(clip.samples[i]));
+        }
+        if (level > 0 && diff / level > 0.8) {
+            ++rough;
+            MESSAGE("noise-like: " << path << " ratio " << diff / level);
+        }
+    }
+    std::string rate_list;
+    for (const auto& [r, n] : rates) {
+        rate_list += std::to_string(r) + " Hz x" + std::to_string(n) + " ";
+    }
+    MESSAGE(files << " MP3s (" << std::lround(seconds / 60) << " minutes, " << mono << " mono), " << empty
+                  << " empty, " << failed << " failed " << first_failure << "; " << rate_list << "; " << rough
+                  << " noise-like");
+    CHECK(files > 5000);
+    CHECK(failed == 0);
+    CHECK(rough <= 1); // Skelter's whispered line is genuinely noise-like.
 }
