@@ -204,6 +204,12 @@ public:
             BspNode node;
             node.plane = r.i32();
             node.children = {r.i32(), r.i32()};
+            r.bytes(12); // Bounds.
+            node.first_face = r.u16();
+            node.num_faces = r.u16();
+            if (static_cast<std::size_t>(node.first_face) + node.num_faces > bsp.faces.size()) {
+                in_.fail("BSP node faces out of range");
+            }
             const auto valid = [&](std::int32_t c) {
                 return c >= 0 ? static_cast<std::size_t>(c) < lumps_[bsp_lump::Nodes].length / 32
                               : static_cast<std::size_t>(-static_cast<std::int64_t>(c) - 1) < bsp.leafs.size();
@@ -940,6 +946,70 @@ bool trace_node(const BspFile& bsp, std::int32_t node, const Vec3& a, const Vec3
            trace_node(bsp, n.children[1 - near_side], mid, b, mask, depth + 1);
 }
 
+// True if `p`, on the face's plane, is inside the face's convex polygon.
+bool face_contains(const BspFile& bsp, const BspFace& face, const Vec3& p) {
+    const Vec3& n = bsp.planes[face.plane].normal;
+    bool inside_pos = true, inside_neg = true; // Either winding.
+    for (std::size_t e = 0; e < face.num_edges; ++e) {
+        const std::int32_t se = bsp.surf_edges[static_cast<std::size_t>(face.first_edge) + e];
+        const auto& edge = bsp.edges[static_cast<std::size_t>(se < 0 ? -static_cast<std::int64_t>(se) : se)];
+        const Vec3& v0 = bsp.vertices[se >= 0 ? edge[0] : edge[1]];
+        const Vec3& v1 = bsp.vertices[se >= 0 ? edge[1] : edge[0]];
+        const Vec3 d{v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]};
+        const Vec3 q{p[0] - v0[0], p[1] - v0[1], p[2] - v0[2]};
+        const Vec3 c{d[1] * q[2] - d[2] * q[1], d[2] * q[0] - d[0] * q[2], d[0] * q[1] - d[1] * q[0]};
+        const float s = c[0] * n[0] + c[1] * n[1] + c[2] * n[2];
+        inside_pos = inside_pos && s >= -0.01f;
+        inside_neg = inside_neg && s <= 0.01f;
+    }
+    return face.num_edges >= 3 && (inside_pos || inside_neg);
+}
+
+enum class SurfaceTrace { Miss, Hit, Blocked };
+
+SurfaceTrace trace_surface(const BspFile& bsp, std::int32_t node, const Vec3& a, const Vec3& b, int depth,
+                           BspSurfaceHit& hit) {
+    if (node < 0) {
+        const auto leaf = static_cast<std::size_t>(-static_cast<std::int64_t>(node) - 1);
+        return leaf < bsp.leafs.size() && (bsp.leafs[leaf].contents & contents::Solid) ? SurfaceTrace::Blocked
+                                                                                        : SurfaceTrace::Miss;
+    }
+    if (depth > 256 || static_cast<std::size_t>(node) >= bsp.nodes.size()) {
+        return SurfaceTrace::Miss;
+    }
+    const BspNode& n = bsp.nodes[static_cast<std::size_t>(node)];
+    const BspPlane& p = bsp.planes[static_cast<std::size_t>(n.plane)];
+    const float da = p.normal[0] * a[0] + p.normal[1] * a[1] + p.normal[2] * a[2] - p.dist;
+    const float db = p.normal[0] * b[0] + p.normal[1] * b[1] + p.normal[2] * b[2] - p.dist;
+    if ((da >= 0) == (db >= 0)) {
+        return trace_surface(bsp, n.children[da >= 0 ? 0 : 1], a, b, depth + 1, hit);
+    }
+    const Vec3 mid = lerp(a, b, da / (da - db));
+    const int near_side = da >= 0 ? 0 : 1;
+    if (const auto r = trace_surface(bsp, n.children[near_side], a, mid, depth + 1, hit); r != SurfaceTrace::Miss) {
+        return r;
+    }
+    for (std::size_t i = 0; i < n.num_faces; ++i) {
+        const std::size_t f = static_cast<std::size_t>(n.first_face) + i;
+        const BspFace& face = bsp.faces[f];
+        if (face.side != near_side || face.light_offset < 0 || face.style_count() == 0 || face.dispinfo >= 0 ||
+            face.texinfo >= bsp.texinfos.size()) {
+            continue;
+        }
+        const BspTexInfo& ti = bsp.texinfos[face.texinfo];
+        if ((ti.flags & (surf_flags::Sky | surf_flags::Sky2D | surf_flags::NoDraw)) || !face_contains(bsp, face, mid)) {
+            continue;
+        }
+        const auto uv = lightmap_uv(face, ti, mid);
+        hit.face = f;
+        hit.point = mid;
+        hit.luxel = {std::clamp(uv[0], 0.0f, static_cast<float>(face.lightmap_size[0])),
+                     std::clamp(uv[1], 0.0f, static_cast<float>(face.lightmap_size[1]))};
+        return SurfaceTrace::Hit;
+    }
+    return trace_surface(bsp, n.children[1 - near_side], mid, b, depth + 1, hit);
+}
+
 } // namespace
 
 bool BspFile::segment_blocked(const Vec3& a, const Vec3& b, std::int32_t mask) const {
@@ -947,6 +1017,15 @@ bool BspFile::segment_blocked(const Vec3& a, const Vec3& b, std::int32_t mask) c
         return false;
     }
     return trace_node(*this, models[0].head_node, a, b, mask, 0);
+}
+
+std::optional<BspSurfaceHit> BspFile::trace_lightmap(const Vec3& a, const Vec3& b) const {
+    BspSurfaceHit hit;
+    if (nodes.empty() || models.empty() ||
+        trace_surface(*this, models[0].head_node, a, b, 0, hit) != SurfaceTrace::Hit) {
+        return std::nullopt;
+    }
+    return hit;
 }
 
 BspFile parse_bsp(std::span<const std::byte> data) {

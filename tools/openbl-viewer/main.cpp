@@ -311,10 +311,8 @@ public:
             sky_->draw(cmd, to_array(projection * glm::mat4(glm::mat3(view))));
         }
         const auto m = to_array(projection * view);
-        // Models keep their own scale: their lighting is still an estimate (docs/RENDERING.md).
-        const render::PropDrawSettings prop_settings{render::PropDrawSettings{}.light_scale, settings_.fullbright};
-        const render::CharacterDrawSettings character_settings{render::CharacterDrawSettings{}.light_scale,
-                                                               settings_.fullbright};
+        const render::PropDrawSettings prop_settings{settings_.light_scale, settings_.fullbright};
+        const render::CharacterDrawSettings character_settings{settings_.light_scale, settings_.fullbright};
         if (characters_) {
             characters_->update(time);
         }

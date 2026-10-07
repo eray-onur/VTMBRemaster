@@ -65,7 +65,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Materials: patch materials, pakfile overrides, alpha test, translucency, self-illumination, two-layer blends
 - [x] Static props and `prop_*` entities (LOD 0, default body group, skins)
 - [x] Prop lighting: per-vertex ambient cube from visible style-0 world lights (BSP line-of-sight test)
-- [ ] Prop lighting: replace the bounce estimate (30% of the floor lightmap) with the original's ambient term; lights with styles other than 0
+- [x] Prop lighting: indirect light gathered from the surrounding lightmaps (162 traced rays), fitted to original-game captures
+- [ ] Prop lighting: confirm in more rooms and outdoors (sky ambient); per-vertex lighting if the original uses it (`r_staticlighting`); lights with styles other than 0
 - [x] Light styles: all lightmap styles drawn, weighted per style (animated Quake patterns at 10 letters/s; switchable styles 32+ on unless all their lights start dark); props include styled world lights
 - [ ] Light styles: toggling switchable lights at runtime (needs entity I/O, Phase 2)
 - [x] 2D skybox
@@ -74,7 +75,7 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Light styles, translucent sorting, cubemap reflections, prop fade distances
 - [x] Parity tooling: viewer shot lists (`--shots`, `--fov`, `--size`), `openbl-cli image compare` (see docs/PARITY.md)
 - [x] Lightmap brightness measured against original-game captures: base × luxel in linear terms (scale 1.0, was 2.3); capture method verified; `--fov` follows the game's 4:3-horizontal convention ([PARITY.md](PARITY.md))
-- [ ] Prop lighting parity: props are slightly dark and too blue against the captures (original ÷ OpenBL 1.16 / 1.10 / 0.89)
+- [ ] The ceiling fan in `sp_tutorial_1` is drawn without its ceiling rod (seen in the parity captures)
 - [ ] Gamma-space shading option (the original multiplies in pure gamma 2.2; OpenBL's sRGB pipeline is up to ~15% darker in dark tones)
 - [x] Static models in maps
 - [x] Skinned and animated models: GPU skinning (per-draw bone data), NPCs from map entities playing their first `ACT_IDLE` sequence

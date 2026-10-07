@@ -9,6 +9,7 @@
 #include "openbl/formats/phy.hpp"
 
 #include <map>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -74,6 +75,7 @@ constexpr std::int32_t NoDraw = 0x80;
 constexpr std::int32_t Hint = 0x100;
 constexpr std::int32_t Skip = 0x200;
 constexpr std::int32_t NoLight = 0x400;
+constexpr std::int32_t BumpLight = 0x800; // Four lightmaps per style; the first is the flat one.
 } // namespace surf_flags
 
 struct BspPlane {
@@ -196,6 +198,14 @@ struct BspWorldLight {
 struct BspNode {
     std::int32_t plane = 0;
     std::array<std::int32_t, 2> children{}; // >= 0: node; < 0: leaf -(index + 1).
+    std::uint16_t first_face = 0, num_faces = 0; // Faces lying on this node's plane.
+};
+
+// Where a ray first meets a lightmapped world face; see BspFile::trace_lightmap.
+struct BspSurfaceHit {
+    std::size_t face = 0;
+    Vec3 point{};
+    std::array<float, 2> luxel{}; // Lightmap coordinates within the face, in luxels.
 };
 
 namespace contents {
@@ -364,6 +374,11 @@ struct BspFile {
     // True if the segment from `a` to `b` passes through a world leaf whose
     // contents intersect `mask` (solid by default).
     bool segment_blocked(const Vec3& a, const Vec3& b, std::int32_t mask = contents::Solid) const;
+    // The first lightmapped world face the segment from `a` to `b` crosses,
+    // found on the node planes along the way (faces without a lightmap,
+    // displacements and sky are skipped). The face must contain the crossing
+    // within its lightmap extents.
+    std::optional<BspSurfaceHit> trace_lightmap(const Vec3& a, const Vec3& b) const;
 };
 
 // Throws FormatError.

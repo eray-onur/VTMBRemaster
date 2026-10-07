@@ -27,7 +27,7 @@ struct PropStats {
 };
 
 struct PropDrawSettings {
-    float light_scale = 2.2974f; // Provisional; the world's is 1.0 (docs/RENDERING.md).
+    float light_scale = 1.0f; // As for the world (docs/RENDERING.md).
     bool fullbright = false;
 };
 

@@ -28,7 +28,12 @@ Bump-mapped faces have three lightmaps, one per basis direction in tangent space
 
 ## Models (`VertexLitGeneric`)
 
-Lit colour = base texture × colour modulation (`$color`, alpha) × per-vertex lighting × 2 × (overbright ÷ 2). The per-vertex lighting is computed by vertex shaders that are only shipped compiled. How it is scaled has not been worked out. OpenBL scales its estimated ambient cube by a provisional 2.297; against two captures of `sp_tutorial_1`, props then average 1.16 / 1.10 / 0.89 of OpenBL's brightness in the original (red / green / blue linear), so OpenBL's props are slightly dark and too blue. The scale may stay, but the ambient term itself is still an estimate. Self-illumination blends to base × tint by base alpha, as for the world. Alpha-tested models discard pixels with a texture-kill instruction driven by a separate coordinate.
+Lit colour = base texture × colour modulation (`$color`, alpha) × per-vertex lighting × 2 × (overbright ÷ 2). The per-vertex lighting is computed by vertex shaders that are only shipped compiled. How the original computes it has not been read, so OpenBL uses a model fitted to captures, in the same units as the world (lit colour = base × light in linear terms, scale 1.0). One ambient cube per model, at its lighting origin:
+
+- **Direct:** every visible point, spot and emissive-surface world light, with its attenuation and spot cone, spread over the cube's six directions by cosine.
+- **Indirect:** 162 rays traced from the point through the BSP (`BspFile::trace_lightmap`) to the first lightmapped surface. Its summed light styles are averaged per cube direction with cosine weights, and weighted by **0.5**.
+
+Against two captures of `sp_tutorial_1`, props in the original are 1.04–1.08 / 0.99–1.06 / 1.08–1.15 as bright as in OpenBL (red / green / blue, geometric mean over props). The props differ from each other by about 18%. Weighting the surfaces by their reflectivity fitted worse. The previous model (direct light plus 30% of the floor lightmap below, at scale 2.297) differed by up to 84% between props and was too blue. Still open: whether the original lights per vertex (its console has `r_staticlighting 1`), sky ambient light for outdoor props, and captures from more rooms to confirm the 0.5. Self-illumination blends to base × tint by base alpha, as for the world. Alpha-tested models discard pixels with a texture-kill instruction driven by a separate coordinate.
 
 ## Unlit surfaces (`UnlitGeneric`)
 

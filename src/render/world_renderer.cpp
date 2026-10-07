@@ -34,7 +34,7 @@ static_assert(sizeof(Vertex) == 40);
 
 // Lightmap styles drawn per face (faces store up to 8; the Steam release uses at most 4).
 constexpr std::size_t kMaxFaceStyles = 4;
-constexpr std::int32_t kSurfBumpLight = 0x800; // Four lightmaps per style; the first is the flat one.
+constexpr std::int32_t kSurfBumpLight = formats::surf_flags::BumpLight;
 
 struct PushConstants {
     float mvp[16];

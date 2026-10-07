@@ -583,6 +583,41 @@ TEST_CASE("BSP decal projection") {
     CHECK(max_u == doctest::Approx(0.625f));
 }
 
+TEST_CASE("BSP lightmap trace") {
+    // A 64 x 64 floor face at z = 0 on the only node; empty above, solid below.
+    BspFile bsp;
+    bsp.planes.push_back({{0, 0, 1}, 0});
+    bsp.vertices = {{0, 0, 0}, {0, 64, 0}, {64, 64, 0}, {64, 0, 0}};
+    bsp.edges = {{0, 1}, {1, 2}, {2, 3}, {3, 0}};
+    bsp.surf_edges = {0, 1, 2, 3};
+    bsp.texinfos.push_back({});
+    bsp.texinfos[0].lightmap_vecs = {{{1 / 16.f, 0, 0, 0}, {0, 1 / 16.f, 0, 0}}};
+    BspFace face;
+    face.num_edges = 4;
+    face.styles = {0, 255, 255, 255, 255, 255, 255, 255};
+    face.light_offset = 0;
+    face.lightmap_size = {4, 4};
+    bsp.faces.push_back(face);
+    bsp.lighting.resize(5 * 5 * 4);
+    BspNode node;
+    node.children = {-1, -2};
+    node.num_faces = 1;
+    bsp.nodes.push_back(node);
+    bsp.leafs.resize(2);
+    bsp.leafs[1].contents = contents::Solid;
+    bsp.models.push_back({});
+
+    const auto hit = bsp.trace_lightmap({40, 24, 10}, {40, 24, -10});
+    REQUIRE(hit);
+    CHECK(hit->face == 0);
+    CHECK(hit->point[2] == doctest::Approx(0.0f));
+    CHECK(hit->luxel[0] == doctest::Approx(2.5f));
+    CHECK(hit->luxel[1] == doctest::Approx(1.5f));
+    CHECK_FALSE(bsp.trace_lightmap({100, 24, 10}, {100, 24, -10})); // Off the face: blocked by solid.
+    CHECK_FALSE(bsp.trace_lightmap({40, 24, 10}, {50, 24, 20}));    // Never reaches the plane.
+    CHECK_FALSE(bsp.trace_lightmap({40, 24, -10}, {40, 24, 10}));   // Starts inside solid.
+}
+
 TEST_CASE("BSP integration: infodecals land on world faces") {
     auto game = test::game_dir();
     if (!game) {
