@@ -48,7 +48,7 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Console scripts: `.cfg`, `valve.rc`, `settings.scr` (with the console in Phase 2)
 - [x] Save games: `.sav` container and `.HL1` map state (self-describing records, entity table, globals, event queue, physics headers, Python pickles)
 - [ ] Save games: `.HL2`/`.HL3`, a restricted pickle reader, entity trailing data, writing saves
-- [ ] Python bytecode (`.pyc`) in archives; identify the embedded interpreter's version
+- [x] Python: the engine embeds Python 2.1 (`.pyc` magic 60202); every compiled script has its source shipped (docs/formats/python.md)
 
 ## Phase 1: rendering and map viewer
 
