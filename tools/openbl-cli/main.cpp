@@ -8,6 +8,7 @@
 #include "openbl/formats/keyvalues.hpp"
 #include "openbl/formats/mdl.hpp"
 #include "openbl/formats/vtx.hpp"
+#include "openbl/formats/wav.hpp"
 #include "openbl/formats/path.hpp"
 #include "openbl/formats/text_encoding.hpp"
 #include "openbl/formats/tth.hpp"
@@ -63,6 +64,7 @@ void usage() {
                  "  openbl-cli bsp info <map> [game-dir]\n"
                  "  openbl-cli bsp export <map> <out.obj> [game-dir]\n"
                  "  openbl-cli image compare <reference> <candidate> [x y w h]\n"
+                 "  openbl-cli audio export <sound> <out.wav> [game-dir]\n"
                  "\n"
                  "<texture> and <material> are game paths with or without extension, e.g.\n"
                  "materials/brick/bradwllb; the materials/ prefix is optional for <material>.\n"
@@ -951,6 +953,45 @@ int cmd_bsp(const std::vector<std::string_view>& args) {
 
 // Brightness and difference statistics between two screenshots (PNG or TGA),
 // optionally restricted to a region given in reference-image pixels.
+// Decodes a game sound (WAV: PCM or Microsoft ADPCM) to a 16-bit PCM WAV file.
+int cmd_audio(const std::vector<std::string_view>& args) {
+    if (args.size() < 4 || args[1] != "export") {
+        usage();
+        return 2;
+    }
+    const vfs::GameFileSystem gfs(game_dir_arg(args, 4), game_mods());
+    std::string path = formats::normalize_game_path(args[2]);
+    if (!path.starts_with("sound/")) {
+        path.insert(0, "sound/");
+    }
+    const auto data = gfs.read(path);
+    if (!data) {
+        std::cerr << "not found: " << path << "\n";
+        return 1;
+    }
+    const auto clip = formats::decode_wav(*data);
+    const auto bytes = static_cast<std::uint32_t>(clip.samples.size() * 2);
+    std::ofstream out{fs::path(args[3]), std::ios::binary};
+    auto u32 = [&](std::uint32_t v) { out.write(reinterpret_cast<const char*>(&v), 4); };
+    auto u16 = [&](std::uint16_t v) { out.write(reinterpret_cast<const char*>(&v), 2); };
+    out.write("RIFF", 4);
+    u32(36 + bytes);
+    out.write("WAVEfmt ", 8);
+    u32(16);
+    u16(1);
+    u16(clip.channels);
+    u32(clip.sample_rate);
+    u32(clip.sample_rate * clip.channels * 2);
+    u16(static_cast<std::uint16_t>(clip.channels * 2));
+    u16(16);
+    out.write("data", 4);
+    u32(bytes);
+    out.write(reinterpret_cast<const char*>(clip.samples.data()), static_cast<std::streamsize>(bytes));
+    std::cout << "wrote " << clip.frames() << " frames, " << clip.channels << " channel(s) at " << clip.sample_rate
+              << " Hz\n";
+    return out ? 0 : 1;
+}
+
 int cmd_image(const std::vector<std::string_view>& args) {
     if (args.size() < 4 || args[1] != "compare") {
         usage();
@@ -1082,10 +1123,10 @@ constexpr FormatStatus kFormats[] = {
     {".scr", "todo", "options script (with the console, Phase 2)"},
     {".gam", "parsed", "game info (KeyValues)"},
     {".bmp", "parsed", "face-poser toolbar icons (tool leftovers)"},
-    {".sfk", "todo", "sound waveform previews (SFPK)"},
-    {".pk", "todo", "unknown sound-related binary"},
+    {".sfk", "reference", "Sound Forge peak files (editor leftovers)"},
+    {".pk", "reference", "audio editor peak files (leftovers)"},
     {".mp3", "codec", "audio"},
-    {".wav", "codec", "audio"},
+    {".wav", "parsed", "audio: PCM and Microsoft ADPCM"},
     {".bik", "codec", "Bink video"},
     {".psh", "reference", "original DX8 pixel shader assembly"},
     {".vcs", "reference", "original compiled shaders"},
@@ -1232,6 +1273,9 @@ int main(int argc, char** argv) {
         }
         if (args[0] == "image") {
             return cmd_image(args);
+        }
+        if (args[0] == "audio") {
+            return cmd_audio(args);
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

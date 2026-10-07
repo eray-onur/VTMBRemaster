@@ -22,6 +22,7 @@ add_library(openbl_formats
     vpk.cpp
     vtf.cpp
     vtx.cpp
+    wav.cpp
     zip.cpp)
 add_library(openbl::formats ALIAS openbl_formats)
 

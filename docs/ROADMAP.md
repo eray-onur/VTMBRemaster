@@ -37,7 +37,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Particle system semantics and rendering
 - [x] Facial expressions: `.vfe` and `expressions/*.txt`
 - [x] Sound schemes (`sound/schemes/*.txt`)
-- [ ] Sound: `.sfk` waveform previews, `.pk`; decoding `.wav` and `.mp3`
+- [x] Sound: `.wav` decoding (PCM and Microsoft ADPCM); `.sfk`/`.pk` identified as editor leftovers
+- [ ] Sound: `.mp3` decoding (with audio playback)
 - [ ] Video: `.bik` intro movies (codec choice to be decided)
 - [x] UI layouts and localisation: `.res`, `scripts/dialog_*`, `resource/gameui_english.txt` (UTF-16)
 - [x] Fonts: `.fnt` bitmap fonts (glyph maps, pages, metrics)

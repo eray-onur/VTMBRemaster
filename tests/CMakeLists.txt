@@ -28,7 +28,8 @@ add_executable(openbl_tests
     test_tth.cpp
     test_vcd.cpp
     test_vmt.cpp
-    test_vtf.cpp)
+    test_vtf.cpp
+    test_wav.cpp)
 target_link_libraries(openbl_tests PRIVATE openbl::formats openbl::vfs doctest::doctest ZLIB::ZLIB openbl_options)
 # Include real std headers instead of doctest's forward declarations, which newer MSVC rejects.
 target_compile_definitions(openbl_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
