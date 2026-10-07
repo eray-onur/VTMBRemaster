@@ -6,7 +6,7 @@ How OpenBL runs the effects described in [formats/particles.md](formats/particle
 
 ## Where effects come from
 
-`env_particle` entities (1,121 in the maps) name a definition (`particle_definition`) and start when `active` is 1 and they are not `StartHidden`; the rest are started by scripts (Phase 2; `openbl-viewer --show NAME` starts one by targetname). Not handled yet: `func_particle` volumes (rain), `params_particle` and `params_explosion` (used by scripts), particles attached to props (`prop_haunted`), and the entity's `angles`, `bounds` and `ramp_scale`.
+`env_particle` entities (1,121 in the maps) name a definition (`particle_definition`) and start when `active` is 1 and they are not `StartHidden`; the rest are started by scripts (Phase 2; `openbl-viewer --show NAME` starts one by targetname). Not handled yet: `func_particle` volumes (rain), `params_particle` and `params_explosion` (used by scripts), particles attached to props (`prop_haunted`), and the entity's `bounds` and `ramp_scale`.
 
 ## Simulation
 
@@ -42,7 +42,7 @@ With the template's semantics the flames sit in the right place at the right siz
 
 ## Not done yet
 
-- Calibration on more effects (steam, smoke, water drops) to settle units and colour scale.
+- Gamma-space blending, then calibration on more effects (steam, smoke, water drops).
 - Bursts on later frames, `distance` emission, `depth_offset`, `no_z_test`, `flat`, `sortfront`, `lighting` (scaled by scene lighting), `precipitation`.
-- `collide` blocks (bounce, gravity, friction; decals where particles land), `refract` and `normal` (refracting effects), `flat`, `depth_offset`, `sortfront`, `no_z_test`, `fps` on children, `loop` on spawn blocks.
+- `collide` blocks (bounce, gravity, friction; decals where particles land), `refract` and `normal` (refracting effects).
 - The light that fire effects cast (the original lights the bums around the barrel; probably a separate dynamic light).
