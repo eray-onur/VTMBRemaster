@@ -6,6 +6,7 @@
 
 #include "openbl/anim/animation.hpp"
 #include "openbl/formats/bsp.hpp"
+#include "openbl/render/fog.hpp"
 #include "openbl/formats/mdl.hpp"
 #include "openbl/render/asset_source.hpp"
 #include "openbl/render/material_system.hpp"
@@ -67,6 +68,7 @@ struct CharacterDrawSettings {
     bool fullbright = false;
     // Material params table (MaterialSystem::params()); null: defaults only.
     const std::vector<MaterialParams>* material_params = nullptr;
+    Fog fog;
 };
 
 class CharacterRenderer {

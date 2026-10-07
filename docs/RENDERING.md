@@ -46,6 +46,14 @@ Not done: the eyes looking at a target (in dialogue they follow the player), the
 
 Base texture × vertex colour, with no doubling.
 
+## Fog and the 3D skybox
+
+**Fog** comes from `worldspawn` (`fogenable`, `fogcolor` 0-255, `fogstart`, `fogend`; 26 maps enable it) and is linear in view depth, blended on encoded colour like Direct3D's fixed-function fog: opaque and alpha-blended surfaces blend towards the fog colour, additive surfaces and particles fade out, `DecalModulate` fades to neutral. Code: `render/fog.hpp`, `shaders/color.hlsli`.
+
+**3D skybox.** 42 maps have a `sky_camera`: a miniature scene (`scale` 16) in a sealed area of the map. In every one the camera's BSP area is an area of its own (`tests/test_bsp.cpp`), so OpenBL draws that area's faces, props and particles as the skybox and leaves them out of the main view. Each frame: the 2D sky, then the skybox seen from the sky camera's origin plus the eye position divided by the scale (same orientation) with the sky camera's own fog, then a depth clear, then the world. The skybox fog's distances are world units, so they are divided by the scale in skybox space: measured on `ch_hub_1` against the original, the distant towers are fully fogged (fraction 1.0) and the street's end gate 0.9, which the scaled distances reproduce and unscaled ones do not (the towers then stay crisp).
+
+**Open: fog strength.** On `ch_hub_1` the original's world fog is about twice as strong as `fogstart`/`fogend` predict (fog fraction 0.30 against OpenBL's 0.15 at the far end of the street, 0.70 against 0.41 on the far buildings). One map is not enough to tell whether distances are measured differently (radially, or doubled) or the curve differs; a second map with fog (e.g. `la_hub_1`) needs capturing.
+
 ## Monitors (`func_monitor` + `point_camera`)
 
 A `func_monitor` is a brush entity whose screen faces use a material with `$basetexture engine/camerarendertarget` (in the shipped maps always `dev/dev_tvmonitor1a`: the picture times rolling scanlines, additive). Its `target` names a `point_camera`. Bloodlines cameras aim with a `look_dest` point (their angles are always 0), and set the picture's angle with `FOV`. Some cameras are parented to moving props (`parentname`); OpenBL keeps them at their map position for now.

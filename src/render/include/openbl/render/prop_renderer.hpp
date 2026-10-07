@@ -5,6 +5,7 @@
 // with its own transform, skin and light tint.
 
 #include "openbl/formats/bsp.hpp"
+#include "openbl/render/fog.hpp"
 #include "openbl/render/asset_source.hpp"
 #include "openbl/render/material_system.hpp"
 #include "openbl/render/prop_lighting.hpp"
@@ -33,6 +34,8 @@ struct PropDrawSettings {
     bool fullbright = false;
     // Material params table (MaterialSystem::params()); null: defaults only.
     const std::vector<MaterialParams>* material_params = nullptr;
+    Fog fog;
+    bool skybox = false; // true: only props in the 3D skybox's area; false: the rest.
 };
 
 class PropRenderer {
@@ -85,6 +88,7 @@ private:
         std::array<float, 16> transform{}; // Column-major model matrix.
         AmbientCube lighting;              // Model space.
         std::vector<Decal> decals;
+        bool skybox = false;               // In the 3D skybox's area.
     };
 
     const Model* load_model(const std::string& path);
@@ -101,6 +105,7 @@ private:
     std::array<std::array<std::unique_ptr<rhi::Pipeline>, 2>, 3> pipelines_; // [blend][cull]
     std::unordered_map<std::string, std::unique_ptr<Model>> models_; // Null caches failures.
     std::vector<Instance> instances_;
+    std::vector<float> shader_data_; // Fog rows, then the material params table.
 };
 
 } // namespace openbl::render

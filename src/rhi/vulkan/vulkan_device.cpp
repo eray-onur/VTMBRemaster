@@ -292,6 +292,19 @@ public:
         pipeline = nullptr;
     }
 
+    void clear_depth() override {
+        ensure_pass();
+        const VkExtent2D extent = target ? VkExtent2D{target->texture().desc().width, target->texture().desc().height}
+                                         : window_extent;
+        VkClearAttachment clear{};
+        clear.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        clear.clearValue.depthStencil = {1.0f, 0};
+        VkClearRect rect{};
+        rect.rect = {{0, 0}, extent};
+        rect.layerCount = 1;
+        vkCmdClearAttachments(cmd, 1, &clear, 1, &rect);
+    }
+
     // Starts the window pass on first use, unless a render target is active.
     void ensure_pass() {
         if (!target && !main_begun) {
@@ -301,6 +314,7 @@ public:
     }
 
     std::function<void()> begin_main; // Begins rendering to the window (set by begin_frame).
+    VkExtent2D window_extent{};
     bool main_begun = false;
     const VulkanRenderTarget* target = nullptr;
     void (*image_barrier_fn)(VkCommandBuffer, VkImage, VkImageAspectFlags, std::uint32_t, VkImageLayout, VkImageLayout,
@@ -749,6 +763,7 @@ public:
         command_list_.data_set = frame.data_set;
         command_list_.target = nullptr;
         command_list_.main_begun = false;
+        command_list_.window_extent = extent_;
         command_list_.image_barrier_fn = &VulkanDevice::image_barrier;
         const FrameDesc frame_desc = desc;
         command_list_.begin_main = [this, frame_desc] { begin_window_pass(frame_desc); };

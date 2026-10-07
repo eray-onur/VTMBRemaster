@@ -707,6 +707,52 @@ TEST_CASE("BSP integration: infodecals land on world faces") {
     CHECK(placed >= 4520);
 }
 
+TEST_CASE("BSP integration: 3D skyboxes are areas of their own") {
+    auto game = test::game_dir();
+    if (!game) {
+        MESSAGE("OPENBL_GAME_DIR not set; skipping");
+        return;
+    }
+    const vfs::GameFileSystem gfs(*game);
+    std::size_t skyboxes = 0, separate = 0;
+    std::string shared;
+    for (const auto& path : gfs.list_files()) {
+        if (!path.ends_with(".bsp")) {
+            continue;
+        }
+        const auto bsp = parse_bsp(*gfs.read(path));
+        std::optional<Vec3> camera, start;
+        for (const auto& e : bsp.entities) {
+            const auto cls = e.find("classname");
+            const auto origin = e.find("origin");
+            if (cls == e.end() || origin == e.end()) {
+                continue;
+            }
+            Vec3 o{};
+            std::sscanf(origin->second.c_str(), "%f %f %f", &o[0], &o[1], &o[2]);
+            if (cls->second == "sky_camera") {
+                camera = o;
+            } else if (cls->second == "info_player_start" && !start) {
+                start = o;
+            }
+        }
+        if (!camera || !start) {
+            continue;
+        }
+        ++skyboxes;
+        const auto sky_area = bsp.leafs[bsp.leaf_at(*camera)].area;
+        const auto start_area = bsp.leafs[bsp.leaf_at({(*start)[0], (*start)[1], (*start)[2] + 32})].area;
+        if (sky_area != start_area) {
+            ++separate;
+        } else if (shared.size() < 200) {
+            shared += path + " ";
+        }
+    }
+    MESSAGE(skyboxes << " maps with a 3D skybox, " << separate << " with it in an area of its own; shared: " << shared);
+    CHECK(skyboxes == 42);
+    CHECK(separate == skyboxes); // So "draw the sky camera's area" isolates a skybox.
+}
+
 TEST_CASE("BSP integration: every map in the real install loads") {
     auto game = test::game_dir();
     if (!game) {

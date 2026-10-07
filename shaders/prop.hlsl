@@ -20,13 +20,16 @@ static const uint kUnlit = 4;
 static const uint kSelfIllum = 8;
 static const uint kTranslucent = 16;
 static const uint kMultiplyLayers = 64;
+static const uint kAdditive = 128;
 
-// Material params table: 6 elements per row (texture transform u and v rows,
-// colour and alpha, self-illumination tint, second-texture transform u and v rows).
+// The fog (2 elements; see color.hlsli), then the material params table: 6
+// elements per row (texture transform u and v rows, colour and alpha,
+// self-illumination tint, second-texture transform u and v rows).
 [[vk::binding(0, 1)]] StructuredBuffer<float4> material_params;
+static const uint kParamsStart = 2;
 
 float4 material_param(uint k) {
-    return material_params[pc.params_index * 6 + k];
+    return material_params[kParamsStart + pc.params_index * 6 + k];
 }
 
 struct VSInput {
@@ -40,6 +43,7 @@ struct VSOutput {
     [[vk::location(0)]] float2 uv : TEXCOORD0;
     [[vk::location(1)]] float3 light : COLOR0;
     [[vk::location(2)]] float2 uv2 : TEXCOORD1;
+    [[vk::location(3)]] float view_depth : TEXCOORD2;
 };
 
 float cube_half(uint i) {
@@ -56,6 +60,7 @@ float3 cube_color(uint face) {
 VSOutput vs_main(VSInput input) {
     VSOutput output;
     output.position = mul(pc.mvp, float4(input.position, 1.0));
+    output.view_depth = output.position.w;
     const float4 tu = material_param(0);
     const float4 tv = material_param(1);
     output.uv = float2(dot(tu.xyz, float3(input.uv, 1.0)), dot(tv.xyz, float3(input.uv, 1.0)));
@@ -85,5 +90,8 @@ float4 ps_main(VSOutput input) : SV_Target {
     if (pc.flags & kSelfIllum) {
         color = lerp(color, base.rgb * material_param(3).rgb, base.a);
     }
-    return float4(linear_to_srgb(color), (pc.flags & kTranslucent) ? base.a * tint.a : 1.0);
+    const float fog = fog_amount(input.view_depth, material_params[0], material_params[1]);
+    const float3 encoded = linear_to_srgb(color);
+    const float3 result = (pc.flags & kAdditive) ? encoded * (1.0 - fog) : fogged(encoded, material_params[0], fog);
+    return float4(result, (pc.flags & kTranslucent) ? base.a * tint.a : 1.0);
 }

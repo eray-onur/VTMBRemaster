@@ -7,9 +7,10 @@
 
 struct PushConstants {
     float4x4 view_projection;
-    float4 right; // Camera right, world space.
-    float4 up;    // Camera up, world space.
+    float4 right; // Camera right, world space; w: fog start.
+    float4 up;    // Camera up, world space; w: fog end.
     float4 eye;   // Camera position.
+    float4 fog;   // rgb: fog colour (encoded), a: enabled.
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -23,6 +24,7 @@ struct VSOutput {
     float4 position : SV_Position;
     [[vk::location(0)]] float2 uv : TEXCOORD0;
     [[vk::location(1)]] nointerpolation float4 color : COLOR0; // rgb additive, a mask.
+    [[vk::location(2)]] float view_depth : TEXCOORD1;
 };
 
 VSOutput vs_main(VSInput input) {
@@ -46,6 +48,7 @@ VSOutput vs_main(VSInput input) {
     output.position = mul(pc.view_projection, float4(world, 1.0));
     output.uv = float2(input.corner.x * 0.5 + 0.5, 0.5 - input.corner.y * 0.5);
     output.color = d2;
+    output.view_depth = output.position.w;
     return output;
 }
 
@@ -57,5 +60,9 @@ float4 ps_main(VSOutput input) : SV_Target {
     // The sprite's colour (already dark where it is transparent) adds light,
     // scaled on encoded values as in the original; its alpha only drives the
     // masking of the background (particles/000_template.txt).
-    return float4(linear_to_srgb(t.rgb) * input.color.rgb, t.a * input.color.a);
+    // In fog the added light fades out and the masking turns towards the fog colour.
+    const float fog = fog_amount(input.view_depth, pc.fog, float4(pc.right.w, pc.up.w, 0, 0));
+    const float mask = t.a * input.color.a;
+    const float3 added = linear_to_srgb(t.rgb) * input.color.rgb * (1.0 - fog);
+    return float4(added + pc.fog.rgb * mask * fog, mask);
 }

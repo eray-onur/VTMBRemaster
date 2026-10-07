@@ -21,11 +21,13 @@ static const uint kUnlit = 4;
 static const uint kSelfIllum = 8;
 static const uint kTranslucent = 16;
 static const uint kEyes = 32;
+static const uint kAdditive = 128;
 
 // Iris size as a fraction of the eye mesh's UV square, measured on the
 // original (the iris spans about 0.58 of the eye opening; docs/RENDERING.md).
 static const float kIrisSize = 0.58;
-static const uint kBoneBase = 6;
+static const uint kFogStart = 6;
+static const uint kBoneBase = 8;
 
 struct VSInput {
     [[vk::location(0)]] float3 position : POSITION;
@@ -40,6 +42,7 @@ struct VSOutput {
     float4 position : SV_Position;
     [[vk::location(0)]] float2 uv : TEXCOORD0;
     [[vk::location(1)]] float3 light : COLOR0;
+    [[vk::location(2)]] float view_depth : TEXCOORD1;
 };
 
 float3 transform(uint bone, float4 v) {
@@ -65,6 +68,7 @@ VSOutput vs_main(VSInput input) {
 
     VSOutput output;
     output.position = mul(pc.mvp, float4(position, 1.0));
+    output.view_depth = output.position.w;
     const float4 tu = shader_data[pc.params_row];
     const float4 tv = shader_data[pc.params_row + 1];
     output.uv = float2(dot(tu.xyz, float3(input.uv, 1.0)), dot(tv.xyz, float3(input.uv, 1.0)));
@@ -98,5 +102,9 @@ float4 ps_main(VSOutput input) : SV_Target {
     if (pc.flags & kSelfIllum) {
         color = lerp(color, base.rgb * shader_data[pc.params_row + 3].rgb, base.a);
     }
-    return float4(linear_to_srgb(color), (pc.flags & kTranslucent) ? base.a * tint.a : 1.0);
+    const float4 fog_color = shader_data[kFogStart];
+    const float fog = fog_amount(input.view_depth, fog_color, shader_data[kFogStart + 1]);
+    const float3 encoded = linear_to_srgb(color);
+    const float3 result = (pc.flags & kAdditive) ? encoded * (1.0 - fog) : fogged(encoded, fog_color, fog);
+    return float4(result, (pc.flags & kTranslucent) ? base.a * tint.a : 1.0);
 }

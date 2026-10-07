@@ -6,6 +6,7 @@
 
 #include "openbl/formats/bsp.hpp"
 #include "openbl/particles/particle_system.hpp"
+#include "openbl/render/fog.hpp"
 #include "openbl/render/asset_source.hpp"
 #include "openbl/rhi/rhi.hpp"
 
@@ -33,8 +34,9 @@ public:
     // Advances every effect to `time` (seconds); going back in time restarts them.
     void update(float time);
     // `right`/`up`: camera axes in world space; `eye`: camera position.
+    // `skybox`: draw only effects in the 3D skybox's area, or only the rest.
     void draw(rhi::CommandList& cmd, const std::array<float, 16>& view_projection, const std::array<float, 3>& right,
-              const std::array<float, 3>& up, const std::array<float, 3>& eye);
+              const std::array<float, 3>& up, const std::array<float, 3>& eye, const Fog& fog = {}, bool skybox = false);
 
     const ParticleStats& stats() const { return stats_; }
 
@@ -46,6 +48,7 @@ private:
         particles::Vec3 origin{};
         particles::Vec3 angles{};
         std::uint32_t seed = 1;
+        bool skybox = false; // In the 3D skybox's area.
         std::unique_ptr<particles::ParticleSystem> system;
     };
 

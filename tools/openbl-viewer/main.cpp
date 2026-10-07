@@ -281,6 +281,7 @@ public:
         assets_ = std::make_unique<render::AssetSource>(gfs, pak_.get());
         materials_ = std::make_unique<render::MaterialSystem>(device, *assets_);
         world_ = std::make_unique<render::WorldRenderer>(device, *materials_, bsp_, options.shown);
+        world_fog_ = render::Fog::from_entity(bsp_.entities.at(0));
         if (options.props) {
             props_ = std::make_unique<render::PropRenderer>(device, *materials_, *assets_, bsp_, options.shown);
         }
@@ -370,15 +371,48 @@ public:
 private:
     void draw_view(rhi::CommandList& cmd, const glm::mat4& projection, const glm::mat4& view, const glm::vec3& eye,
                    bool monitors) {
-        settings_.camera_position = {eye.x, eye.y, eye.z};
         settings_.draw_monitors = monitors;
         if (sky_) {
             sky_->draw(cmd, to_array(projection * glm::mat4(glm::mat3(view))));
         }
+        // Camera axes in world space are the rows of the view rotation.
+        const std::array<float, 3> right{view[0][0], view[1][0], view[2][0]}, up{view[0][1], view[1][1], view[2][1]};
+        render::PropDrawSettings prop_settings{settings_.light_scale, settings_.fullbright, &materials_->params()};
+        // The 3D skybox: its area seen from the sky camera plus the eye / scale,
+        // same orientation, with its own fog; then the depth is cleared so the
+        // world draws over it.
+        if (const auto& sky = world_->sky_camera()) {
+            const glm::vec3 sky_eye = glm::vec3(sky->origin[0], sky->origin[1], sky->origin[2]) + eye / sky->scale;
+            const auto sm = to_array(projection * glm::mat4(glm::mat3(view)) * glm::translate(glm::mat4(1.0f), -sky_eye));
+            settings_.camera_position = {sky_eye.x, sky_eye.y, sky_eye.z};
+            settings_.skybox = true;
+            // Fog distances are world units: the skybox is 1/scale size.
+            render::Fog sky_fog = sky->fog;
+            sky_fog.start /= sky->scale;
+            sky_fog.end /= sky->scale;
+            settings_.fog = sky_fog;
+            prop_settings.skybox = true;
+            prop_settings.fog = sky_fog;
+            world_->draw_opaque(cmd, sm, settings_);
+            if (props_) {
+                props_->draw_opaque(cmd, sm, prop_settings);
+            }
+            world_->draw_translucent(cmd, sm, settings_);
+            if (props_) {
+                props_->draw_translucent(cmd, sm, prop_settings);
+            }
+            particles_->draw(cmd, sm, right, up, {sky_eye.x, sky_eye.y, sky_eye.z}, sky_fog, true);
+            cmd.clear_depth();
+            settings_.skybox = false;
+            prop_settings.skybox = false;
+        }
+        settings_.camera_position = {eye.x, eye.y, eye.z};
+        settings_.fog = world_fog_;
+        prop_settings.fog = world_fog_;
         const auto m = to_array(projection * view);
-        const render::PropDrawSettings prop_settings{settings_.light_scale, settings_.fullbright, &materials_->params()};
-        const render::CharacterDrawSettings character_settings{settings_.light_scale, settings_.fullbright,
-                                                               &materials_->params()};
+        render::CharacterDrawSettings character_settings{settings_.light_scale, settings_.fullbright,
+                                                         &materials_->params()};
+        character_settings.fog = world_fog_;
         world_->draw_opaque(cmd, m, settings_);
         if (props_) {
             props_->draw_opaque(cmd, m, prop_settings);
@@ -393,12 +427,11 @@ private:
         if (characters_) {
             characters_->draw_translucent(cmd, m, character_settings);
         }
-        // Camera axes in world space are the rows of the view rotation.
-        particles_->draw(cmd, m, {view[0][0], view[1][0], view[2][0]}, {view[0][1], view[1][1], view[2][1]},
-                         {eye.x, eye.y, eye.z});
+        particles_->draw(cmd, m, right, up, {eye.x, eye.y, eye.z}, world_fog_, false);
     }
 
     render::WorldDrawSettings settings_;
+    render::Fog world_fog_; // From worldspawn.
     formats::BspFile bsp_;
     std::unique_ptr<formats::ZipArchive> pak_;
     std::unique_ptr<render::AssetSource> assets_;

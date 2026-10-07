@@ -8,7 +8,8 @@ struct PushConstants {
     float4x4 mvp;
     float4 camera_time;  // xyz: camera position, w: time in seconds
     float4 fog_color;    // rgb, a: opacity
-    float4 reflect_tint; // rgb, a: unused
+    float4 reflect_tint; // rgb, a: world fog start
+    float4 world_fog;    // rgb: world fog colour (encoded), a: world fog end (<= start: no fog)
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -21,6 +22,7 @@ struct VSOutput {
     float4 position : SV_Position;
     [[vk::location(0)]] float2 uv : TEXCOORD0;
     [[vk::location(1)]] float3 world : TEXCOORD1;
+    [[vk::location(2)]] float view_depth : TEXCOORD2;
 };
 
 VSOutput vs_main(VSInput input) {
@@ -28,6 +30,7 @@ VSOutput vs_main(VSInput input) {
     output.position = mul(pc.mvp, float4(input.position, 1.0));
     output.uv = input.uv;
     output.world = input.position;
+    output.view_depth = output.position.w;
     return output;
 }
 
@@ -49,5 +52,7 @@ float4 ps_main(VSOutput input) : SV_Target {
     // A faint highlight from a light high above, so the ripples read at night.
     const float3 half_vec = normalize(to_eye + float3(0.0, 0.0, 1.0));
     color += pow(saturate(dot(normal, half_vec)), 80.0) * 0.15 * pc.reflect_tint.rgb;
-    return float4(linear_to_srgb(color), pc.fog_color.a);
+    const float4 fog_color = float4(pc.world_fog.rgb, 1.0);
+    const float fog = fog_amount(input.view_depth, fog_color, float4(pc.reflect_tint.a, pc.world_fog.a, 0, 0));
+    return float4(fogged(linear_to_srgb(color), fog_color, fog), pc.fog_color.a);
 }

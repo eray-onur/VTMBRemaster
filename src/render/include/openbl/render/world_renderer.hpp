@@ -6,6 +6,7 @@
 // animated styles flickering).
 
 #include "openbl/formats/bsp.hpp"
+#include "openbl/render/fog.hpp"
 #include "openbl/render/light_styles.hpp"
 #include "openbl/render/material_system.hpp"
 #include "openbl/rhi/rhi.hpp"
@@ -13,6 +14,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -47,6 +49,18 @@ struct WorldDrawSettings {
     // false while drawing into a monitor's render target, so no target is
     // sampled while it is being drawn.
     bool draw_monitors = true;
+    Fog fog;
+    // true: draw only the 3D skybox (the sky_camera's area); false: everything else.
+    bool skybox = false;
+};
+
+// The 3D skybox: a miniature scene in a sealed area of the map, seen from
+// `origin` plus the player's position divided by `scale`.
+struct SkyCamera {
+    std::array<float, 3> origin{};
+    float scale = 16.0f;
+    Fog fog;
+    std::uint16_t area = 0; // BSP area holding the skybox.
 };
 
 // A func_monitor screen showing its point_camera's view.
@@ -76,6 +90,7 @@ public:
     const WorldStats& stats() const { return stats_; }
     // Visible monitors; draw each camera's view into its target before the frame's main view.
     const std::vector<MonitorView>& monitors() const { return monitors_; }
+    const std::optional<SkyCamera>& sky_camera() const { return sky_camera_; }
 
 private:
     struct Batch {
@@ -86,6 +101,7 @@ private:
         // One per frame of an animated texture (base, or the water normal map).
         std::vector<std::unique_ptr<rhi::BindGroup>> frame_bind_groups;
         bool decal = false;
+        bool skybox = false; // In the 3D skybox's area.
         int monitor = -1; // Screen faces of monitors_[monitor], showing its render target.
 
         const rhi::BindGroup& current_bind_group() const;
@@ -111,6 +127,7 @@ private:
     std::vector<Batch> water_;
     std::vector<Batch> decals_; // infodecals, drawn over the opaque world.
     std::vector<MonitorView> monitors_;
+    std::optional<SkyCamera> sky_camera_;
     std::unique_ptr<rhi::Pipeline> water_pipeline_;
     std::array<std::unique_ptr<rhi::Pipeline>, 2> decal_pipelines_; // [alpha, modulate]
     std::unique_ptr<rhi::Sampler> decal_sampler_;                    // Clamped, so edges do not wrap.

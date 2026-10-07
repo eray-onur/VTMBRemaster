@@ -14,6 +14,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <tuple>
 
 namespace openbl::render {
 
@@ -49,9 +50,10 @@ struct WaterPushConstants {
     float mvp[16];
     float camera_time[4];
     float fog_color[4];
-    float reflect_tint[4];
+    float reflect_tint[4]; // w: world fog start.
+    float world_fog[4];    // rgb: world fog colour, w: world fog end (<= start: none).
 };
-static_assert(sizeof(WaterPushConstants) == 112);
+static_assert(sizeof(WaterPushConstants) == 128);
 
 // Water opacity; the original refracts what is below instead.
 constexpr float kWaterOpacity = 0.85f;
@@ -63,6 +65,7 @@ constexpr std::uint32_t kSelfIllum = 8;
 constexpr std::uint32_t kTranslucent = 16;
 constexpr std::uint32_t kModulate = 32;
 constexpr std::uint32_t kMultiplyLayers = 64;
+constexpr std::uint32_t kAdditive = 128;
 
 // Source polygons are wound clockwise seen from the front, and stay clockwise
 // in Vulkan framebuffer space with our Y-flipped projection (verified visually
@@ -138,6 +141,35 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
         std::size_t face;
         formats::Vec3 origin;
     };
+    // The 3D skybox: the sky_camera's BSP area (an area of its own in every
+    // shipped map). Faces there are drawn only in the skybox pass.
+    for (const auto& e : bsp.entities) {
+        if (entity_value(e, "classname") == "sky_camera") {
+            SkyCamera sky;
+            sky.origin = entity_vec3(e, "origin");
+            if (const std::string scale = entity_value(e, "scale"); !scale.empty() && std::atof(scale.c_str()) > 0) {
+                sky.scale = static_cast<float>(std::atof(scale.c_str()));
+            }
+            sky.fog = Fog::from_entity(e);
+            sky.area = bsp.leafs[bsp.leaf_at(sky.origin)].area;
+            sky_camera_ = sky;
+            break;
+        }
+    }
+    std::vector<char> in_skybox(bsp.faces.size(), 0);
+    if (sky_camera_) {
+        for (const auto& leaf : bsp.leafs) {
+            if (leaf.area != sky_camera_->area) {
+                continue;
+            }
+            for (std::uint16_t i = 0; i < leaf.num_leaf_faces; ++i) {
+                const std::size_t lf = std::size_t{leaf.first_leaf_face} + i;
+                if (lf < bsp.leaf_faces.size() && bsp.leaf_faces[lf] < in_skybox.size()) {
+                    in_skybox[bsp.leaf_faces[lf]] = 1;
+                }
+            }
+        }
+    }
     // Entities with StartHidden start invisible until a script shows them (the
     // haven TV until switched on, a monitor's "dead" screen until its camera
     // breaks), so they are not drawn. Monitors (func_monitor) show their
@@ -148,8 +180,9 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
             cameras[entity_value(e, "targetname")] = &e;
         }
     }
-    // Key: material name and the monitor whose picture its faces show (-1: none).
-    std::map<std::pair<std::string, int>, std::vector<FaceRef>> by_material;
+    // Key: material name, the monitor whose picture its faces show (-1: none),
+    // and whether the faces are in the 3D skybox.
+    std::map<std::tuple<std::string, int, bool>, std::vector<FaceRef>> by_material;
     for (const ModelInstance& inst : model_instances(bsp)) {
         int monitor = -1;
         if (inst.entity && entity_value(*inst.entity, "StartHidden") == "1" &&
@@ -181,6 +214,9 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
             }
         }
         const auto& model = bsp.models[inst.model];
+        // Brush entities belong to the skybox if their origin is in its area.
+        const bool entity_in_skybox = inst.entity && sky_camera_ &&
+                                      bsp.leafs[bsp.leaf_at(inst.origin)].area == sky_camera_->area;
         for (std::int32_t i = 0; i < model.num_faces; ++i) {
             const std::size_t f = static_cast<std::size_t>(model.first_face + i);
             if (!face_drawn(bsp, bsp.faces[f])) {
@@ -190,7 +226,8 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
             const auto texdata = static_cast<std::size_t>(bsp.texinfos[bsp.faces[f].texinfo].texdata);
             const std::string& name = bsp.texdatas[texdata].material;
             const int screen = monitor >= 0 && materials.material(name).camera_feed ? monitor : -1;
-            by_material[{name, screen}].push_back({f, inst.origin});
+            const bool skybox = inst.entity ? entity_in_skybox : in_skybox[f] != 0;
+            by_material[{name, screen, skybox}].push_back({f, inst.origin});
         }
     }
 
@@ -224,7 +261,7 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
         }
     };
     for (const auto& [key, faces] : by_material) {
-        const RenderMaterial& mat = materials.material(key.first);
+        const RenderMaterial& mat = materials.material(std::get<0>(key));
         stats_.missing_materials += mat.missing;
         if (mat.skip) {
             stats_.skipped_faces += faces.size();
@@ -232,7 +269,8 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
         }
         Batch batch;
         batch.material = &mat;
-        batch.monitor = key.second;
+        batch.monitor = std::get<1>(key);
+        batch.skybox = std::get<2>(key);
         batch.first_index = static_cast<std::uint32_t>(indices.size());
         for (const FaceRef& ref : faces) {
             const auto mesh = formats::build_face_mesh(bsp, ref.face);
@@ -261,7 +299,7 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
     // infodecals: the base texture's size times $decalscale, projected onto
     // nearby brush faces and lifted slightly off them to avoid z-fighting.
     constexpr float kDecalLift = 0.1f;
-    std::map<const RenderMaterial*, std::vector<formats::BspDecalPiece>> decal_pieces;
+    std::map<std::pair<const RenderMaterial*, bool>, std::vector<formats::BspDecalPiece>> decal_pieces;
     for (const auto& e : bsp.entities) {
         const auto cls = e.find("classname");
         const auto texture = e.find("texture");
@@ -280,12 +318,14 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
         auto pieces = formats::project_decal(bsp, at, static_cast<float>(size.width) * mat.decal_scale,
                                              static_cast<float>(size.height) * mat.decal_scale);
         (pieces.empty() ? stats_.unplaced_decals : stats_.decals) += 1;
-        auto& list = decal_pieces[&mat];
+        const bool decal_in_skybox = sky_camera_ && bsp.leafs[bsp.leaf_at(at)].area == sky_camera_->area;
+        auto& list = decal_pieces[{&mat, decal_in_skybox}];
         list.insert(list.end(), std::make_move_iterator(pieces.begin()), std::make_move_iterator(pieces.end()));
     }
-    for (const auto& [mat, pieces] : decal_pieces) {
+    for (const auto& [key, pieces] : decal_pieces) {
         Batch batch;
-        batch.material = mat;
+        batch.material = key.first;
+        batch.skybox = key.second;
         batch.decal = true;
         batch.first_index = static_cast<std::uint32_t>(indices.size());
         for (const auto& piece : pieces) {
@@ -495,19 +535,23 @@ void WorldRenderer::draw_batches(rhi::CommandList& cmd, const std::vector<Batch>
     if (!settings.light_styles) {
         std::fill(values.begin() + 1, values.end(), 0.0f);
     }
-    // Light styles, then as many material params rows as fit in the shader data.
+    // Light styles, the fog, then as many material params rows as fit in the shader data.
     constexpr std::size_t kStyleFloats = 4 * 16;
+    constexpr std::size_t kFogFloats = 8;
+    constexpr std::size_t kHeadFloats = kStyleFloats + kFogFloats;
     constexpr std::size_t kRowFloats = sizeof(MaterialParams) / sizeof(float);
     const std::size_t rows = std::min<std::size_t>(settings.material_params ? settings.material_params->size() : 1,
-                                                   (rhi::kMaxShaderDataSize / sizeof(float) - kStyleFloats) / kRowFloats);
-    shader_data_.assign(kStyleFloats + std::max<std::size_t>(rows, 1) * kRowFloats, 0.0f);
+                                                   (rhi::kMaxShaderDataSize / sizeof(float) - kHeadFloats) / kRowFloats);
+    shader_data_.assign(kHeadFloats + std::max<std::size_t>(rows, 1) * kRowFloats, 0.0f);
     std::copy(values.begin(), values.end(), shader_data_.begin());
+    const auto fog = settings.fog.rows();
+    std::copy(fog.begin(), fog.end(), shader_data_.begin() + kStyleFloats);
     for (std::size_t r = 0; r < std::max<std::size_t>(rows, 1); ++r) {
         const MaterialParams p = settings.material_params && r < rows ? (*settings.material_params)[r] : MaterialParams{};
-        std::memcpy(shader_data_.data() + kStyleFloats + r * kRowFloats, &p, sizeof(p));
+        std::memcpy(shader_data_.data() + kHeadFloats + r * kRowFloats, &p, sizeof(p));
     }
     for (const Batch& batch : batches) {
-        if (batch.monitor >= 0 && !settings.draw_monitors) {
+        if ((batch.monitor >= 0 && !settings.draw_monitors) || batch.skybox != settings.skybox) {
             continue;
         }
         const RenderMaterial& m = *batch.material;
@@ -521,7 +565,7 @@ void WorldRenderer::draw_batches(rhi::CommandList& cmd, const std::vector<Batch>
         pc.flags = (m.alpha_test ? kAlphaTest : 0) | (m.blend_layers ? kBlendLayers : 0) |
                    ((m.unlit || settings.fullbright) ? kUnlit : 0) | (m.self_illum ? kSelfIllum : 0) |
                    ((m.translucent || batch.decal) ? kTranslucent : 0) | ((batch.decal && m.modulate) ? kModulate : 0) |
-                   (m.multiply_layers ? kMultiplyLayers : 0);
+                   (m.multiply_layers ? kMultiplyLayers : 0) | ((m.additive && !batch.decal) ? kAdditive : 0);
         pc.params_index = m.params_index < std::max<std::size_t>(rows, 1) ? m.params_index : 0;
         cmd.set_bind_group(batch.current_bind_group());
         cmd.push_constants(&pc, sizeof(pc));
@@ -571,13 +615,21 @@ void WorldRenderer::draw_water(rhi::CommandList& cmd, const std::array<float, 16
         pc.camera_time[k] = settings.camera_position[static_cast<std::size_t>(k)];
     }
     pc.camera_time[3] = settings.time;
+    for (int k = 0; k < 3; ++k) {
+        pc.world_fog[k] = settings.fog.color[static_cast<std::size_t>(k)];
+    }
+    pc.world_fog[3] = settings.fog.enabled ? settings.fog.end : 0.0f;
     for (const Batch& batch : water_) {
+        if (batch.skybox != settings.skybox) {
+            continue;
+        }
         const RenderMaterial& m = *batch.material;
         for (std::size_t k = 0; k < 3; ++k) {
             pc.fog_color[k] = m.fog_color[k];
             pc.reflect_tint[k] = m.reflect_tint[k];
         }
         pc.fog_color[3] = kWaterOpacity;
+        pc.reflect_tint[3] = settings.fog.start;
         cmd.set_bind_group(batch.current_bind_group());
         cmd.push_constants(&pc, sizeof(pc));
         cmd.draw_indexed(batch.index_count, batch.first_index);

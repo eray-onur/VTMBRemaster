@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <optional>
 #include <sstream>
 
 namespace openbl::render {
@@ -23,11 +24,12 @@ constexpr std::size_t kMaxPerDraw = rhi::kMaxShaderDataSize / (kFloatsPerParticl
 
 struct PushConstants {
     float view_projection[16];
-    float right[4];
-    float up[4];
+    float right[4]; // w: fog start.
+    float up[4];    // w: fog end.
     float eye[4];
+    float fog[4];   // rgb: fog colour, a: enabled.
 };
-static_assert(sizeof(PushConstants) == 112);
+static_assert(sizeof(PushConstants) == 128);
 
 std::string lower(std::string s) {
     for (char& c : s) {
@@ -53,6 +55,14 @@ ParticleRenderer::ParticleRenderer(rhi::Device& device, const AssetSource& asset
           return std::string(reinterpret_cast<const char*>(data->data()), data->size());
       }) {
     std::uint32_t seed = 1;
+    std::optional<std::uint16_t> sky_area;
+    for (const auto& e : bsp.entities) {
+        if (value(e, "classname") == "sky_camera") {
+            formats::Vec3 o{};
+            std::istringstream(value(e, "origin")) >> o[0] >> o[1] >> o[2];
+            sky_area = bsp.leafs[bsp.leaf_at(o)].area;
+        }
+    }
     for (const auto& e : bsp.entities) {
         if (value(e, "classname") != "env_particle") {
             continue;
@@ -66,6 +76,7 @@ ParticleRenderer::ParticleRenderer(rhi::Device& device, const AssetSource& asset
         std::istringstream(value(e, "origin")) >> em.origin[0] >> em.origin[1] >> em.origin[2];
         std::istringstream(value(e, "angles")) >> em.angles[0] >> em.angles[1] >> em.angles[2];
         em.seed = seed++;
+        em.skybox = sky_area && bsp.leafs[bsp.leaf_at(em.origin)].area == *sky_area;
         em.system = std::make_unique<particles::ParticleSystem>(library_, em.definition, em.origin, em.seed, em.angles);
         if (!em.system->valid()) {
             ++stats_.missing_definitions;
@@ -153,10 +164,12 @@ void ParticleRenderer::update(float time) {
 
 void ParticleRenderer::draw(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
                             const std::array<float, 3>& right, const std::array<float, 3>& up,
-                            const std::array<float, 3>& eye) {
+                            const std::array<float, 3>& eye, const Fog& fog, bool skybox) {
     quads_.clear();
     for (const Emitter& em : emitters_) {
-        em.system->collect(quads_);
+        if (em.skybox == skybox) {
+            em.system->collect(quads_);
+        }
     }
     if (quads_.empty()) {
         return;
@@ -173,6 +186,10 @@ void ParticleRenderer::draw(rhi::CommandList& cmd, const std::array<float, 16>& 
     std::copy(right.begin(), right.end(), pc.right);
     std::copy(up.begin(), up.end(), pc.up);
     std::copy(eye.begin(), eye.end(), pc.eye);
+    pc.right[3] = fog.start;
+    pc.up[3] = fog.end;
+    std::copy(fog.color.begin(), fog.color.end(), pc.fog);
+    pc.fog[3] = fog.enabled ? 1.0f : 0.0f;
     cmd.set_pipeline(*pipeline_);
     cmd.set_vertex_buffer(*corners_);
     cmd.set_index_buffer(*indices_);

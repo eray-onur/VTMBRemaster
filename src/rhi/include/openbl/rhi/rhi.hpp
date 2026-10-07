@@ -166,6 +166,8 @@ public:
     // anything is drawn to the window.
     virtual void begin_render_target(const RenderTarget& target, const float clear_color[4]) = 0;
     virtual void end_render_target() = 0;
+    // Clears the depth of whatever is being drawn to (e.g. after a 3D skybox).
+    virtual void clear_depth() = 0;
 };
 
 struct FrameDesc {

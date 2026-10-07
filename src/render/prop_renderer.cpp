@@ -51,6 +51,7 @@ constexpr std::uint32_t kUnlit = 4;
 constexpr std::uint32_t kSelfIllum = 8;
 constexpr std::uint32_t kTranslucent = 16;
 constexpr std::uint32_t kMultiplyLayers = 64;
+constexpr std::uint32_t kAdditive = 128;
 
 // Source angles: pitch (down positive) about Y, yaw about Z, roll about X;
 // applied roll, then pitch, then yaw.
@@ -96,6 +97,13 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
     sampler_ = device.create_sampler({});
 
     const PropLighting lighting(bsp);
+    // Props in the 3D skybox's area (the sky_camera's) are drawn only in the skybox pass.
+    std::optional<std::uint16_t> sky_area;
+    for (const auto& e : bsp.entities) {
+        if (auto cls = e.find("classname"); cls != e.end() && cls->second == "sky_camera") {
+            sky_area = bsp.leafs[bsp.leaf_at(parse_vec3(e, "origin"))].area;
+        }
+    }
     auto add = [&](const std::string& path, const formats::Vec3& origin, const formats::Vec3& angles,
                    std::size_t skin, const std::optional<formats::Vec3>& lighting_origin) {
         const Model* model = load_model(path);
@@ -104,6 +112,7 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
         }
         Instance inst;
         inst.model = model;
+        inst.skybox = sky_area && bsp.leafs[bsp.leaf_at(origin)].area == *sky_area;
         inst.skin = skin < model->skins.size() ? skin : 0;
         const glm::mat4 m = prop_transform(origin, angles);
         std::memcpy(inst.transform.data(), glm::value_ptr(m), sizeof(inst.transform));
@@ -378,8 +387,17 @@ void PropRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float, 16>&
     PushConstants pc{};
     static const std::vector<MaterialParams> kDefaults{MaterialParams{}};
     const std::vector<MaterialParams>& params = settings.material_params ? *settings.material_params : kDefaults;
-    const std::size_t rows = std::min(params.size(), rhi::kMaxShaderDataSize / sizeof(MaterialParams));
+    // Shader data: the fog (2 float4), then the material params table.
+    const auto fog = settings.fog.rows();
+    const std::size_t rows =
+        std::min(params.size(), (rhi::kMaxShaderDataSize - sizeof(fog)) / sizeof(MaterialParams));
+    shader_data_.assign(fog.begin(), fog.end());
+    const auto* first = reinterpret_cast<const float*>(params.data());
+    shader_data_.insert(shader_data_.end(), first, first + rows * sizeof(MaterialParams) / sizeof(float));
     for (const Instance& inst : instances_) {
+        if (inst.skybox != settings.skybox) {
+            continue;
+        }
         const glm::mat4 mvp = view_projection * glm::make_mat4(inst.transform.data());
         std::memcpy(pc.mvp, glm::value_ptr(mvp), sizeof(pc.mvp));
         for (std::size_t h = 0; h < 18; ++h) {
@@ -394,7 +412,7 @@ void PropRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float, 16>&
             const rhi::Pipeline& pipeline = pipeline_for(m);
             if (&pipeline != bound_pipeline) {
                 cmd.set_pipeline(pipeline);
-                cmd.set_shader_data(params.data(), rows * sizeof(MaterialParams));
+                cmd.set_shader_data(shader_data_.data(), shader_data_.size() * sizeof(float));
                 bound_pipeline = &pipeline;
             }
             if (inst.model != bound_model) {
@@ -405,7 +423,7 @@ void PropRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float, 16>&
             pc.alpha_ref = m.alpha_ref;
             pc.flags = (m.alpha_test ? kAlphaTest : 0) | ((m.unlit || settings.fullbright) ? kUnlit : 0) |
                        (m.self_illum ? kSelfIllum : 0) | (m.translucent ? kTranslucent : 0) |
-                       (m.multiply_layers ? kMultiplyLayers : 0);
+                       (m.multiply_layers ? kMultiplyLayers : 0) | (m.additive ? kAdditive : 0);
             pc.params_index = m.params_index < rows ? m.params_index : 0;
             cmd.set_bind_group(mesh.frame_bind_groups.empty()
                                    ? *mesh.bind_group
@@ -422,7 +440,7 @@ void PropRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float, 16>&
             const rhi::Pipeline& pipeline = *pipelines_[1][0];
             if (&pipeline != bound_pipeline) {
                 cmd.set_pipeline(pipeline);
-                cmd.set_shader_data(params.data(), rows * sizeof(MaterialParams));
+                cmd.set_shader_data(shader_data_.data(), shader_data_.size() * sizeof(float));
                 bound_pipeline = &pipeline;
             }
             cmd.set_vertex_buffer(*decal.vertices);

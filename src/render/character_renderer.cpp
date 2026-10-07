@@ -49,6 +49,7 @@ constexpr std::uint32_t kUnlit = 4;
 constexpr std::uint32_t kSelfIllum = 8;
 constexpr std::uint32_t kTranslucent = 16;
 constexpr std::uint32_t kEyes = 32;
+constexpr std::uint32_t kAdditive = 128;
 
 // Height above an NPC's origin at which its lighting is sampled (roughly chest height).
 constexpr float kLightingHeight = 40.0f;
@@ -371,14 +372,16 @@ void CharacterRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float,
         }
         // Shader data: ambient cube (6 float4), then 3 float4 rows per bone,
         // then the material params of each mesh drawn in this pass.
-        data.assign(6 * 4 + inst.skinning.size() * 12, 0.0f);
+        data.assign(8 * 4 + inst.skinning.size() * 12, 0.0f);
+        const auto fog = settings.fog.rows(); // Elements 6 and 7.
+        std::copy(fog.begin(), fog.end(), data.begin() + 24);
         for (std::size_t f = 0; f < 6; ++f) {
             for (std::size_t c = 0; c < 3; ++c) {
                 data[f * 4 + c] = inst.lighting.color[f][c] * settings.light_scale;
             }
         }
         for (std::size_t b = 0; b < inst.skinning.size(); ++b) {
-            std::memcpy(&data[24 + b * 12], inst.skinning[b].data(), 12 * sizeof(float));
+            std::memcpy(&data[32 + b * 12], inst.skinning[b].data(), 12 * sizeof(float));
         }
         std::vector<std::uint32_t> params_rows;
         for (const Mesh& mesh : inst.model->skins[inst.skin]) {
@@ -420,7 +423,8 @@ void CharacterRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float,
             }
             pc.alpha_ref = m.alpha_ref;
             pc.flags = (m.alpha_test ? kAlphaTest : 0) | ((m.unlit || settings.fullbright) ? kUnlit : 0) |
-                       (m.self_illum ? kSelfIllum : 0) | (m.translucent ? kTranslucent : 0) | (m.eyes ? kEyes : 0);
+                       (m.self_illum ? kSelfIllum : 0) | (m.translucent ? kTranslucent : 0) | (m.eyes ? kEyes : 0) |
+                       (m.additive ? kAdditive : 0);
             cmd.set_bind_group(mesh.frame_bind_groups.empty()
                                    ? *mesh.bind_group
                                    : *mesh.frame_bind_groups[m.base_frame % mesh.frame_bind_groups.size()]);
