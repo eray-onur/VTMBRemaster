@@ -17,7 +17,7 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Animations: descriptions, sequences, include models, run-length channel decoding, root-relative spine rotation, skinning matrices
 - [x] Animations: blend grids and pose parameters, events, movement (root motion), fade times, Bloodlines melee hit data
 - [x] Animations: facing and movement conventions (+x forward, move_yaw clockwise)
-- [ ] Animations: unknown sequence fields (+620, +660 block, +752â€¦)
+- [ ] Animations: unknown sequence fields (+620, +660 block, +752…)
 - [x] Models: hitboxes, attachments, flex controllers and rules, mesh flexes (which vertices), mouths, IK chains, surface property
 - [x] Models: packed normal tables for quantized vertices (closed form, recovered from the data)
 - [ ] Models: flex vertex delta encoding; cloth data on 74 hair/cloth meshes
