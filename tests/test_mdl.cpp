@@ -1,4 +1,5 @@
 #include "openbl/formats/error.hpp"
+#include "openbl/formats/keyvalues.hpp"
 #include "openbl/formats/mdl.hpp"
 #include "openbl/formats/vtx.hpp"
 #include "openbl/vfs/game_filesystem.hpp"
@@ -644,6 +645,7 @@ TEST_CASE("MDL integration: every model in the real install loads") {
     std::size_t flex_vertices = 0, off_unit_flex_normals = 0;
     std::size_t cloth_models = 0, cloth_bodies = 0, cloth_capsules = 0, bad_cloth_vertices = 0, bad_cloth_counts = 0;
     std::size_t cloth_vertices = 0, far_cloth_vertices = 0;
+    std::size_t layered = 0, combo_names = 0, unresolved_combos = 0, bad_activities = 0;
     std::map<MdlVertexFormat, std::size_t> formats;
     for (const auto& path : gfs.list_files()) {
         if (!path.ends_with(".mdl")) {
@@ -677,6 +679,18 @@ TEST_CASE("MDL integration: every model in the real install loads") {
                 bad_blend_params += used && (s.blend_param[k] < 0 ||
                                              s.blend_param[k] >= static_cast<std::int32_t>(mdl.pose_parameters.size()));
             }
+            layered += !s.layers.empty();
+            combo_names += !s.dodge_activity.empty() + !s.blocked_activity.empty() + !s.combo_next.empty() +
+                           !s.follow_up.empty();
+            // Combo and follow-up sequences are in the same model (names ignore case).
+            for (const std::string* next : {&s.combo_next, &s.follow_up}) {
+                if (!next->empty()) {
+                    unresolved_combos += std::none_of(mdl.sequences.begin(), mdl.sequences.end(),
+                                                      [&](const MdlSequence& o) { return iequals(o.label, *next); });
+                }
+            }
+            bad_activities += (!s.dodge_activity.empty() && !s.dodge_activity.starts_with("ACT_")) ||
+                              (!s.blocked_activity.empty() && !s.blocked_activity.starts_with("ACT_"));
         }
         for (const auto& set : mdl.hitbox_sets) {
             hitboxes += set.hitboxes.size();
@@ -826,6 +840,13 @@ TEST_CASE("MDL integration: every model in the real install loads") {
                     << melee_hits << " melee hits");
     CHECK(bad_events == 0);
     CHECK(bad_blend_params == 0);
+    MESSAGE(layered << " sequences with layers, " << combo_names << " combo names (" << unresolved_combos
+                    << " unresolved)");
+    CHECK(layered == 461);
+    // Shipped mistakes: fists' Fists_attack_W3 does not exist, and the katana's
+    // dodge attack chains to tireiron_attack_med (each in two model files).
+    CHECK(unresolved_combos == 4);
+    CHECK(bad_activities == 0);
     CHECK(bad_movements == 0);
     MESSAGE(hitboxes << " hitboxes, " << attachments << " attachments, " << flex_rules << " flex rules, "
                      << mesh_flexes << " mesh flexes (" << flex_vertices << " vertices, " << off_unit_flex_normals

@@ -107,7 +107,16 @@ struct MdlSequence {
     std::array<std::int32_t, 2> blend_param{-1, -1}; // Index into MdlFile::pose_parameters.
     std::array<float, 2> blend_start{}, blend_end{};
     float fade_in = 0.2f, fade_out = 0.2f;
+    float third_fade = 0.2f; // Equals the fades except on two sledgehammer attacks; meaning unknown.
+    std::vector<std::int32_t> layers; // Sequences overlaid on this one (e.g. "katana_bobble_layer").
     std::vector<MdlEvent> events;
+    // Bloodlines melee combos (docs/formats/models.md).
+    std::int32_t attack_directions = -1; // Mask: 8 forward, 512/1024 side swings, 16 jump; -1 none.
+    std::string dodge_activity;          // e.g. ACT_DODGE_DUCK; empty if none.
+    std::string blocked_activity;        // e.g. ACT_BLOCKED_REACTION_LEFT.
+    std::string combo_next;              // Sequence label of the next attack in the combo.
+    std::string follow_up;               // e.g. knockback_flying_wall_hit.
+    std::array<float, 3> combo_window{0.0f, 1.0f, 1.0f}; // Cycles; e.g. 0.5, 0.9, 0.91 on combo attacks.
     std::vector<std::array<float, 6>> melee_sweep; // Pairs of points, probably the weapon's path.
     std::vector<MdlMeleeHit> melee_hits;
 

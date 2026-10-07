@@ -231,13 +231,22 @@ Characters keep almost no animation of their own. The cop, for example, has only
 | +588, +592 | `f32` parameter value at the first grid column/row |
 | +596, +600 | `f32` parameter value at the last |
 | +612, +616 | `f32` fade-in and fade-out time (0.2 s for most) |
-| +620 | `f32` a third time, usually equal to the others; meaning unknown |
-| +660, +664 | count and offset (rel) of a small float block; meaning unknown |
+| +620 | `f32` a third time, equal to the fades except on two sledgehammer attacks (0.3 against 0.5); meaning unknown |
+| +624…+656, +668 | always 0 |
+| +660, +664 | count and offset (rel) of **layer sequences**: `i32` sequence indices overlaid on this one, e.g. `katana_aggressive_walk` → `katana_bobble_layer` (461 sequences, all references valid) |
 | +672 | `f32` a second bounding box |
+| +696, +728, +736 | always −1 |
 | +700, +704 | count, offset (rel) of **melee sweep points** (24 bytes: two points) |
 | +708, +712 | count, offset (rel) of **melee hits** (188 bytes) |
 | +716, +720 | `f32` pair set with the melee data (e.g. 120, 213); FLT_MIN/FLT_MAX otherwise |
-| +752…+760 | `f32` values, mostly 0, 1, 1; meaning unknown |
+| +724 | `i32` **attack-direction mask** for melee combos: 8 forward (`_W` attacks), 512 and 1024 side swings, 16 jump, 0 centre and air attacks; −1 on other sequences |
+| +732 | `i32` sequence-relative name of the **dodge activity** (`ACT_DODGE_DUCK`), −1 if none |
+| +740 | `i32` sequence-relative name of the **blocked reaction** (`ACT_BLOCKED_REACTION_LEFT`), −1 if none |
+| +744 | `i32` sequence-relative label of the **next attack in the combo** (`baseballbat_attack_W1` → `W2` → `heavy_a`), −1 if none |
+| +748 | `i32` sequence-relative label of a **follow-up sequence** (`knockback_flying_*` → `knockback_flying_wall_hit`), −1 if none |
+| +752…+760 | `f32` **combo window** in cycles: 0, 1, 1 by default, and e.g. 0.5, 0.9, 0.91 on combo attacks. The first value is probably when the next input is accepted; the other two are unconfirmed |
+
+Two combo links in the release point at sequences that don't exist: `Fists_attack_W2` names `Fists_attack_W3`, and the katana's dodge attack names `tireiron_attack_med`. Labels are matched ignoring case.
 
 Blend grids step evenly from the start to the end value. Andrei's `run` blends `run_180`, `run_225` … `run_135`, `run_180` across `move_yaw` −180…180.
 

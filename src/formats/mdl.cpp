@@ -319,6 +319,33 @@ private:
             }
             s.fade_in = f32(at + 612);
             s.fade_out = f32(at + 616);
+            s.third_fade = f32(at + 620);
+
+            const std::uint32_t layers = count(at + 660, "sequence layer");
+            const std::size_t layer_base = layers ? rel(at, i32(at + 664)) : 0;
+            need(layer_base, std::uint64_t{layers} * 4);
+            for (std::uint32_t k = 0; k < layers; ++k) {
+                const std::int32_t layer = i32(layer_base + 4 * std::size_t{k});
+                if (layer < 0 || static_cast<std::uint32_t>(layer) >= seqs) {
+                    in_.fail("sequence layer out of range");
+                }
+                s.layers.push_back(layer);
+            }
+            // Melee combos: an attack-direction mask, then sequence-relative names
+            // (-1 = none) for the dodge and blocked reactions, the next attack in
+            // the combo and a follow-up sequence, then the combo window.
+            s.attack_directions = i32(at + 724);
+            auto optional_name = [&](std::size_t field) {
+                const std::int32_t offset = i32(at + field);
+                return offset == -1 || offset == 0 ? std::string() : c_string(rel(at, offset));
+            };
+            s.dodge_activity = optional_name(732);
+            s.blocked_activity = optional_name(740);
+            s.combo_next = optional_name(744);
+            s.follow_up = optional_name(748);
+            for (std::size_t k = 0; k < 3; ++k) {
+                s.combo_window[k] = f32(at + 752 + 4 * k);
+            }
 
             const std::uint32_t events = count(at + 20, "event");
             const std::size_t event_base = rel(at, i32(at + 24));
