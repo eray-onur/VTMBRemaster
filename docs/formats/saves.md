@@ -94,4 +94,4 @@ An `i32` count followed by that many indices into the map's `.HL1` entity table.
 - identical embedded files after decompression;
 - all 5,224 `.HL1` entities re-encoded byte for byte from their parsed records.
 
-Whether the original game loads a rewritten save hasn't been tested yet.
+**The original game loads them.** A test save was rewritten with `openbl-cli save rewrite`, then loaded with `load` in the running GOG game with the Unofficial Patch. It opened in `sp_tutorial_1` with the character, NPCs and HUD restored. It was 16% smaller than the original only because of zlib's compression level. On loading any save, the game unpacks the embedded `.HL1`/`.HL2`/`.HL3` files into the save folder as working copies.

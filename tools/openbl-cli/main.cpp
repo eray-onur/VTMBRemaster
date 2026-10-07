@@ -8,6 +8,8 @@
 #include "openbl/formats/keyvalues.hpp"
 #include "openbl/formats/mdl.hpp"
 #include "openbl/formats/mp3.hpp"
+#include "openbl/formats/sav.hpp"
+#include "openbl/formats/save_write.hpp"
 #include "openbl/formats/vtx.hpp"
 #include "openbl/formats/wav.hpp"
 #include "openbl/formats/path.hpp"
@@ -32,6 +34,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <iostream>
 #include <map>
 #include <string>
@@ -66,6 +69,7 @@ void usage() {
                  "  openbl-cli bsp export <map> <out.obj> [game-dir]\n"
                  "  openbl-cli image compare <reference> <candidate> [x y w h]\n"
                  "  openbl-cli audio export <sound> <out.wav> [game-dir]\n"
+                 "  openbl-cli save rewrite <in.sav> <out.sav>\n"
                  "\n"
                  "<texture> and <material> are game paths with or without extension, e.g.\n"
                  "materials/brick/bradwllb; the materials/ prefix is optional for <material>.\n"
@@ -998,6 +1002,23 @@ int cmd_bsp(const std::vector<std::string_view>& args) {
 
 // Brightness and difference statistics between two screenshots (PNG or TGA),
 // optionally restricted to a region given in reference-image pixels.
+// Parses a save and writes it back with OpenBL's writer (round-trip testing).
+int cmd_save(const std::vector<std::string_view>& args) {
+    if (args.size() < 4 || args[1] != "rewrite") {
+        usage();
+        return 2;
+    }
+    std::ifstream in{fs::path(args[2]), std::ios::binary};
+    const std::vector<char> raw{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    const auto save = formats::parse_sav(std::as_bytes(std::span(raw.data(), raw.size())));
+    const auto out_bytes = formats::write_sav(save);
+    std::ofstream out{fs::path(args[3]), std::ios::binary};
+    out.write(reinterpret_cast<const char*>(out_bytes.data()), static_cast<std::streamsize>(out_bytes.size()));
+    std::cout << "rewrote " << save.files.size() << " embedded files, " << out_bytes.size() << " bytes -> " << args[3]
+              << '\n';
+    return out ? 0 : 1;
+}
+
 // Decodes a game sound (WAV: PCM or Microsoft ADPCM; MP3) to a 16-bit PCM WAV file.
 int cmd_audio(const std::vector<std::string_view>& args) {
     if (args.size() < 4 || args[1] != "export") {
@@ -1324,6 +1345,9 @@ int main(int argc, char** argv) {
         }
         if (args[0] == "image") {
             return cmd_image(args);
+        }
+        if (args[0] == "save") {
+            return cmd_save(args);
         }
         if (args[0] == "audio") {
             return cmd_audio(args);
