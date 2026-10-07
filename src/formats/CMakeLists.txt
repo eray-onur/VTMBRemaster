@@ -14,6 +14,7 @@ add_library(openbl_formats
     path.cpp
     sav.cpp
     save_state.cpp
+    script_text.cpp
     phy.cpp
     text_encoding.cpp
     tth.cpp

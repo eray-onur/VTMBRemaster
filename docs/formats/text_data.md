@@ -70,12 +70,18 @@ The parser recovers from all of the following and reports each one as a diagnost
 
 UTF-16LE with a byte-order mark, containing KeyValues of the form `"lang" { "Language" "English" "Tokens" { "Name" "Text" … } }`. Text uses `\n` for a line break. The English file has 192 tokens, and `GameUI_Advanced` is defined twice (the first definition wins). Parser: `openbl/formats/localization.hpp`. It also accepts UTF-8 and Windows-1252 files, for mods.
 
-## Not KeyValues
+## Line-based formats
 
-These are separate formats, still to be parsed:
+Parser: `openbl/formats/script_text.hpp`.
 
-- `scripts/titles.txt` (on-screen titles)
-- `scripts/sentences.txt` (sentence groups)
-- `scripts/dsp_presets.txt` (sound DSP presets)
-- the two `vdata/system` files noted above
-- `expressions/*.txt` (facial expressions)
+| File | Format | Release |
+|---|---|---|
+| `vdata/system/experience_table.txt` | `Title \| Description \| XP` rows; `>` starts a comment, and comments name the quest each group belongs to. Only the middle field is localised. | 167 rows |
+| `vdata/system/credits.txt` (also played by `PlayEndCredits`) | a line script: `#` comment, `@font`, `$r g b a` text colour, `%r g b a` drop shadow, `^x y w h` credit box (fractions of the screen); every other line is text | 804 lines |
+| `scripts/sentences.txt` | `NAME sound/path {options}`; names ending in a number form groups the engine picks from (`SPI_DIES0`, `SPI_DIES1`); options such as `Len 1.50` | 18 sentences, all sounds present |
+| `scripts/titles.txt` | `$name value` settings (position, effect, colours, fade times) followed by `NAME { text }` blocks that use the settings in effect | 13 titles, all test text left over from the engine |
+| `scripts/dsp_presets.txt` | `{ index type mix-min mix-max duration fade dbmin mixdrop { processor } … }`; processors are a code (`RVA` reverb, `DFR` diffusor, …) and numbers | 141 presets |
+
+One shipped flaw: the column header at line 765 of `dsp_presets.txt` lacks its `//` and is skipped.
+
+Facial expression tables (`expressions/*.txt`) have their own page: [expressions.md](expressions.md).

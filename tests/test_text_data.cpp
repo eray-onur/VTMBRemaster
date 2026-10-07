@@ -1,5 +1,6 @@
 #include "openbl/formats/keyvalues.hpp"
 #include "openbl/formats/localization.hpp"
+#include "openbl/formats/script_text.hpp"
 #include "openbl/vfs/game_filesystem.hpp"
 #include "test_support.hpp"
 
@@ -104,4 +105,66 @@ TEST_CASE("Localisation integration: the game's UI strings load") {
     CHECK(loc.tokens.size() == 192);
     CHECK(loc.diagnostics.size() == 1); // GameUI_Advanced is defined twice.
     CHECK(loc.tokens.at("GameUI_MouseLook") == "Mouse look");
+}
+
+TEST_CASE("Script text formats") {
+    const auto xp = parse_experience_table("> comment\nQuest1 | Find the thing | 50\nbad line\n");
+    REQUIRE(xp.rows.size() == 1);
+    CHECK(xp.rows[0].experience == 50);
+    CHECK(xp.rows[0].description == "Find the thing");
+    CHECK(xp.diagnostics.size() == 1);
+
+    const auto credits = parse_credits("# comment\n@MainMenu\n$175 10 5 255\nVampire\n");
+    REQUIRE(credits.size() == 3);
+    CHECK(credits[0].kind == CreditsLine::Kind::Font);
+    CHECK(credits[0].value == "MainMenu");
+    CHECK(credits[2].value == "Vampire");
+
+    const auto sentences = parse_sentences("// c\nSPI_DIES0 character/a.wav {Len 1.50}\n");
+    REQUIRE(sentences.sentences.size() == 1);
+    CHECK(sentences.sentences[0].sound == "character/a.wav");
+    CHECK(sentences.sentences[0].options == "Len 1.50");
+
+    const auto titles = parse_titles("$fadein 1.5\nCR1\n{\nHello\n}\n$fadein 2\nCR2\n{\nBye\n}\n");
+    REQUIRE(titles.titles.size() == 2);
+    CHECK(titles.titles[0].text == "Hello");
+    CHECK(titles.titles[1].settings[0].second == "2");
+
+    const auto dsp = parse_dsp_presets("{ 0 LINEAR 0.2 0.8 { RVA 80.0 30.0 } { 0 0 } }\n");
+    REQUIRE(dsp.presets.size() == 1);
+    CHECK(dsp.presets[0].header[1] == "LINEAR");
+    REQUIRE(dsp.presets[0].processors.size() == 2);
+    CHECK(dsp.presets[0].processors[0].tokens[0] == "RVA");
+}
+
+TEST_CASE("Script text integration: the shipped files parse") {
+    auto game = test::game_dir();
+    if (!game) {
+        MESSAGE("OPENBL_GAME_DIR not set; skipping");
+        return;
+    }
+    const vfs::GameFileSystem gfs(*game);
+    auto text = [&](std::string_view path) {
+        const auto d = gfs.read(path);
+        REQUIRE(d);
+        return std::string(reinterpret_cast<const char*>(d->data()), d->size());
+    };
+    const auto xp = parse_experience_table(text("vdata/system/experience_table.txt"));
+    const auto credits = parse_credits(text("vdata/system/credits.txt"));
+    const auto sentences = parse_sentences(text("scripts/sentences.txt"));
+    const auto titles = parse_titles(text("scripts/titles.txt"));
+    const auto dsp = parse_dsp_presets(text("scripts/dsp_presets.txt"));
+    std::size_t missing_sounds = 0;
+    for (const auto& s : sentences.sentences) {
+        const std::string wav = "sound/" + s.sound;
+        missing_sounds += !gfs.exists(wav) && !gfs.exists(wav.substr(0, wav.size() - 4) + ".mp3");
+    }
+    MESSAGE(xp.rows.size() << " experience rows, " << credits.size() << " credit lines, " << sentences.sentences.size()
+                           << " sentences (" << missing_sounds << " missing sounds), " << titles.titles.size()
+                           << " titles, " << dsp.presets.size() << " DSP presets");
+    CHECK(xp.diagnostics.empty());
+    CHECK(sentences.diagnostics.empty());
+    CHECK(titles.diagnostics.empty());
+    CHECK(dsp.diagnostics.size() == 1); // A column header at line 765 lacks its "//".
+    CHECK(xp.rows.size() == 167);
 }
