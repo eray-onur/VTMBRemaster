@@ -114,6 +114,9 @@ ParticleRenderer::ParticleRenderer(rhi::Device& device, const AssetSource& asset
 ParticleRenderer::~ParticleRenderer() = default;
 
 const rhi::Texture* ParticleRenderer::sprite(const std::string& name) {
+    if (auto it = sprite_by_definition_.find(&name); it != sprite_by_definition_.end()) {
+        return it->second;
+    }
     const std::string key = lower(name);
     auto it = sprites_.find(key);
     if (it == sprites_.end()) {
@@ -130,7 +133,9 @@ const rhi::Texture* ParticleRenderer::sprite(const std::string& name) {
         stats_.missing_sprites += !tex;
         it = sprites_.emplace(key, std::move(tex)).first;
     }
-    return it->second ? it->second.get() : white_.get();
+    const rhi::Texture* resolved = it->second ? it->second.get() : white_.get();
+    sprite_by_definition_.emplace(&name, resolved);
+    return resolved;
 }
 
 void ParticleRenderer::update(float time) {

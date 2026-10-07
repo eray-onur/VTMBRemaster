@@ -107,21 +107,37 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
         inst.skin = skin < model->skins.size() ? skin : 0;
         const glm::mat4 m = prop_transform(origin, angles);
         std::memcpy(inst.transform.data(), glm::value_ptr(m), sizeof(inst.transform));
-        // Sample at the model's centre (or its explicit lighting origin), nudged
-        // out of solid space if the centre is embedded in the world.
-        const glm::vec3 c = lighting_origin ? glm::vec3(glm::make_vec3(lighting_origin->data()))
-                                            : glm::vec3(m * glm::vec4(glm::make_vec3(model->center.data()), 1.0f));
-        formats::Vec3 point{c.x, c.y, c.z};
-        if (bsp.leafs[bsp.leaf_at(point)].contents & formats::contents::Solid) {
-            point = {origin[0], origin[1], origin[2] + 16.0f};
-        }
         std::array<std::array<float, 3>, 3> rotation{};
         for (int r = 0; r < 3; ++r) {
             for (int k = 0; k < 3; ++k) {
                 rotation[static_cast<std::size_t>(r)][static_cast<std::size_t>(k)] = m[k][r];
             }
         }
-        inst.lighting = lighting.sample(point, rotation);
+        auto solid = [&](const glm::vec3& p) {
+            return (bsp.leafs[bsp.leaf_at({p.x, p.y, p.z})].contents & formats::contents::Solid) != 0;
+        };
+        // Sample at the model's centre (or its explicit lighting origin).
+        const glm::vec3 c = lighting_origin ? glm::vec3(glm::make_vec3(lighting_origin->data()))
+                                            : glm::vec3(m * glm::vec4(glm::make_vec3(model->center.data()), 1.0f));
+        if (!solid(c)) {
+            inst.lighting = lighting.sample({c.x, c.y, c.z}, rotation);
+        } else {
+            // Embedded in the world (e.g. a building wrapped around a brush
+            // block): light each side of the cube from just outside that side
+            // of the model's bounds, where the lit surroundings are visible.
+            const AmbientCube fallback = lighting.sample({origin[0], origin[1], origin[2] + 16.0f}, rotation);
+            inst.lighting = fallback;
+            for (std::size_t face = 0; face < 6; ++face) {
+                glm::vec3 local = glm::make_vec3(model->center.data());
+                const std::size_t axis = face / 2;
+                const float sign = (face % 2) ? -1.0f : 1.0f;
+                local[static_cast<int>(axis)] += sign * (model->half_extent[axis] + 8.0f);
+                const glm::vec3 p(m * glm::vec4(local, 1.0f));
+                if (!solid(p)) {
+                    inst.lighting.color[face] = lighting.sample({p.x, p.y, p.z}, rotation).color[face];
+                }
+            }
+        }
         instances_.push_back(std::move(inst));
     };
 
@@ -304,6 +320,7 @@ const PropRenderer::Model* PropRenderer::load_model(const std::string& path) {
                 const glm::vec3 center = (lo + hi) * 0.5f;
                 model->center = {center.x, center.y, center.z};
                 model->radius = glm::length(hi - lo) * 0.5f;
+                model->half_extent = {(hi.x - lo.x) * 0.5f, (hi.y - lo.y) * 0.5f, (hi.z - lo.z) * 0.5f};
                 model->positions.reserve(vertices.size());
                 for (const Vertex& v : vertices) {
                     model->positions.push_back({v.position[0], v.position[1], v.position[2]});

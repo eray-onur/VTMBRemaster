@@ -1,8 +1,9 @@
 #pragma once
 
 // Simulation of Bloodlines particle effects (particles/*.txt; see
-// docs/formats/particles.md and docs/PARTICLES.md). The semantics are
-// inferred from the definitions and checked against captures of the original.
+// docs/formats/particles.md and docs/PARTICLES.md). The semantics follow the
+// game's own template (particles/000_template.txt) where it speaks, and are
+// otherwise inferred and checked against captures of the original.
 
 #include "openbl/formats/particle.hpp"
 
@@ -20,8 +21,39 @@
 namespace openbl::particles {
 
 using Vec3 = std::array<float, 3>;
+using Curve = std::optional<formats::ParticleCurve>;
 
-// Loads and caches particle definitions by name ("Smoke1", "particles/Smoke1.txt", ...).
+// Curves a particle definition can animate over its life.
+enum class Key : std::uint8_t {
+    Size, Width, Height, Rotation, Color, Red, Green, Blue, Mask, MoveAlign,
+    XSpeed, YSpeed, ZSpeed, ElevationSpeed, RadiusSpeed, ThetaSpeed, PhiSpeed, ParentSpeed, Count
+};
+// Values of a spawn block (placement, modulation of its children, emission).
+enum class SpawnKey : std::uint8_t {
+    X, Y, Z, Elevation, Radius, Theta, Phi, Red, Green, Blue, Color, Mask, Size, Width, Height, Rotation, Timescale,
+    Rate, Burst, Count
+};
+
+struct Definition;
+
+struct SpawnDefinition {
+    const Definition* particle = nullptr; // The child effect; null if missing.
+    std::array<Curve, static_cast<std::size_t>(SpawnKey::Count)> curves;
+};
+
+// A particle definition with its curves parsed once, shared by all its particles.
+struct Definition {
+    const formats::ParticleBlock* block = nullptr;
+    std::array<Curve, static_cast<std::size_t>(Key::Count)> curves;
+    Curve fps, frames, min_frames, max_frames, loop;
+    const std::string* sprite = nullptr; // Null or empty: invisible (an emitter).
+    std::vector<SpawnDefinition> spawns;
+
+    const Curve& curve(Key k) const { return curves[static_cast<std::size_t>(k)]; }
+};
+
+// Loads, parses and compiles particle definitions by name ("Smoke1",
+// "particles/Smoke1.txt", ...), caching them.
 class ParticleLibrary {
 public:
     // Returns the file's text, or nullopt if it does not exist.
@@ -29,13 +61,17 @@ public:
     explicit ParticleLibrary(Reader reader) : reader_(std::move(reader)) {}
 
     // Null if the definition is missing.
-    const formats::ParticleBlock* find(std::string_view name);
+    const Definition* find(std::string_view name);
     // Game path of a definition's name, e.g. "particles/smoke1.txt".
     static std::string path_of(std::string_view name);
 
 private:
+    struct Entry {
+        std::unique_ptr<formats::ParticleFile> file; // Null: missing.
+        std::unique_ptr<Definition> definition;
+    };
     Reader reader_;
-    std::unordered_map<std::string, std::unique_ptr<formats::ParticleFile>> files_; // Null: missing.
+    std::unordered_map<std::string, Entry> entries_;
 };
 
 // One particle ready to draw.
@@ -43,11 +79,11 @@ struct ParticleQuad {
     Vec3 position{};
     float width = 0, height = 0;       // World units.
     float rotation = 0;                // Degrees, roll on screen.
-    std::array<float, 3> color{};      // Additive colour, 0-1 per channel (rgb x color strength).
+    std::array<float, 3> color{};      // Light added, 0-1 per channel (rgb x color strength).
     float mask = 0;                    // Darkening opacity, 0-1.
     bool align = false;                // movealign: stretch along `velocity` instead of facing the screen.
     Vec3 velocity{};
-    const std::string* sprite = nullptr;
+    const std::string* sprite = nullptr; // Stable per definition, usable as a cache key.
 };
 
 // One running effect (e.g. an env_particle).
@@ -69,13 +105,11 @@ public:
 
 private:
     struct Emitter {
-        const formats::ParticleBlock* spawn = nullptr;     // The spawn block.
-        const formats::ParticleBlock* particle = nullptr;  // Its child definition.
-        float accumulator = 0;                              // Fractional particles owed by `rate`.
+        float accumulator = 0; // Fractional particles owed by `rate`.
         bool burst_done = false;
     };
     struct Particle {
-        const formats::ParticleBlock* def = nullptr;
+        const Definition* def = nullptr;
         std::uint64_t parent_id = 0; // 0: none (the root).
         std::uint64_t id = 0;
         float age = 0;        // Frames.
@@ -92,19 +126,20 @@ private:
         float radius = 0, theta = 0, phi = 0; // Spherical position around the anchor (degrees).
         Vec3 position{}, velocity{};
         Vec3 parent_last{};   // Parent position at the previous step.
-        std::vector<Emitter> emitters;
+        std::vector<Emitter> emitters; // One per Definition::spawns entry.
         bool alive = true;
     };
 
-    void spawn(const formats::ParticleBlock& def, const Particle* parent, const formats::ParticleBlock* spawn_block);
-    float curve(const Particle& p, std::string_view key, float fallback) const;
+    void spawn(const Definition& def, const Particle* parent, const SpawnDefinition* spawn);
+    float value(const Particle& p, Key key, float fallback) const;
     // A spawn block's value at its parent's current age.
-    float spawn_value(const Particle& parent, const formats::ParticleBlock& block, std::string_view key, float fallback) const;
+    float spawn_value(const Particle& parent, const SpawnDefinition& spawn, SpawnKey key, float fallback) const;
+    float initial(const SpawnDefinition& spawn, SpawnKey key, float fallback);
     Vec3 to_world(const Vec3& system) const; // System axes to world.
     void step(float dt);
 
     ParticleLibrary& library_;
-    const formats::ParticleBlock* root_ = nullptr;
+    const Definition* root_ = nullptr;
     Vec3 origin_{};
     std::array<Vec3, 3> axes_{{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}}; // System x, y, z in world space.
     std::vector<Particle> particles_;

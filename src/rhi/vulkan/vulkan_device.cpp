@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <optional>
@@ -1122,8 +1123,11 @@ private:
             VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
             info.size = kShaderDataPerFrame;
             info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+            // Shaders read this for every vertex (bones) and pixel (material
+            // params), so keep it in video memory the CPU can write to rather
+            // than in system memory across the bus.
             VmaAllocationCreateInfo alloc{};
-            alloc.usage = VMA_MEMORY_USAGE_AUTO;
+            alloc.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
             alloc.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
             VmaAllocationInfo out{};
             check(vmaCreateBuffer(allocator_, &info, &alloc, &f.data_buffer, &f.data_allocation, &out),

@@ -67,6 +67,7 @@ private:
         std::vector<std::vector<Mesh>> skins; // [skin family][mesh]
         std::array<float, 3> center{};        // Bounds centre in model space.
         float radius = 0;                     // Bounding sphere around `center`.
+        std::array<float, 3> half_extent{};   // Bounding box half sizes, model space.
         std::vector<formats::Vec3> positions; // LOD 0 triangles, for projecting decals.
         std::vector<std::uint32_t> triangle_indices;
     };

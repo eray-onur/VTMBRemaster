@@ -61,6 +61,7 @@ private:
     std::unique_ptr<rhi::Buffer> indices_;
     std::unique_ptr<rhi::Texture> white_; // Stand-in for missing sprites.
     std::unordered_map<std::string, std::unique_ptr<rhi::Texture>> sprites_; // Lowercase name; null = missing.
+    std::unordered_map<const std::string*, const rhi::Texture*> sprite_by_definition_; // Resolved once per definition.
     std::unordered_map<const rhi::Texture*, std::unique_ptr<rhi::BindGroup>> bind_groups_;
     std::vector<particles::ParticleQuad> quads_;
     std::vector<float> data_;

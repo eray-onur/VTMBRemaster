@@ -15,6 +15,13 @@ constexpr float kPi = 3.14159265358979f;
 constexpr float kForever = std::numeric_limits<float>::infinity();
 constexpr float kMaxStep = 1.0f / 30.0f;
 
+constexpr std::array<const char*, static_cast<std::size_t>(Key::Count)> kKeyNames{
+    "size", "width", "height", "rotation", "color", "red", "green", "blue", "mask", "movealign",
+    "x_speed", "y_speed", "z_speed", "elevation_speed", "radius_speed", "theta_speed", "phi_speed", "parent_speed"};
+constexpr std::array<const char*, static_cast<std::size_t>(SpawnKey::Count)> kSpawnKeyNames{
+    "x", "y", "z", "elevation", "radius", "theta", "phi", "red", "green", "blue", "color", "mask", "size", "width",
+    "height", "rotation", "timescale", "rate", "burst"};
+
 std::string lower(std::string_view s) {
     std::string out(s);
     for (char& c : out) {
@@ -32,13 +39,8 @@ const std::string* text_ptr(const formats::ParticleBlock& b, std::string_view ke
     return nullptr;
 }
 
-// Value of a curve on `block` at frame 0 with its own random pick, or `fallback`.
-float initial(const formats::ParticleBlock& block, std::string_view key, float fallback, std::mt19937& rng) {
-    const auto c = block.curve(key);
-    if (!c) {
-        return fallback;
-    }
-    return c->at(0.0f, 1.0f, std::uniform_real_distribution<float>(0.0f, 1.0f)(rng));
+float at0(const Curve& c, float fallback, float pick = 0.5f) {
+    return c ? c->at(0.0f, 1.0f, pick) : fallback;
 }
 
 } // namespace
@@ -55,17 +57,49 @@ std::string ParticleLibrary::path_of(std::string_view name) {
     return "particles/" + n + ".txt";
 }
 
-const formats::ParticleBlock* ParticleLibrary::find(std::string_view name) {
+const Definition* ParticleLibrary::find(std::string_view name) {
     const std::string path = path_of(name);
-    auto it = files_.find(path);
-    if (it == files_.end()) {
-        std::unique_ptr<formats::ParticleFile> file;
-        if (auto text = reader_(path)) {
-            file = std::make_unique<formats::ParticleFile>(formats::parse_particle(*text));
-        }
-        it = files_.emplace(path, std::move(file)).first;
+    if (auto it = entries_.find(path); it != entries_.end()) {
+        return it->second.definition.get();
     }
-    return it->second ? &it->second->root : nullptr;
+    // Insert first, so definitions that spawn themselves resolve to this entry.
+    Entry& entry = entries_[path];
+    auto text = reader_(path);
+    if (!text) {
+        return nullptr;
+    }
+    entry.file = std::make_unique<formats::ParticleFile>(formats::parse_particle(*text));
+    entry.definition = std::make_unique<Definition>();
+    Definition& def = *entry.definition;
+    const formats::ParticleBlock& block = entry.file->root;
+    def.block = &block;
+    for (std::size_t k = 0; k < kKeyNames.size(); ++k) {
+        def.curves[k] = block.curve(kKeyNames[k]);
+    }
+    def.fps = block.curve("fps");
+    def.frames = block.curve("frames");
+    def.min_frames = block.curve("min_frames");
+    def.max_frames = block.curve("max_frames");
+    def.loop = block.curve("loop");
+    def.sprite = text_ptr(block, "sprite");
+    for (const auto& child : block.children) {
+        if (!formats::iequals(child.name, "spawn")) {
+            continue;
+        }
+        SpawnDefinition spawn;
+        for (std::size_t k = 0; k < kSpawnKeyNames.size(); ++k) {
+            spawn.curves[k] = child.curve(kSpawnKeyNames[k]);
+        }
+        def.spawns.push_back(std::move(spawn));
+    }
+    // Children last (they may refer back to this definition).
+    std::size_t s = 0;
+    for (const auto& child : block.children) {
+        if (formats::iequals(child.name, "spawn")) {
+            def.spawns[s++].particle = find(child.text("particle"));
+        }
+    }
+    return &def;
 }
 
 ParticleSystem::ParticleSystem(ParticleLibrary& library, std::string_view definition, const Vec3& origin,
@@ -83,8 +117,12 @@ ParticleSystem::ParticleSystem(ParticleLibrary& library, std::string_view defini
     }
 }
 
-void ParticleSystem::spawn(const formats::ParticleBlock& def, const Particle* parent,
-                           const formats::ParticleBlock* spawn_block) {
+float ParticleSystem::initial(const SpawnDefinition& spawn, SpawnKey key, float fallback) {
+    const Curve& c = spawn.curves[static_cast<std::size_t>(key)];
+    return c ? c->at(0.0f, 1.0f, std::uniform_real_distribution<float>(0.0f, 1.0f)(rng_)) : fallback;
+}
+
+void ParticleSystem::spawn(const Definition& def, const Particle* parent, const SpawnDefinition* spawn) {
     if (particles_.size() >= kMaxParticlesPerSystem) {
         return;
     }
@@ -94,20 +132,19 @@ void ParticleSystem::spawn(const formats::ParticleBlock& def, const Particle* pa
     p.id = next_id_++;
     p.pick = uniform(rng_);
     p.fps = parent ? parent->fps : 30.0f;
-    if (const auto fps = def.curve("fps")) {
-        p.fps = std::max(fps->at(0, 1, p.pick), 1.0f);
+    if (def.fps) {
+        p.fps = std::max(def.fps->at(0, 1, p.pick), 1.0f);
     }
     // `frames` sets the span keys are spread over; the lifetime is `frames`, a
     // random length between `min_frames` (or `frames`) and `max_frames`, or
     // for ever when the particle loops.
-    p.loop = def.curve("loop") && def.curve("loop")->at(0, 1, 0) != 0;
-    const auto frames = def.curve("frames");
-    p.key_frames = frames ? std::max(frames->at(0, 1, uniform(rng_)), 1.0f) : p.fps;
-    p.lifetime = frames ? p.key_frames : kForever;
-    if (const auto max_frames = def.curve("max_frames"); max_frames && frames) {
-        const auto min_frames = def.curve("min_frames");
-        const float lo = min_frames && min_frames->at(0, 1, 0) > 0 ? min_frames->at(0, 1, 0) : p.key_frames;
-        const float hi = std::max(max_frames->at(0, 1, 0.5f), lo);
+    p.loop = at0(def.loop, 0.0f) != 0;
+    p.key_frames = def.frames ? std::max(def.frames->at(0, 1, uniform(rng_)), 1.0f) : p.fps;
+    p.lifetime = def.frames ? p.key_frames : kForever;
+    if (def.max_frames && def.frames) {
+        const float min_frames = at0(def.min_frames, -1.0f);
+        const float lo = min_frames > 0 ? min_frames : p.key_frames;
+        const float hi = std::max(at0(def.max_frames, lo), lo);
         p.lifetime = lo + (hi - lo) * uniform(rng_);
     }
     if (p.loop) {
@@ -118,37 +155,33 @@ void ParticleSystem::spawn(const formats::ParticleBlock& def, const Particle* pa
         p.parent_id = parent->id;
         p.parent_last = parent->position;
     }
-    if (spawn_block && parent) {
+    if (spawn && parent) {
         // Placement around the parent: offsets along the system's axes plus
         // world-up `elevation`, and a spherical position.
-        const Vec3 xyz = to_world({initial(*spawn_block, "x", 0, rng_), initial(*spawn_block, "y", 0, rng_),
-                                   initial(*spawn_block, "z", 0, rng_)});
-        p.offset = {xyz[0], xyz[1], xyz[2] + initial(*spawn_block, "elevation", 0, rng_)};
-        p.radius = initial(*spawn_block, "radius", 0, rng_);
-        p.theta = initial(*spawn_block, "theta", 0, rng_);
-        p.phi = initial(*spawn_block, "phi", 0, rng_);
+        const Vec3 xyz = to_world({initial(*spawn, SpawnKey::X, 0), initial(*spawn, SpawnKey::Y, 0),
+                                   initial(*spawn, SpawnKey::Z, 0)});
+        p.offset = {xyz[0], xyz[1], xyz[2] + initial(*spawn, SpawnKey::Elevation, 0)};
+        p.radius = initial(*spawn, SpawnKey::Radius, 0);
+        p.theta = initial(*spawn, SpawnKey::Theta, 0);
+        p.phi = initial(*spawn, SpawnKey::Phi, 0);
         // The spawn block modulates its children (values at the parent's age),
         // on top of what the parent itself was given.
-        p.rgb_scale = {spawn_value(*parent, *spawn_block, "red", 255) / 255 * parent->rgb_scale[0],
-                       spawn_value(*parent, *spawn_block, "green", 255) / 255 * parent->rgb_scale[1],
-                       spawn_value(*parent, *spawn_block, "blue", 255) / 255 * parent->rgb_scale[2]};
-        p.color_scale = spawn_value(*parent, *spawn_block, "color", 255) / 255 * parent->color_scale;
-        p.mask_scale = spawn_value(*parent, *spawn_block, "mask", 255) / 255 * parent->mask_scale;
-        p.size_scale = spawn_value(*parent, *spawn_block, "size", 1) * parent->size_scale;
-        p.width_scale = spawn_value(*parent, *spawn_block, "width", 1) * parent->width_scale;
-        p.height_scale = spawn_value(*parent, *spawn_block, "height", 1) * parent->height_scale;
-        p.rotation_add = spawn_value(*parent, *spawn_block, "rotation", 0) + parent->rotation_add;
+        p.rgb_scale = {spawn_value(*parent, *spawn, SpawnKey::Red, 255) / 255 * parent->rgb_scale[0],
+                       spawn_value(*parent, *spawn, SpawnKey::Green, 255) / 255 * parent->rgb_scale[1],
+                       spawn_value(*parent, *spawn, SpawnKey::Blue, 255) / 255 * parent->rgb_scale[2]};
+        p.color_scale = spawn_value(*parent, *spawn, SpawnKey::Color, 255) / 255 * parent->color_scale;
+        p.mask_scale = spawn_value(*parent, *spawn, SpawnKey::Mask, 255) / 255 * parent->mask_scale;
+        p.size_scale = spawn_value(*parent, *spawn, SpawnKey::Size, 1) * parent->size_scale;
+        p.width_scale = spawn_value(*parent, *spawn, SpawnKey::Width, 1) * parent->width_scale;
+        p.height_scale = spawn_value(*parent, *spawn, SpawnKey::Height, 1) * parent->height_scale;
+        p.rotation_add = spawn_value(*parent, *spawn, SpawnKey::Rotation, 0) + parent->rotation_add;
         // `timescale` stretches the children's lifetimes (2: twice as long).
-        const float timescale = spawn_value(*parent, *spawn_block, "timescale", 1);
+        const float timescale = spawn_value(*parent, *spawn, SpawnKey::Timescale, 1);
         if (timescale > 0) {
             p.fps /= timescale;
         }
     }
-    for (const auto& child : def.children) {
-        if (formats::iequals(child.name, "spawn")) {
-            p.emitters.push_back({&child, library_.find(child.text("particle")), 0.0f, false});
-        }
-    }
+    p.emitters.resize(def.spawns.size());
     // Position at spawn.
     const float t = p.theta * kPi / 180.0f, ph = p.phi * kPi / 180.0f;
     for (std::size_t k = 0; k < 3; ++k) {
@@ -158,8 +191,8 @@ void ParticleSystem::spawn(const formats::ParticleBlock& def, const Particle* pa
     particles_.push_back(std::move(p));
 }
 
-float ParticleSystem::curve(const Particle& p, std::string_view key, float fallback) const {
-    const auto c = p.def->curve(key);
+float ParticleSystem::value(const Particle& p, Key key, float fallback) const {
+    const Curve& c = p.def->curve(key);
     if (!c) {
         return fallback;
     }
@@ -168,9 +201,9 @@ float ParticleSystem::curve(const Particle& p, std::string_view key, float fallb
     return c->at(age, p.key_frames, p.pick);
 }
 
-float ParticleSystem::spawn_value(const Particle& parent, const formats::ParticleBlock& block, std::string_view key,
+float ParticleSystem::spawn_value(const Particle& parent, const SpawnDefinition& spawn, SpawnKey key,
                                   float fallback) const {
-    const auto c = block.curve(key);
+    const Curve& c = spawn.curves[static_cast<std::size_t>(key)];
     if (!c) {
         return fallback;
     }
@@ -212,22 +245,21 @@ void ParticleSystem::step(float dt) {
         if (p.parent_id) {
             if (auto it = index_.find(p.parent_id); it != index_.end() && particles_[it->second].alive) {
                 const Vec3& now = particles_[it->second].position;
-                const float follow = curve(p, "parent_speed", 0.0f);
+                const float follow = value(p, Key::ParentSpeed, 0.0f);
                 for (std::size_t k = 0; k < 3; ++k) {
                     p.anchor[k] += (now[k] - p.parent_last[k]) * follow;
                 }
                 p.parent_last = now;
             }
         }
-        // Speeds are per second.
-        // x/y/z run along the system's axes; elevation is world up.
-        const Vec3 v = to_world({curve(p, "x_speed", 0), curve(p, "y_speed", 0), curve(p, "z_speed", 0)});
+        // Speeds are per second. x/y/z run along the system's axes; elevation is world up.
+        const Vec3 v = to_world({value(p, Key::XSpeed, 0), value(p, Key::YSpeed, 0), value(p, Key::ZSpeed, 0)});
         p.offset[0] += v[0] * dt;
         p.offset[1] += v[1] * dt;
-        p.offset[2] += (v[2] + curve(p, "elevation_speed", 0)) * dt;
-        p.radius += curve(p, "radius_speed", 0) * dt;
-        p.theta += curve(p, "theta_speed", 0) * dt;
-        p.phi += curve(p, "phi_speed", 0) * dt;
+        p.offset[2] += (v[2] + value(p, Key::ElevationSpeed, 0)) * dt;
+        p.radius += value(p, Key::RadiusSpeed, 0) * dt;
+        p.theta += value(p, Key::ThetaSpeed, 0) * dt;
+        p.phi += value(p, Key::PhiSpeed, 0) * dt;
         const float t = p.theta * kPi / 180.0f, ph = p.phi * kPi / 180.0f;
         const Vec3 dir{std::cos(ph) * std::cos(t), std::cos(ph) * std::sin(t), std::sin(ph)};
         Vec3 next{};
@@ -238,28 +270,34 @@ void ParticleSystem::step(float dt) {
         p.position = next;
 
         // Children: a burst once, then `rate` per second while this particle lives.
-        for (std::size_t e = 0; e < particles_[i].emitters.size(); ++e) {
-            Emitter& em = particles_[i].emitters[e];
-            if (!em.particle) {
+        const Definition& def = *particles_[i].def;
+        for (std::size_t e = 0; e < def.spawns.size(); ++e) {
+            const SpawnDefinition& sd = def.spawns[e];
+            if (!sd.particle) {
                 continue;
             }
+            Emitter& em = particles_[i].emitters[e];
             int n = 0;
             if (!em.burst_done) {
-                std::mt19937 local(static_cast<std::uint32_t>(particles_[i].id * 7919 + e));
-                n += static_cast<int>(std::lround(initial(*em.spawn, "burst", 0, local)));
+                const Curve& burst = sd.curves[static_cast<std::size_t>(SpawnKey::Burst)];
+                if (burst) {
+                    const float pick = static_cast<float>((particles_[i].id * 7919 + e) % 1000) / 1000.0f;
+                    n += static_cast<int>(std::lround(burst->at(0.0f, 1.0f, pick)));
+                }
                 em.burst_done = true;
             }
-            if (em.spawn->curve("rate")) {
-                const Particle& self = particles_[i];
-                em.accumulator += std::max(spawn_value(self, *em.spawn, "rate", 0), 0.0f) * dt;
+            if (sd.curves[static_cast<std::size_t>(SpawnKey::Rate)]) {
+                em.accumulator += std::max(spawn_value(particles_[i], sd, SpawnKey::Rate, 0), 0.0f) * dt;
                 const int whole = static_cast<int>(em.accumulator);
                 em.accumulator -= static_cast<float>(whole);
                 n += whole;
             }
-            for (int k = 0; k < n; ++k) {
+            if (n > 0) {
                 // spawn() may reallocate; copy what it needs from the parent first.
                 const Particle parent = particles_[i];
-                spawn(*em.particle, &parent, em.spawn);
+                for (int k = 0; k < n; ++k) {
+                    spawn(*sd.particle, &parent, &sd);
+                }
             }
         }
     }
@@ -268,22 +306,22 @@ void ParticleSystem::step(float dt) {
 
 void ParticleSystem::collect(std::vector<ParticleQuad>& out) const {
     for (const Particle& p : particles_) {
-        const std::string* sprite = text_ptr(*p.def, "sprite");
+        const std::string* sprite = p.def->sprite;
         if (!sprite || sprite->empty()) {
             continue;
         }
         ParticleQuad q;
         q.position = p.position;
-        const float size = curve(p, "size", 1.0f) * p.size_scale;
-        q.width = size * curve(p, "width", 1.0f) * p.width_scale;
-        q.height = size * curve(p, "height", 1.0f) * p.height_scale;
-        q.rotation = curve(p, "rotation", 0.0f) + p.rotation_add;
-        const float strength = curve(p, "color", 255.0f) / 255.0f * p.color_scale;
-        q.color = {curve(p, "red", 255.0f) / 255.0f * strength * p.rgb_scale[0],
-                   curve(p, "green", 255.0f) / 255.0f * strength * p.rgb_scale[1],
-                   curve(p, "blue", 255.0f) / 255.0f * strength * p.rgb_scale[2]};
-        q.mask = std::clamp(curve(p, "mask", 0.0f) / 255.0f * p.mask_scale, 0.0f, 1.0f);
-        q.align = curve(p, "movealign", 0.0f) != 0.0f;
+        const float size = value(p, Key::Size, 1.0f) * p.size_scale;
+        q.width = size * value(p, Key::Width, 1.0f) * p.width_scale;
+        q.height = size * value(p, Key::Height, 1.0f) * p.height_scale;
+        q.rotation = value(p, Key::Rotation, 0.0f) + p.rotation_add;
+        const float strength = value(p, Key::Color, 255.0f) / 255.0f * p.color_scale;
+        q.color = {value(p, Key::Red, 255.0f) / 255.0f * strength * p.rgb_scale[0],
+                   value(p, Key::Green, 255.0f) / 255.0f * strength * p.rgb_scale[1],
+                   value(p, Key::Blue, 255.0f) / 255.0f * strength * p.rgb_scale[2]};
+        q.mask = std::clamp(value(p, Key::Mask, 0.0f) / 255.0f * p.mask_scale, 0.0f, 1.0f);
+        q.align = value(p, Key::MoveAlign, 0.0f) != 0.0f;
         q.velocity = p.velocity;
         q.sprite = sprite;
         out.push_back(q);
