@@ -163,6 +163,10 @@ MaterialParams params_from(const formats::MaterialProxies& vars) {
         p.transform_u = {t->m[0], t->m[1], t->m[2], 0};
         p.transform_v = {t->m[3], t->m[4], t->m[5], 0};
     }
+    if (const auto* t = vars.var("$texture2transform"); t && t->is_matrix) {
+        p.transform2_u = {t->m[0], t->m[1], t->m[2], 0};
+        p.transform2_v = {t->m[3], t->m[4], t->m[5], 0};
+    }
     auto rgb = [](const formats::ProxyVar& v) {
         return v.count >= 3 ? std::array<float, 3>{v.v[0], v.v[1], v.v[2]} : std::array<float, 3>{v.v[0], v.v[0], v.v[0]};
     };
@@ -184,7 +188,8 @@ MaterialParams params_from(const formats::MaterialProxies& vars) {
 bool is_default(const MaterialParams& p) {
     const MaterialParams d;
     return p.transform_u == d.transform_u && p.transform_v == d.transform_v && p.color == d.color &&
-           p.self_illum_tint == d.self_illum_tint;
+           p.self_illum_tint == d.self_illum_tint && p.transform2_u == d.transform2_u &&
+           p.transform2_v == d.transform2_v;
 }
 
 } // namespace
@@ -270,6 +275,14 @@ RenderMaterial MaterialSystem::load(const std::string& name, std::optional<forma
             }
         }
     }
+    if (out.shader == "unlittwotexture") {
+        if (auto path = mat->texture_path("$texture2")) {
+            if (const auto* t = texture(*path)) {
+                out.base2 = t;
+                out.multiply_layers = true;
+            }
+        }
+    }
     out.alpha_test = flag(*mat, "$alphatest");
     if (auto ref = mat->param("$alphatestreference")) {
         out.alpha_ref = static_cast<float>(std::atof(std::string(*ref).c_str()));
@@ -278,7 +291,7 @@ RenderMaterial MaterialSystem::load(const std::string& name, std::optional<forma
     out.translucent = flag(*mat, "$translucent") || out.additive;
     out.self_illum = flag(*mat, "$selfillum");
     out.no_cull = flag(*mat, "$nocull");
-    out.unlit = out.shader.starts_with("unlitgeneric") || out.shader == "sprite";
+    out.unlit = out.shader.starts_with("unlitgeneric") || out.shader == "sprite" || out.shader == "unlittwotexture";
     out.modulate = out.shader == "decalmodulate";
     if (auto scale = mat->param("$decalscale")) {
         out.decal_scale = static_cast<float>(std::atof(std::string(*scale).c_str()));

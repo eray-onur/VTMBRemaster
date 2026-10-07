@@ -48,6 +48,7 @@ constexpr std::uint32_t kAlphaTest = 1;
 constexpr std::uint32_t kUnlit = 4;
 constexpr std::uint32_t kSelfIllum = 8;
 constexpr std::uint32_t kTranslucent = 16;
+constexpr std::uint32_t kMultiplyLayers = 64;
 
 // Source angles: pitch (down positive) about Y, yaw about Z, roll about X;
 // applied roll, then pitch, then yaw.
@@ -77,7 +78,7 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
     pd.pixel.spirv = openbl_prop_ps;
     pd.vertex_stride = sizeof(Vertex);
     pd.attributes = {{0, rhi::Format::RGB32_Float, 0}, {1, rhi::Format::RG32_Float, 12}, {2, rhi::Format::RGB32_Float, 20}};
-    pd.texture_count = 1;
+    pd.texture_count = 2;
     pd.push_constant_size = sizeof(PushConstants);
     pd.shader_data = true; // Material params table.
     pd.front_counter_clockwise = false;
@@ -236,10 +237,11 @@ const PropRenderer::Model* PropRenderer::load_model(const std::string& path) {
                         if (mesh.material->skip) {
                             continue;
                         }
-                        const rhi::Texture* textures[] = {mesh.material->base};
+                        const rhi::Texture* textures[] = {mesh.material->base, mesh.material->base2};
                         mesh.bind_group = device_.create_bind_group(*pipelines_[0][0], *sampler_, textures);
                         for (const rhi::Texture* frame : mesh.material->base_frames) {
-                            const rhi::Texture* frame_textures[] = {frame};
+                            const rhi::Texture* frame_textures[] = {
+                                frame, mesh.material->multiply_layers ? mesh.material->base2 : frame};
                             mesh.frame_bind_groups.push_back(
                                 device_.create_bind_group(*pipelines_[0][0], *sampler_, frame_textures));
                         }
@@ -298,7 +300,8 @@ void PropRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float, 16>&
             }
             pc.alpha_ref = m.alpha_ref;
             pc.flags = (m.alpha_test ? kAlphaTest : 0) | ((m.unlit || settings.fullbright) ? kUnlit : 0) |
-                       (m.self_illum ? kSelfIllum : 0) | (m.translucent ? kTranslucent : 0);
+                       (m.self_illum ? kSelfIllum : 0) | (m.translucent ? kTranslucent : 0) |
+                       (m.multiply_layers ? kMultiplyLayers : 0);
             pc.params_index = m.params_index < rows ? m.params_index : 0;
             cmd.set_bind_group(mesh.frame_bind_groups.empty()
                                    ? *mesh.bind_group

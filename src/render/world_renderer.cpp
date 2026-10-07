@@ -62,6 +62,7 @@ constexpr std::uint32_t kUnlit = 4;
 constexpr std::uint32_t kSelfIllum = 8;
 constexpr std::uint32_t kTranslucent = 16;
 constexpr std::uint32_t kModulate = 32;
+constexpr std::uint32_t kMultiplyLayers = 64;
 
 // Source polygons are wound clockwise seen from the front, and stay clockwise
 // in Vulkan framebuffer space with our Y-flipped projection (verified visually
@@ -313,7 +314,7 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
             const rhi::Texture* textures[] = {m.base, m.base2, lightmap_.get()};
             batch.bind_group = device.create_bind_group(*pipelines_[0][0], *sampler_, textures);
             for (const rhi::Texture* frame : m.base_frames) {
-                const rhi::Texture* frame_textures[] = {frame, m.blend_layers ? m.base2 : frame, lightmap_.get()};
+                const rhi::Texture* frame_textures[] = {frame, (m.blend_layers || m.multiply_layers) ? m.base2 : frame, lightmap_.get()};
                 batch.frame_bind_groups.push_back(device.create_bind_group(*pipelines_[0][0], *sampler_, frame_textures));
             }
         }
@@ -456,7 +457,8 @@ void WorldRenderer::draw_batches(rhi::CommandList& cmd, const std::vector<Batch>
         pc.alpha_ref = m.alpha_ref;
         pc.flags = (m.alpha_test ? kAlphaTest : 0) | (m.blend_layers ? kBlendLayers : 0) |
                    ((m.unlit || settings.fullbright) ? kUnlit : 0) | (m.self_illum ? kSelfIllum : 0) |
-                   ((m.translucent || batch.decal) ? kTranslucent : 0) | ((batch.decal && m.modulate) ? kModulate : 0);
+                   ((m.translucent || batch.decal) ? kTranslucent : 0) | ((batch.decal && m.modulate) ? kModulate : 0) |
+                   (m.multiply_layers ? kMultiplyLayers : 0);
         pc.params_index = m.params_index < std::max<std::size_t>(rows, 1) ? m.params_index : 0;
         cmd.set_bind_group(batch.current_bind_group());
         cmd.push_constants(&pc, sizeof(pc));

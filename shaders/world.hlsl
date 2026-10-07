@@ -15,6 +15,7 @@ static const uint kUnlit = 4;
 static const uint kSelfIllum = 8;
 static const uint kTranslucent = 16;
 static const uint kModulate = 32;
+static const uint kMultiplyLayers = 64;
 
 struct VSInput {
     [[vk::location(0)]] float3 position : POSITION;
@@ -32,11 +33,12 @@ struct VSOutput {
     [[vk::location(2)]] float blend : TEXCOORD2;
     [[vk::location(3)]] nointerpolation uint4 styles : TEXCOORD3;
     [[vk::location(4)]] nointerpolation float style_step : TEXCOORD4;
+    [[vk::location(5)]] float2 uv2 : TEXCOORD5;
 };
 
 // Brightness of each of the 64 light styles (4 per element), then the
-// material params table: 4 elements per row (texture transform u and v rows,
-// colour and alpha, self-illumination tint).
+// material params table: 6 elements per row (texture transform u and v rows,
+// colour and alpha, self-illumination tint, second-texture transform u and v rows).
 [[vk::binding(0, 1)]] StructuredBuffer<float4> style_values;
 static const uint kParamsStart = 16;
 
@@ -45,7 +47,7 @@ float style_value(uint style) {
 }
 
 float4 material_param(uint k) {
-    return style_values[kParamsStart + pc.params_index * 4 + k];
+    return style_values[kParamsStart + pc.params_index * 6 + k];
 }
 
 VSOutput vs_main(VSInput input) {
@@ -54,6 +56,7 @@ VSOutput vs_main(VSInput input) {
     const float4 tu = material_param(0);
     const float4 tv = material_param(1);
     output.uv = float2(dot(tu.xyz, float3(input.uv, 1.0)), dot(tv.xyz, float3(input.uv, 1.0)));
+    output.uv2 = float2(dot(material_param(4).xyz, float3(input.uv, 1.0)), dot(material_param(5).xyz, float3(input.uv, 1.0)));
     output.lightmap_uv = input.lightmap_uv;
     output.blend = input.blend;
     output.styles = input.styles;
@@ -70,6 +73,9 @@ float4 ps_main(VSOutput input) : SV_Target {
     float4 base = base_texture.Sample(texture_sampler, input.uv);
     if (pc.flags & kBlendLayers) {
         base = lerp(base, base_texture2.Sample(texture_sampler, input.uv), input.blend);
+    }
+    if (pc.flags & kMultiplyLayers) {
+        base *= base_texture2.Sample(texture_sampler, input.uv2);
     }
     if (pc.flags & kAlphaTest) {
         clip(base.a - pc.alpha_ref);

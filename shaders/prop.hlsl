@@ -17,13 +17,14 @@ static const uint kAlphaTest = 1;
 static const uint kUnlit = 4;
 static const uint kSelfIllum = 8;
 static const uint kTranslucent = 16;
+static const uint kMultiplyLayers = 64;
 
-// Material params table: 4 elements per row (texture transform u and v rows,
-// colour and alpha, self-illumination tint).
+// Material params table: 6 elements per row (texture transform u and v rows,
+// colour and alpha, self-illumination tint, second-texture transform u and v rows).
 [[vk::binding(0, 1)]] StructuredBuffer<float4> material_params;
 
 float4 material_param(uint k) {
-    return material_params[pc.params_index * 4 + k];
+    return material_params[pc.params_index * 6 + k];
 }
 
 struct VSInput {
@@ -36,6 +37,7 @@ struct VSOutput {
     float4 position : SV_Position;
     [[vk::location(0)]] float2 uv : TEXCOORD0;
     [[vk::location(1)]] float3 light : COLOR0;
+    [[vk::location(2)]] float2 uv2 : TEXCOORD1;
 };
 
 float cube_half(uint i) {
@@ -55,6 +57,7 @@ VSOutput vs_main(VSInput input) {
     const float4 tu = material_param(0);
     const float4 tv = material_param(1);
     output.uv = float2(dot(tu.xyz, float3(input.uv, 1.0)), dot(tv.xyz, float3(input.uv, 1.0)));
+    output.uv2 = float2(dot(material_param(4).xyz, float3(input.uv, 1.0)), dot(material_param(5).xyz, float3(input.uv, 1.0)));
     const float3 n = normalize(input.normal);
     const float3 n2 = n * n;
     output.light = n2.x * cube_color(n.x >= 0 ? 0 : 1) +
@@ -65,9 +68,13 @@ VSOutput vs_main(VSInput input) {
 
 [[vk::binding(0, 0)]] SamplerState texture_sampler;
 [[vk::binding(1, 0)]] Texture2D base_texture;
+[[vk::binding(2, 0)]] Texture2D base_texture2; // UnlitTwoTexture's second layer; the base otherwise.
 
 float4 ps_main(VSOutput input) : SV_Target {
     float4 base = base_texture.Sample(texture_sampler, input.uv);
+    if (pc.flags & kMultiplyLayers) {
+        base *= base_texture2.Sample(texture_sampler, input.uv2);
+    }
     if (pc.flags & kAlphaTest) {
         clip(base.a - pc.alpha_ref);
     }

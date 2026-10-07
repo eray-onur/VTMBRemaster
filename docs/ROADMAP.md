@@ -82,7 +82,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Animation: blending between sequences, multi-blend sequences, facial flexes, eyes
 - [ ] Free-fly viewer on Windows and Linux
 - [x] Material proxies at runtime: Sine, LinearRamp, noise, arithmetic chains, AnimatedTexture (base and water normal frames), TextureScroll, TextureTransform, driving the base texture transform, `$color`/`$alpha` and `$selfillumtint` on the world and props; `--time` for fixed-clock renders
-- [ ] Material proxies: second-layer transforms (TV scanlines), proxies on characters and the sky, engine inputs (PlayerProximity, GlobalWetness), LampBeam/LampHalo, TextConsole; confirm the ones the captures could not show (security-camera `Sine`, sprite fades, `GlobalWetness` in rain, ticker scroll speed)
+- [x] Material proxies: characters, `UnlitTwoTexture` second layer with `$texture2transform` (TV scanlines), `--sequence` frame captures
+- [ ] Material proxies that need missing features: sprite fades (PlayerProximity, LampBeam, LampHalo; needs sprites), GlobalWetness (needs environment maps and rain), TextConsole (needs the terminal UI); confirm the ones the captures could not show (security-camera `Sine`, sprite fades, `GlobalWetness` in rain, ticker scroll speed)
 - [ ] Render-to-texture monitors (`func_monitor` + `point_camera`, e.g. the haven TV news feed)
 - [ ] Particle simulation and rendering, with the semantics confirmed against captures of the original
 - [ ] Decals on static props (`$modelmaterial`, about 200 decals); confirm decal orientation against the original

@@ -8,7 +8,7 @@ Proxies are small per-frame programs listed in a material's `Proxies` block. The
 
 `formats::MaterialProxies` (`openbl/formats/vmt_proxies.hpp`) holds a material's variables and runs its proxies; `MaterialSystem::update` runs every loaded material's proxies once per frame. Of the 197 shipped materials with proxies (loose and archived; map pakfiles hold more), 183 have proxies that run. The rest use only `BreakableSurface`, `Camo`, `LampBeam`, `LampHalo`, `ParticleSphereProxy`, `Shadow`, `ShadowModel`, `TextConsole` or `WaterLOD`, which are recognised but do nothing yet.
 
-What the renderer shows from the variables (world and props; characters and the sky ignore them for now):
+What the renderer shows from the variables (world, props and characters; no sky material has proxies):
 
 | Variable | Effect |
 |---|---|
@@ -17,10 +17,13 @@ What the renderer shows from the variables (world and props; characters and the 
 | `$basetexturetransform` | texture-coordinate transform |
 | `$color`, `$alpha` | colour tint (gamma-space values, converted to linear) and opacity of translucent materials |
 | `$selfillumtint` | tint of the self-illuminated part |
+| `$texture2transform` | transform of `UnlitTwoTexture`'s second layer (`$texture2`, multiplied with the base; world and props) |
 
-Static values of these variables apply too, not only animated ones. Not shown yet: `$texture2transform` and other second-layer variables (e.g. the TV scanlines' `LinearRamp`), `$envmaptint` (there are no environment maps yet, so `GlobalWetness` has no effect), and frames of other texture layers. The engine inputs (player distance, speed and position; wetness) are all 0 until the game simulation provides them.
+Static values of these variables apply too, not only animated ones. In the shipped maps `UnlitTwoTexture` only appears on the camera-fed TVs (`dev/dev_tvmonitor1a`: a camera picture times rolling scanlines), whose picture needs render-to-texture monitors; the `danetv8inch` screens use it too but no map places that model.
 
-`openbl-viewer --time T` fixes the clock, so animated materials can be compared at a given moment.
+Not shown yet, because the features they drive do not exist: `$envmaptint` (no environment maps, so `GlobalWetness` has no effect), the sprite fades (`PlayerProximity`, `LampBeam`, `LampHalo`: no sprite rendering), the terminal text (`TextConsole`), and frames of texture layers other than the base and the water normal map. The engine inputs (player distance, speed and position; wetness) are all 0 until the game simulation provides them.
+
+`openbl-viewer --time T` fixes the clock, and `--sequence N --fps F` captures N frames at fixed steps, so animated materials can be compared with the original at given moments and measured over time.
 
 ## How proxies work
 

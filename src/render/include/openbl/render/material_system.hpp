@@ -21,8 +21,9 @@ struct RenderMaterial {
     std::string name;
     std::string shader;
     const rhi::Texture* base = nullptr;  // Never null; a checkerboard if missing.
-    const rhi::Texture* base2 = nullptr; // Second layer for WorldVertexTransition; equals base otherwise.
+    const rhi::Texture* base2 = nullptr; // Second layer (WorldVertexTransition, UnlitTwoTexture); equals base otherwise.
     bool blend_layers = false;           // WorldVertexTransition: blend base -> base2 by vertex alpha.
+    bool multiply_layers = false;        // UnlitTwoTexture: base x base2, each with its own transform.
     bool alpha_test = false;
     float alpha_ref = 0.5f;
     bool translucent = false;
@@ -54,14 +55,17 @@ struct RenderMaterial {
 };
 
 // Per-material values the shaders read from a table, one row per material
-// that needs them (row 0: defaults). Colours are linear.
+// that needs them (row 0: defaults). Colours are linear. Shaders index rows
+// as 6 float4 each, in this order.
 struct MaterialParams {
     std::array<float, 4> transform_u{1, 0, 0, 0}; // $basetexturetransform rows: u' = x u + y v + z.
     std::array<float, 4> transform_v{0, 1, 0, 0};
     std::array<float, 4> color{1, 1, 1, 1};       // $color, $alpha.
     std::array<float, 4> self_illum_tint{1, 1, 1, 0};
+    std::array<float, 4> transform2_u{1, 0, 0, 0}; // $texture2transform (UnlitTwoTexture).
+    std::array<float, 4> transform2_v{0, 1, 0, 0};
 };
-static_assert(sizeof(MaterialParams) == 64);
+static_assert(sizeof(MaterialParams) == 96);
 
 // Parses a Source colour parameter: "{r g b}" in 0-255 or "[r g b]" in 0-1.
 std::optional<std::array<float, 3>> parse_vmt_color(std::string_view value);
