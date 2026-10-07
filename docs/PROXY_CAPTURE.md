@@ -8,7 +8,7 @@ Checked by scanning the GOG install's DLLs for command names:
 
 - **Available:** `noclip`, `god`, `notarget`, `sv_cheats`, `map`, `changelevel`, `screenshot`, `startmovie`/`endmovie`, `host_timescale`, `host_framerate`, `cl_showpos`, `cl_drawhud`, `r_drawviewmodel`, `mat_fullbright`, `r_drawentities`, `thirdperson`/`firstperson`, `bind`, `exec`, `cvarlist`, `find`.
 - **Missing:** `setpos`, `setang`, `getpos` and `jpeg`. Stock Source `setpos` teleporting is not available.
-- **Script API:** `vampire.dll` gives scripts `FindPlayer()` and entity methods `GetOrigin`, `SetOrigin`, `GetAngles` and `SetAngles`, documented as "Sets the origin of this entity" and so on. Shipped scripts call them with tuples, e.g. `SetOrigin((x, y, z))`. Teleporting therefore goes through Python, if the console accepts Python lines. That is step 0 below.
+- **Script API:** `vampire.dll` gives scripts `FindPlayer()` and entity methods `GetOrigin`, `SetOrigin`, `GetAngles` and `SetAngles`, documented as "Sets the origin of this entity" and so on. Shipped scripts call them with tuples, e.g. `SetOrigin((x, y, z))`. Teleporting therefore goes through Python typed into the console, which works (see below).
 
 ## Setup
 
