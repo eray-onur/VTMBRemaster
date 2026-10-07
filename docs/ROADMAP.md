@@ -41,7 +41,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Typed loaders for the `vdata/system` rule tables: stats, feats, clan/NPC templates with inheritance, quests, vendors, discipline powers, leveling, histories, item tables
 - [x] Typed loaders for the flat parameter tables: path lookup (rules), rule tables, trait effects, reactions, stealth grids, dice rolls, dispositions
 - [x] Particle system definitions parse (`particles/*.txt`, 1,594 files)
-- [ ] Particle system semantics and rendering
+- [x] Particle definitions: typed blocks and keyframe curves (`min~max`, `(t)`, `!`), sprites and child emitters resolved ([particles.md](formats/particles.md))
+- [ ] Particle simulation and rendering, with the semantics confirmed against the original
 - [x] Facial expressions: `.vfe` and `expressions/*.txt`
 - [x] Sound schemes (`sound/schemes/*.txt`)
 - [x] Sound: `.wav` decoding (PCM and Microsoft ADPCM); `.sfk`/`.pk` identified as editor leftovers

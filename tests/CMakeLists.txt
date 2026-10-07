@@ -15,6 +15,7 @@ add_executable(openbl_tests
     test_dlg.cpp
     test_expressions.cpp
     test_fnt.cpp
+    test_particle.cpp
     test_path.cpp
     test_phy.cpp
     test_pickle.cpp

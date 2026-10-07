@@ -14,6 +14,7 @@ add_library(openbl_formats
     localization.cpp
     mdl.cpp
     mp3.cpp
+    particle.cpp
     path.cpp
     sav.cpp
     save_state.cpp
