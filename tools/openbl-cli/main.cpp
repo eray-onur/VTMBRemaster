@@ -1081,7 +1081,7 @@ constexpr FormatStatus kFormats[] = {
     {".lst", "parsed", "key bindings (KeyValues); rooms/woncomm are Half-Life leftovers"},
     {".scr", "todo", "options script (with the console, Phase 2)"},
     {".gam", "parsed", "game info (KeyValues)"},
-    {".bmp", "todo", "UI images"},
+    {".bmp", "parsed", "face-poser toolbar icons (tool leftovers)"},
     {".sfk", "todo", "sound waveform previews (SFPK)"},
     {".pk", "todo", "unknown sound-related binary"},
     {".mp3", "codec", "audio"},

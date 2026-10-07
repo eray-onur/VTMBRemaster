@@ -5,6 +5,7 @@
 
 #include <zlib.h>
 
+#include <array>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -176,6 +177,69 @@ Image decode_tga(std::span<const std::byte> data) {
     return img;
 }
 
+Image decode_bmp(std::span<const std::byte> data) {
+    detail::BinaryReader r(data, "BMP");
+    const auto magic = r.bytes(2);
+    if (magic[0] != std::byte{'B'} || magic[1] != std::byte{'M'}) {
+        r.fail("missing BM signature");
+    }
+    r.u32(); // File size.
+    r.u32();
+    const std::uint32_t pixels = r.u32();
+    const std::uint32_t header = r.u32();
+    const std::int32_t width = r.i32();
+    const std::int32_t height = r.i32(); // Positive: bottom-up rows.
+    r.u16();
+    const std::uint16_t bpp = r.u16();
+    const std::uint32_t compression = r.u32();
+    r.bytes(12);
+    std::uint32_t colors = r.u32();
+    if (header < 40 || width <= 0 || height == 0 || width > 16384 || std::abs(height) > 16384 || compression != 0 ||
+        (bpp != 8 && bpp != 24 && bpp != 32)) {
+        r.fail("unsupported bitmap (only uncompressed 8, 24 and 32-bit)");
+    }
+    std::vector<std::array<std::uint8_t, 4>> palette;
+    if (bpp == 8) {
+        colors = colors == 0 ? 256 : colors;
+        if (colors > 256) {
+            r.fail("palette too large");
+        }
+        r.seek(14 + header);
+        for (std::uint32_t i = 0; i < colors; ++i) {
+            const auto bgrx = r.bytes(4);
+            palette.push_back({std::to_integer<std::uint8_t>(bgrx[2]), std::to_integer<std::uint8_t>(bgrx[1]),
+                               std::to_integer<std::uint8_t>(bgrx[0]), 255});
+        }
+    }
+    Image img;
+    img.width = static_cast<std::uint32_t>(width);
+    img.height = static_cast<std::uint32_t>(std::abs(height));
+    img.rgba.resize(std::size_t{img.width} * img.height * 4);
+    const std::size_t stride = (std::size_t{img.width} * bpp / 8 + 3) & ~std::size_t{3};
+    for (std::uint32_t row = 0; row < img.height; ++row) {
+        r.seek(pixels + row * stride);
+        const auto line = r.bytes(std::size_t{img.width} * bpp / 8);
+        const std::uint32_t y = height > 0 ? img.height - 1 - row : row;
+        for (std::uint32_t x = 0; x < img.width; ++x) {
+            std::uint8_t* out = img.rgba.data() + (std::size_t{y} * img.width + x) * 4;
+            if (bpp == 8) {
+                const auto index = std::to_integer<std::uint8_t>(line[x]);
+                if (index >= palette.size()) {
+                    r.fail("palette index out of range");
+                }
+                std::memcpy(out, palette[index].data(), 4);
+            } else {
+                const std::size_t k = std::size_t{x} * bpp / 8;
+                out[0] = std::to_integer<std::uint8_t>(line[k + 2]);
+                out[1] = std::to_integer<std::uint8_t>(line[k + 1]);
+                out[2] = std::to_integer<std::uint8_t>(line[k]);
+                out[3] = bpp == 32 ? std::to_integer<std::uint8_t>(line[k + 3]) : 255;
+            }
+        }
+    }
+    return img;
+}
+
 Image read_image(const std::filesystem::path& file) {
     std::ifstream in(file, std::ios::binary | std::ios::ate);
     if (!in) {
@@ -194,7 +258,10 @@ Image read_image(const std::filesystem::path& file) {
     if (ext == ".tga") {
         return decode_tga(data);
     }
-    throw FormatError(file.string() + ": unsupported image format (use PNG or TGA)");
+    if (ext == ".bmp") {
+        return decode_bmp(data);
+    }
+    throw FormatError(file.string() + ": unsupported image format (use PNG, TGA or BMP)");
 }
 
 } // namespace openbl::formats

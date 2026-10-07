@@ -19,6 +19,8 @@ struct Image {
 // Throws FormatError for unsupported or corrupt data.
 Image decode_png(std::span<const std::byte> data);
 Image decode_tga(std::span<const std::byte> data);
+// Uncompressed Windows bitmaps: 8-bit palettized, 24-bit or 32-bit.
+Image decode_bmp(std::span<const std::byte> data);
 // Chooses the decoder by file signature/extension. Throws FormatError or std::runtime_error.
 Image read_image(const std::filesystem::path& file);
 

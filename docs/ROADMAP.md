@@ -41,7 +41,7 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Video: `.bik` intro movies (codec choice to be decided)
 - [x] UI layouts and localisation: `.res`, `scripts/dialog_*`, `resource/gameui_english.txt` (UTF-16)
 - [x] Fonts: `.fnt` bitmap fonts (glyph maps, pages, metrics)
-- [ ] UI images: `.bmp`
+- [x] `.bmp`: uncompressed bitmaps (the 25 shipped files are face-poser toolbar icons)
 - [x] Key binding lists and `liblist.gam`
 - [ ] Special text formats: `scripts/titles.txt`, `sentences.txt`, `dsp_presets.txt`, `credits.txt`, `experience_table.txt`
 - [ ] Console scripts: `.cfg`, `valve.rc`, `settings.scr` (with the console in Phase 2)
