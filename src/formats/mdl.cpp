@@ -5,6 +5,7 @@
 #include "openbl/formats/path.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 namespace openbl::formats {
@@ -607,6 +608,11 @@ private:
                     out.position[k] = origin[k] + static_cast<float>(u16(v + 2 * k)) * scale[k];
                 }
                 out.packed_normal = u16(v + 6);
+                if (const auto& table = mdl_normal_table(64);
+                    out.packed_normal % 12 == 0 && out.packed_normal / 12u < table.size()) {
+                    out.normal = table[out.packed_normal / 12u];
+                    out.has_normal = true;
+                }
                 out.uv = {static_cast<float>(u16(v + 8)) / 65535.0f, static_cast<float>(u16(v + 10)) / 65535.0f};
                 break;
             case MdlVertexFormat::Quantized8:
@@ -614,6 +620,10 @@ private:
                     out.position[k] = origin[k] + scale[k] * (static_cast<float>(u8(v + k)) / 127.5f - 1.0f);
                 }
                 out.packed_normal = u8(v + 3);
+                if (const auto& table = mdl_normal_table(12); out.packed_normal < table.size()) {
+                    out.normal = table[out.packed_normal];
+                    out.has_normal = true;
+                }
                 out.uv = {static_cast<float>(u16(v + 4)) / 65535.0f, static_cast<float>(u16(v + 6)) / 65535.0f};
                 break;
             }
@@ -781,6 +791,31 @@ std::vector<MdlMatrix> mdl_skinning_matrices(const std::vector<MdlBone>& bones, 
         out[b] = matrix_mul(world[b], bones[b].pose_to_bone);
     }
     return out;
+}
+
+const std::vector<std::array<float, 3>>& mdl_normal_table(int steps) {
+    // Recovered from the shipped models by averaging each code's geometric
+    // normal over every quantized vertex (docs/formats/models.md).
+    auto build = [](int n) {
+        std::vector<std::array<float, 3>> table{{0.0f, 0.0f, -1.0f}};
+        const double pi = 3.14159265358979323846;
+        for (int j = 1; j < n; ++j) {
+            const double theta = j * pi / n;
+            const double s = std::sin(theta);
+            const int count = 4 * static_cast<int>(std::ceil(std::round(2.0 * n * s) / 4.0));
+            for (int i = 0; i < count; ++i) {
+                const double phi = 2.0 * pi * i / count;
+                table.push_back({static_cast<float>(s * std::cos(phi)), static_cast<float>(s * std::sin(phi)),
+                                 static_cast<float>(-std::cos(theta))});
+            }
+        }
+        table.push_back({0.0f, 0.0f, 1.0f});
+        return table;
+    };
+    static const auto table64 = build(64);
+    static const auto table12 = build(12);
+    static const std::vector<std::array<float, 3>> none;
+    return steps == 64 ? table64 : steps == 12 ? table12 : none;
 }
 
 MdlFile parse_mdl(std::span<const std::byte> data) {

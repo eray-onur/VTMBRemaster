@@ -363,8 +363,12 @@ TEST_CASE("MDL quantized vertices") {
     const auto& m16 = q16.body_parts[0].models[0];
     CHECK(m16.vertex_format == MdlVertexFormat::Quantized16);
     check_triangle(m16);
-    CHECK_FALSE(m16.vertices[0].has_normal);
+    // Code 12 = table index 1: the first point of ring 1 (azimuth 0).
     CHECK(m16.vertices[0].packed_normal == 12);
+    REQUIRE(m16.vertices[0].has_normal);
+    CHECK(m16.vertices[0].normal[0] == doctest::Approx(std::sin(3.14159265 / 64)));
+    CHECK(m16.vertices[0].normal[1] == doctest::Approx(0.0f));
+    CHECK(m16.vertices[0].normal[2] == doctest::Approx(-std::cos(3.14159265 / 64)));
     CHECK(m16.vertices[0].uv[0] == 1.0f);
     CHECK(m16.vertices[0].position[2] == doctest::Approx(0.0f));
 
@@ -372,6 +376,16 @@ TEST_CASE("MDL quantized vertices") {
     const auto& m8 = q8.body_parts[0].models[0];
     check_triangle(m8);
     CHECK(m8.vertices[0].packed_normal == 7);
+    // Index 7 = ring 1 (8 points), seventh point: azimuth 270 degrees.
+    REQUIRE(m8.vertices[0].has_normal);
+    CHECK(m8.vertices[0].normal[1] == doctest::Approx(-std::sin(3.14159265 / 12)));
+    CHECK(m8.vertices[0].normal[0] == doctest::Approx(0.0f).epsilon(1e-5));
+
+    CHECK(mdl_normal_table(64).size() == 5314);
+    CHECK(mdl_normal_table(12).size() == 202);
+    for (const auto& n : mdl_normal_table(64)) {
+        CHECK(std::abs(n[0] * n[0] + n[1] * n[1] + n[2] * n[2] - 1.0f) < 1e-5f);
+    }
     CHECK(m8.vertices[0].position[2] == doctest::Approx(2.0f));
 }
 
@@ -547,6 +561,7 @@ TEST_CASE("MDL integration: every model in the real install loads") {
     std::size_t animations = 0, sequences = 0, samples = 0, non_unit = 0, missing_includes = 0, broken_sequences = 0;
     std::size_t blended = 0, events = 0, bad_events = 0, bad_blend_params = 0, movements = 0, bad_movements = 0,
                 melee_hits = 0;
+    std::size_t missing_normals = 0;
     std::size_t hitboxes = 0, attachments = 0, flex_rules = 0, ik_chains = 0, mesh_flexes = 0, bad_flex_targets = 0;
     std::map<MdlVertexFormat, std::size_t> formats;
     for (const auto& path : gfs.list_files()) {
@@ -625,6 +640,9 @@ TEST_CASE("MDL integration: every model in the real install loads") {
                 ++formats[m.vertex_format];
                 vertices += m.vertices.size();
                 for (const auto& v : m.vertices) {
+                    missing_normals += !v.has_normal;
+                }
+                for (const auto& v : m.vertices) {
                     bool inside = true;
                     for (int k = 0; k < 3; ++k) {
                         inside = inside && v.position[k] >= mdl.hull_min[k] - 0.5f && v.position[k] <= mdl.hull_max[k] + 0.5f;
@@ -685,6 +703,7 @@ TEST_CASE("MDL integration: every model in the real install loads") {
     MESSAGE(hitboxes << " hitboxes, " << attachments << " attachments, " << flex_rules << " flex rules, "
                      << mesh_flexes << " mesh flexes, " << ik_chains << " IK chains");
     CHECK(bad_flex_targets == 0);
+    CHECK(missing_normals == 0); // Every quantized normal code is in its table.
     CHECK(hitboxes == 12705);
     CHECK(flex_rules == 9865);
     CHECK(ik_chains == 824);

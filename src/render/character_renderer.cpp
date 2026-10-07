@@ -10,6 +10,7 @@
 #include "openbl_skinned_ps.h"
 #include "openbl_skinned_vs.h"
 
+#include <algorithm>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -221,7 +222,8 @@ const CharacterRenderer::Model* CharacterRenderer::load_model(const std::string&
                 const auto& mo = part.models[0];
                 const auto& lod = vtx.body_parts[b].models[0].lods[0];
                 const auto base = static_cast<std::uint32_t>(vertices.size());
-                needs_normals = needs_normals || mo.vertex_format != formats::MdlVertexFormat::Float;
+                needs_normals = needs_normals || std::any_of(mo.vertices.begin(), mo.vertices.end(),
+                                                              [](const formats::MdlVertex& v) { return !v.has_normal; });
                 for (const auto& v : mo.vertices) {
                     Vertex out{};
                     std::memcpy(out.position, v.position.data(), sizeof(out.position));

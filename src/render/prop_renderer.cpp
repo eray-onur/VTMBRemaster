@@ -176,7 +176,8 @@ const PropRenderer::Model* PropRenderer::load_model(const std::string& path) {
                 const auto& mo = part.models[0]; // Default body group.
                 const auto& lod = vtx.body_parts[b].models[0].lods[0];
                 const auto vertex_base = static_cast<std::uint32_t>(vertices.size());
-                needs_normals = needs_normals || mo.vertex_format != formats::MdlVertexFormat::Float;
+                needs_normals = needs_normals || std::any_of(mo.vertices.begin(), mo.vertices.end(),
+                                                              [](const formats::MdlVertex& v) { return !v.has_normal; });
                 for (const auto& v : mo.vertices) {
                     vertices.push_back({{v.position[0], v.position[1], v.position[2]},
                                         {v.uv[0], v.uv[1]},

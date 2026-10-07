@@ -98,19 +98,22 @@ All integers are little-endian. "rel" means an offset relative to the start of t
 - **Bone weights**: unused bone slots are 0, and bone indices fit the bone count. Byte 3 and bytes 10–11 are not understood yet. They are not a bone count.
 - Quantized formats only occur in models whose vertices all use bone 0.
 
-### Packed normals (not fully decoded)
+### Packed normals
 
-**Format 1**: the 16-bit value is always a multiple of 12. It is evidently a byte offset into a table of 5,314 `float[3]` normals (indices 0–5313). What is known:
+Both quantized formats store the normal as an index into a table of unit vectors. The two tables come from one generator with a different number of latitude steps *R*:
 
-- The table is ordered by latitude in **66 rings** at polar angles θⱼ = j·π/65, with +z at index 0 and −z at index 5313. The z component matches cos θⱼ for 90% of measured vertices (the rest are noisy samples).
-- Ring sizes are roughly 128·sin θ, rounded to multiples of 8. The equatorial rings hold 128 points, starting at azimuth 0 (+x).
-- The azimuth phase of each ring differs systematically by latitude band and is not yet pinned down.
+- Rings run from −z (index 0) to +z (the last index), at polar angles θⱼ = j·π/R for j = 0…R.
+- The poles hold one point. Ring *j* holds n = 4·⌈round(2R·sin θⱼ) / 4⌉ points (round to the nearest integer, then up to a multiple of 4).
+- Point *i* of a ring is at azimuth 2π·i/n, starting at +x and running counter-clockwise: (sin θ cos φ, sin θ sin φ, −cos θ).
 
-**Format 2**: byte 3 is an index from 0 to 201, apparently into a smaller table of directions.
+| Format | Code | *R* | Table size |
+|---|---|---|---|
+| 1, 16-bit | `u16` = 12 × index | 64 | 5,314 |
+| 2, 8-bit | byte 3 = index | 12 | 202 |
 
-Until both tables are recovered, quantized vertices report `has_normal = false` and carry the raw code in `packed_normal`. Renderers compute smooth normals from geometry instead.
+**How it was recovered.** For every quantized vertex in the release (592,715 in format 1, 73,729 in format 2), `openbl-cli mdl normal-samples` writes the code and the area-weighted normal of the vertex's LOD 0 triangles. Float-format models show that this geometric normal points exactly opposite to the stored one (mean dot product −0.92), so it is negated. Averaging per code gave a measured table with every entry observed. Reading where the azimuth wraps gave the ring count (*R* = 64); the ring sizes came from a constrained fit, and the rule above reproduces all of them. In 6 rings, 2R·sin θ lies just above a multiple of 4 (60.34, 76.25, 124.16), which is what shows the rounding happens before the round-up.
 
-To do: recover both tables.
+**Accuracy.** Against each vertex's geometric normal, the formula table's median error is 1.26°, better than the measured averages themselves (1.76°). The 8-bit table fits the data to a median of 1.29°. `mdl_normal_table()` builds both tables, and `MdlVertex::normal` is now filled for every vertex in the release.
 
 ## Animation
 

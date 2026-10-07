@@ -632,7 +632,79 @@ std::string model_path(std::string_view arg) {
     return base;
 }
 
+// Research helper for the packed-normal tables: one CSV row per vertex of
+// every model, with its packed normal code (quantized formats) or stored
+// normal (float format) and the area-weighted normal of its LOD 0 triangles.
+int cmd_mdl_normal_samples(const vfs::GameFileSystem& gfs, const fs::path& out_path) {
+    std::ofstream out(out_path, std::ios::binary);
+    out << "format,code,sx,sy,sz,gx,gy,gz\n";
+    std::size_t models = 0;
+    for (const auto& path : gfs.list_files()) {
+        if (!path.ends_with(".mdl")) {
+            continue;
+        }
+        LoadedModel model;
+        try {
+            model = load_model(gfs, path);
+        } catch (const std::exception&) {
+            continue;
+        }
+        ++models;
+        for (std::size_t b = 0; b < model.mdl.body_parts.size() && b < model.vtx.body_parts.size(); ++b) {
+            for (std::size_t m = 0; m < model.mdl.body_parts[b].models.size(); ++m) {
+                const auto& mo = model.mdl.body_parts[b].models[m];
+                const auto& vm = model.vtx.body_parts[b].models[m];
+                if (vm.lods.empty()) {
+                    continue;
+                }
+                std::vector<std::array<double, 3>> acc(mo.vertices.size(), {0, 0, 0});
+                for (std::size_t me = 0; me < mo.meshes.size() && me < vm.lods[0].meshes.size(); ++me) {
+                    const auto tris = vm.lods[0].meshes[me].triangles();
+                    for (std::size_t t = 0; t + 2 < tris.size(); t += 3) {
+                        std::array<std::size_t, 3> i{};
+                        for (std::size_t k = 0; k < 3; ++k) {
+                            i[k] = mo.meshes[me].vertex_offset + tris[t + k];
+                        }
+                        if (i[0] >= acc.size() || i[1] >= acc.size() || i[2] >= acc.size()) {
+                            continue;
+                        }
+                        const auto& a = mo.vertices[i[0]].position;
+                        const auto& c1 = mo.vertices[i[1]].position;
+                        const auto& c2 = mo.vertices[i[2]].position;
+                        const double u[3] = {c1[0] - a[0], c1[1] - a[1], c1[2] - a[2]};
+                        const double w[3] = {c2[0] - a[0], c2[1] - a[1], c2[2] - a[2]};
+                        const double n[3] = {u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2],
+                                             u[0] * w[1] - u[1] * w[0]};
+                        for (std::size_t k = 0; k < 3; ++k) {
+                            for (std::size_t c = 0; c < 3; ++c) {
+                                acc[i[k]][c] += n[c];
+                            }
+                        }
+                    }
+                }
+                for (std::size_t v = 0; v < mo.vertices.size(); ++v) {
+                    const auto& g = acc[v];
+                    const double len = std::sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]);
+                    if (len < 1e-9) {
+                        continue;
+                    }
+                    const auto& vx = mo.vertices[v];
+                    out << static_cast<int>(mo.vertex_format) << "," << vx.packed_normal << ","
+                        << vx.normal[0] << "," << vx.normal[1] << "," << vx.normal[2] << "," << g[0] / len << ","
+                        << g[1] / len << "," << g[2] / len << "\n";
+                }
+            }
+        }
+    }
+    std::cout << "sampled " << models << " models into " << out_path.string() << "\n";
+    return 0;
+}
+
 int cmd_mdl(const std::vector<std::string_view>& args) {
+    if (args.size() >= 3 && args[1] == "normal-samples") {
+        const vfs::GameFileSystem gfs(game_dir_arg(args, 3), game_mods());
+        return cmd_mdl_normal_samples(gfs, fs::path(args[2]));
+    }
     if (args.size() >= 3 && args[1] == "sequences") {
         const vfs::GameFileSystem gfs(game_dir_arg(args, 3), game_mods());
         list_sequences(gfs, model_path(args[2]));

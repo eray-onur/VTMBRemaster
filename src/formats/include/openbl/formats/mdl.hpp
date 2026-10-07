@@ -135,11 +135,17 @@ struct MdlVertex {
     std::array<float, 2> uv{};
     std::array<std::uint8_t, 3> weights{255, 0, 0}; // Sum to 255.
     std::array<std::uint16_t, 3> bones{};
-    bool has_normal = false;
-    // Raw packed normal for quantized formats; the decoding is not known yet
-    // (see docs/formats/models.md). Renderers compute normals from geometry instead.
+    bool has_normal = false; // False only if a quantized code is out of range.
+    // Raw packed normal for quantized formats: an index into a normal table
+    // (times 12 for Quantized16). See mdl_normal_table and docs/formats/models.md.
     std::uint16_t packed_normal = 0;
 };
+
+// The unit-normal table used by quantized vertices: latitude rings from -z to
+// +z, `steps` latitude steps apart, ring j holding 4*ceil(round(2*steps*sin(t))/4)
+// points from azimuth 0 counter-clockwise. 64 steps (5,314 normals) for
+// Quantized16, 12 steps (202 normals) for Quantized8.
+const std::vector<std::array<float, 3>>& mdl_normal_table(int steps);
 
 // One vertex moved by a flex. The 6-byte delta encoding is not decoded yet
 // (see docs/formats/models.md), so the bytes are kept as they are.
