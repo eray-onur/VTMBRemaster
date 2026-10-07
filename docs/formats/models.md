@@ -69,7 +69,7 @@ All integers are little-endian. "rel" means an offset relative to the start of t
 | 0xa0 | `f32[3]` | quantization origin |
 | 0xac | `f32[3]` | quantization scale |
 
-**Mesh** (60 bytes): `i32 material` (skin reference), `i32 model offset (rel, negative)`, `i32 vertex count`, `i32 vertex offset` (into the model's vertices; meshes are consecutive), `i32 flex count`, `i32 flex offset (rel)`, `i32 material type` (1 on 496 meshes), `i32 material parameter`, 16 zero bytes, then three offsets set on 74 meshes (probably eyeball data; not decoded).
+**Mesh** (60 bytes): `i32 material` (skin reference), `i32 model offset (rel, negative)`, `i32 vertex count`, `i32 vertex offset` (into the model's vertices; meshes are consecutive), `i32 flex count`, `i32 flex offset (rel)`, `i32 material type` (1 on 496 meshes), `i32 material parameter`, 16 zero bytes, then three offsets at +48, +52 and +56 set on 74 meshes. Those meshes belong to hair, fur and cloth (prostitute, stripper, wolf form, `scenery/structural/temple/panel_cloth`), so this is probably cloth-simulation data. The offsets are relative to the model and point at three consecutive arrays whose spacing scales with the vertex count (1 and 2, 6 and 12, or 7 and 14 bytes per vertex). Some hold increasing 16-bit vertex indices, others floats. Not decoded further.
 
 **Hitbox set** (12 bytes): `i32 name (rel)` (`default` on every model but one vehicle with six), `i32 count`, `i32 offset (rel)`. **Hitbox** (32 bytes): `i32 bone`, `i32 group`, `f32 min[3]`, `f32 max[3]` in the bone's space. Groups follow the body: 0 generic, 1 head, 2 chest, 3 stomach, 4/5 left/right arm, 6/7 left/right leg (8 and 9 appear 11 times each). 12,705 hitboxes, all with valid bones and boxes.
 
@@ -196,7 +196,9 @@ Blend grids step evenly from the start to the end value. Andrei's `run` blends `
 
 **Shipped data issues (blends):** the crooked cop's three walkie-talkie sequences are 2×1 grids of two copies of the same animation, with no pose parameter.
 
-**Not yet decoded:** the root bone's facing convention (animation roots are stored about 90° off the bind root about the vertical axis), the +660 float block, and the meaning of the unknown melee fields. No IK data has been found; if the format has any, it is in one of the unknown fields.
+**Facing and movement conventions.** In animation space a character faces **+x**. The root motion of the 8-way `walk` blend on `move_yaw` shows it: `walk_0` moves along +x, `walk_90` along −y, `walk_270` along +y. So `move_yaw` is the heading of the movement relative to facing, positive clockwise seen from above. The cop posed in `walk_180` faces +x (by the direction of his feet) while moving along −x: a backpedal. The *bind* pose faces −y instead, 90° away; that is the offset noted earlier. Every rendered character is animated, so a renderer only rotates model +x to the entity's yaw.
+
+**Not yet decoded:** the +660 float block and the meaning of the unknown melee fields. No IK data has been found; if the format has any, it is in one of the unknown fields.
 
 ## `.vtx` layout
 
