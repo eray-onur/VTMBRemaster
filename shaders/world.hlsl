@@ -14,6 +14,7 @@ static const uint kBlendLayers = 2;
 static const uint kUnlit = 4;
 static const uint kSelfIllum = 8;
 static const uint kTranslucent = 16;
+static const uint kModulate = 32;
 
 struct VSInput {
     [[vk::location(0)]] float3 position : POSITION;
@@ -63,6 +64,11 @@ float4 ps_main(VSOutput input) : SV_Target {
     }
     if (pc.flags & kAlphaTest) {
         clip(base.a - pc.alpha_ref);
+    }
+    if (pc.flags & kModulate) {
+        // The blend computes 2 * src * dst. The original multiplies by 2 * base
+        // in gamma space, which in linear space is 2^2.2 * base = 2 * (2^1.2 * base).
+        return float4(base.rgb * 2.2974, 1.0);
     }
     float3 light = float3(1.0, 1.0, 1.0);
     if (!(pc.flags & kUnlit)) {

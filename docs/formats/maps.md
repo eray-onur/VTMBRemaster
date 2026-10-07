@@ -167,6 +167,29 @@ All 193,957 leafs of the Steam release have valid ranges, boxes and areas.
 
 `dplt`: `i32` count, then 5-byte `{ColorRGBExp32, u8 style}`. 134,490 detail props in all, mostly trash and grass models.
 
+## Decals (`infodecal`)
+
+There are 4,609 `infodecal` entities across 80 maps, each with only a `texture` (a material under `materials/`) and an `origin`. They use 375 materials, all present except one: 337 `LightmappedGeneric`, 22 `UnlitGeneric`, 9 `DecalModulate` and 6 `VertexLitGeneric`. Most set `$decal 1`, `$translucent 1` and `$decalscale`. Eleven name a `$modelmaterial` variant for use on models.
+
+`project_decal` places them as follows:
+
+- **Size:** the base texture's size × `$decalscale`, in world units.
+- **Faces:** every visible planar face of the world and of brush entities, at their origins, that has the origin in front of it and within 4 units. Tool brushes such as triggers and clips take no decals.
+- **Clipping:** the decal rectangle is clipped to each face, so a decal in a corner wraps onto both walls.
+- **Orientation:** the decal's up axis follows world +z on walls and world +y on floors and ceilings. This is our choice, not taken from the engine. Parking-bay stencils in `la_parkinggarage_1` read correctly from the lane on both rows, but other orientations are unconfirmed until there are screenshots of the original.
+
+This places 4,401 decals (95.5%). The other 208 have no face within 4 units:
+
+- 111 have no face within 64 units either, so they probably sit on static props, which the original can decal through the `$modelmaterial` variants;
+- the rest float 8 to 64 units in front of the nearest face, probably on props in front of walls.
+
+Model decals are not implemented.
+
+**Rendering** (`WorldRenderer`):
+
+- Decals are drawn after the opaque world, lit by the lightmap of the face under them, alpha-blended and lifted 0.1 units off the face.
+- `DecalModulate` multiplies what is behind it by 2 × the texture in gamma space. In linear space that is `dst × 2^2.2 × base`, done as a `2 × src × dst` blend with the shader outputting `2^1.2 × base`.
+
 ## Brush collision
 
 `BspFile::brush_hull(brush)` turns a brush into a convex polyhedron: one polygon per side plane, clipped by all the other sides. `point_in_brush` tests a point against the same planes.

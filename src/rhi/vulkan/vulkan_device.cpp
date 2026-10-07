@@ -458,7 +458,15 @@ public:
         VkPipelineColorBlendAttachmentState blend{};
         blend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
                                VK_COLOR_COMPONENT_A_BIT;
-        if (desc.blend != BlendMode::Opaque) {
+        if (desc.blend == BlendMode::Modulate) {
+            blend.blendEnable = VK_TRUE;
+            blend.srcColorBlendFactor = VK_BLEND_FACTOR_DST_COLOR;
+            blend.dstColorBlendFactor = VK_BLEND_FACTOR_SRC_COLOR;
+            blend.colorBlendOp = VK_BLEND_OP_ADD;
+            blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+            blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            blend.alphaBlendOp = VK_BLEND_OP_ADD;
+        } else if (desc.blend != BlendMode::Opaque) {
             blend.blendEnable = VK_TRUE;
             blend.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
             blend.dstColorBlendFactor =

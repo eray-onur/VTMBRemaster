@@ -7,6 +7,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <utility>
 
 namespace openbl::formats {
 
@@ -1148,6 +1151,130 @@ BspFaceMesh build_face_mesh(const BspFile& bsp, std::size_t face_index) {
         }
     }
     return mesh;
+}
+
+namespace {
+
+Vec3 sub3(const Vec3& a, const Vec3& b) {
+    return {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
+}
+
+float dot3(const Vec3& a, const Vec3& b) {
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+Vec3 cross3(const Vec3& a, const Vec3& b) {
+    return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+}
+
+// Adds the part of a decal centred near `origin` (in the face's model space)
+// that lies on face `f`, moved by `offset` into world space.
+void append_decal_piece(const BspFile& bsp, std::size_t f, const Vec3& origin, const Vec3& offset, float width,
+                        float height, float reach, std::vector<BspDecalPiece>& out) {
+    const BspFace& face = bsp.faces[f];
+    if (face.dispinfo >= 0 || face.plane >= bsp.planes.size() || face.texinfo >= bsp.texinfos.size()) {
+        return;
+    }
+    const BspTexInfo& ti = bsp.texinfos[face.texinfo];
+    using namespace surf_flags;
+    if ((ti.flags & (NoDraw | Sky | Sky2D | Trigger | Skip | Hint)) != 0 || ti.texdata < 0 ||
+        static_cast<std::size_t>(ti.texdata) >= bsp.texdatas.size() ||
+        bsp.texdatas[static_cast<std::size_t>(ti.texdata)].material.starts_with("tools/")) {
+        return; // Invisible: tool brushes (triggers, clips) take no decals.
+    }
+    const BspPlane& plane = bsp.planes[face.plane];
+    const float sign = face.side ? -1.0f : 1.0f;
+    const Vec3 n{plane.normal[0] * sign, plane.normal[1] * sign, plane.normal[2] * sign};
+    const float d = dot3(n, origin) - plane.dist * sign;
+    // The decal must be in front of the face (or on it) and close.
+    if (d < -0.5f || d > reach) {
+        return;
+    }
+    // Decal axes on the face: up follows world +z on walls and world +y on
+    // floors and ceilings; right completes a frame seen from the front.
+    const Vec3 world_up = std::abs(n[2]) < 0.7f ? Vec3{0, 0, 1} : Vec3{0, 1, 0};
+    Vec3 right = cross3(world_up, n);
+    const float len = std::sqrt(dot3(right, right));
+    for (float& c : right) {
+        c /= len;
+    }
+    const Vec3 up = cross3(n, right);
+    const Vec3 center{origin[0] - n[0] * d, origin[1] - n[1] * d, origin[2] - n[2] * d};
+    // Clip the face polygon to the decal rectangle.
+    std::vector<Vec3> poly = bsp.face_polygon(face);
+    const std::array<std::pair<Vec3, float>, 4> edges{{{right, width * 0.5f},
+                                                        {Vec3{-right[0], -right[1], -right[2]}, width * 0.5f},
+                                                        {up, height * 0.5f},
+                                                        {Vec3{-up[0], -up[1], -up[2]}, height * 0.5f}}};
+    for (const auto& [axis, half] : edges) {
+        std::vector<Vec3> clipped;
+        for (std::size_t k = 0; k < poly.size(); ++k) {
+            const Vec3& a = poly[k];
+            const Vec3& b = poly[(k + 1) % poly.size()];
+            const float da = dot3(sub3(a, center), axis) - half;
+            const float db = dot3(sub3(b, center), axis) - half;
+            if (da <= 0.0f) {
+                clipped.push_back(a);
+            }
+            if ((da < 0.0f) != (db < 0.0f) && da != db) {
+                const float t = da / (da - db);
+                clipped.push_back({a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t});
+            }
+        }
+        poly = std::move(clipped);
+        if (poly.size() < 3) {
+            return;
+        }
+    }
+    BspDecalPiece piece;
+    piece.face = f;
+    piece.normal = n;
+    for (const Vec3& p : poly) {
+        const Vec3 rel = sub3(p, center);
+        piece.positions.push_back({p[0] + offset[0], p[1] + offset[1], p[2] + offset[2]});
+        piece.uvs.push_back({dot3(rel, right) / width + 0.5f, 0.5f - dot3(rel, up) / height});
+        piece.lightmap_uvs.push_back(lightmap_uv(face, ti, p));
+    }
+    out.push_back(std::move(piece));
+}
+
+} // namespace
+
+std::vector<BspDecalPiece> project_decal(const BspFile& bsp, const Vec3& origin, float width, float height,
+                                         float reach) {
+    std::vector<BspDecalPiece> out;
+    if (bsp.models.empty() || width <= 0.0f || height <= 0.0f) {
+        return out;
+    }
+    // The world, then brush entities at their origins (doors, func_brush, ...).
+    std::vector<std::pair<std::size_t, Vec3>> instances{{0, Vec3{}}};
+    for (const BspEntity& e : bsp.entities) {
+        const auto model = e.find("model");
+        if (model == e.end() || model->second.size() < 2 || model->second[0] != '*') {
+            continue;
+        }
+        const std::size_t index = std::strtoul(model->second.c_str() + 1, nullptr, 10);
+        if (index == 0 || index >= bsp.models.size()) {
+            continue;
+        }
+        Vec3 at{};
+        if (const auto o = e.find("origin"); o != e.end()) {
+            std::sscanf(o->second.c_str(), "%f %f %f", &at[0], &at[1], &at[2]);
+        }
+        instances.emplace_back(index, at);
+    }
+    for (const auto& [model_index, offset] : instances) {
+        const BspModel& model = bsp.models[model_index];
+        const Vec3 local = sub3(origin, offset);
+        for (std::int32_t i = 0; i < model.num_faces; ++i) {
+            const auto f = static_cast<std::size_t>(model.first_face + i);
+            if (f >= bsp.faces.size()) {
+                break;
+            }
+            append_decal_piece(bsp, f, local, offset, width, height, reach, out);
+        }
+    }
+    return out;
 }
 
 } // namespace openbl::formats

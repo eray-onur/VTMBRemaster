@@ -27,6 +27,8 @@ struct RenderMaterial {
     bool unlit = false;      // Ignores lightmaps (UnlitGeneric and friends).
     bool no_cull = false;
     bool skip = false;       // Never drawn (tool materials).
+    float decal_scale = 1.0f; // $decalscale: world units per base-texture texel when used as a decal.
+    bool modulate = false;    // DecalModulate: multiplies what is behind it by 2 x the texture.
     bool missing = false;    // The .vmt could not be found or parsed.
 
     // Water shader parameters (linear RGB).

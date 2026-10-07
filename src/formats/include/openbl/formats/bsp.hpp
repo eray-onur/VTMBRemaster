@@ -384,6 +384,23 @@ struct BspFaceMesh {
     std::vector<std::uint32_t> indices;
 };
 
+// The part of a decal lying on one world face: a convex polygon (fan order).
+struct BspDecalPiece {
+    std::size_t face = 0;
+    Vec3 normal{}; // The face's front normal.
+    std::vector<Vec3> positions;
+    std::vector<std::array<float, 2>> uvs;          // Decal texture coordinates, 0..1.
+    std::vector<std::array<float, 2>> lightmap_uvs; // As BspFaceMesh::lightmap_uvs.
+};
+
+// Projects a width x height decal (an infodecal's texture size times its
+// $decalscale) onto the planar faces of the world and of brush entities (at
+// their origins) within `reach` units in front of `origin`. The decal's up
+// axis follows world +z on walls and +y on floors; see docs/formats/maps.md.
+// Displacements, props and tool brushes are not decaled.
+std::vector<BspDecalPiece> project_decal(const BspFile& bsp, const Vec3& origin, float width, float height,
+                                         float reach = 4.0f);
+
 // Decodes one ColorRGBExp32 luxel (r, g, b, signed exponent) to linear RGB.
 std::array<float, 3> decode_rgbe(const std::byte* luxel);
 BspFaceMesh build_face_mesh(const BspFile& bsp, std::size_t face_index);

@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <map>
 
@@ -530,6 +531,103 @@ TEST_CASE("BSP integration: brush hulls match the compiled world collision") {
     CHECK(empty_hulls == 0);
     // Brushes and displacements together account for the compiled collision.
     CHECK(covered_points + disp_points > collision_points * 9999 / 10000);
+}
+
+TEST_CASE("BSP decal projection") {
+    // One 128 x 128 floor face at z = 0, facing up.
+    BspFile bsp;
+    bsp.planes.push_back({{0, 0, 1}, 0});
+    bsp.vertices = {{-64, -64, 0}, {-64, 64, 0}, {64, 64, 0}, {64, -64, 0}};
+    bsp.edges = {{0, 1}, {1, 2}, {2, 3}, {3, 0}};
+    bsp.surf_edges = {0, 1, 2, 3};
+    bsp.texdatas.push_back({});
+    bsp.texdatas[0].material = "concrete/floor";
+    bsp.texinfos.push_back({});
+    bsp.texinfos[0].texdata = 0;
+    BspFace face;
+    face.num_edges = 4;
+    bsp.faces.push_back(face);
+    BspModel world;
+    world.num_faces = 1;
+    bsp.models.push_back(world);
+
+    auto pieces = project_decal(bsp, {10, 0, 2}, 32, 16);
+    REQUIRE(pieces.size() == 1);
+    Vec3 lo{1e9f, 1e9f, 1e9f}, hi{-1e9f, -1e9f, -1e9f};
+    for (std::size_t i = 0; i < pieces[0].positions.size(); ++i) {
+        const auto& p = pieces[0].positions[i];
+        for (std::size_t k = 0; k < 3; ++k) {
+            lo[k] = std::min(lo[k], p[k]);
+            hi[k] = std::max(hi[k], p[k]);
+        }
+        // On floors the decal's up is world +y, so v = 0 along the +y edge.
+        if (p[1] == doctest::Approx(8.0f)) {
+            CHECK(pieces[0].uvs[i][1] == doctest::Approx(0.0f));
+        }
+    }
+    CHECK(lo[0] == doctest::Approx(-6.0f));
+    CHECK(hi[0] == doctest::Approx(26.0f));
+    CHECK(hi[1] == doctest::Approx(8.0f));
+    CHECK(hi[2] == doctest::Approx(0.0f));
+    CHECK(project_decal(bsp, {10, 0, -2}, 32, 16).empty()); // Behind the face.
+    CHECK(project_decal(bsp, {10, 0, 6}, 32, 16).empty());  // Too far in front.
+    // Clipped at the face's edge.
+    pieces = project_decal(bsp, {60, 0, 0}, 32, 16);
+    REQUIRE(pieces.size() == 1);
+    float max_x = -1e9f, max_u = -1e9f;
+    for (std::size_t i = 0; i < pieces[0].positions.size(); ++i) {
+        max_x = std::max(max_x, pieces[0].positions[i][0]);
+        max_u = std::max(max_u, pieces[0].uvs[i][0]);
+    }
+    CHECK(max_x == doctest::Approx(64.0f));
+    CHECK(max_u == doctest::Approx(0.625f));
+}
+
+TEST_CASE("BSP integration: infodecals land on world faces") {
+    auto game = test::game_dir();
+    if (!game) {
+        MESSAGE("OPENBL_GAME_DIR not set; skipping");
+        return;
+    }
+    const vfs::GameFileSystem gfs(*game);
+    std::size_t decals = 0, placed = 0, pieces = 0, bad_uvs = 0;
+    std::map<std::string, std::size_t> unplaced_by_map;
+    for (const auto& path : gfs.list_files()) {
+        if (!path.ends_with(".bsp")) {
+            continue;
+        }
+        const auto bsp = parse_bsp(*gfs.read(path));
+        for (const auto& e : bsp.entities) {
+            const auto cls = e.find("classname");
+            const auto origin = e.find("origin");
+            if (cls == e.end() || cls->second != "infodecal" || origin == e.end()) {
+                continue;
+            }
+            Vec3 o{};
+            std::sscanf(origin->second.c_str(), "%f %f %f", &o[0], &o[1], &o[2]);
+            const auto result = project_decal(bsp, o, 32.0f, 32.0f);
+            ++decals;
+            placed += !result.empty();
+            unplaced_by_map[path] += result.empty();
+            pieces += result.size();
+            for (const auto& p : result) {
+                for (const auto& uv : p.uvs) {
+                    bad_uvs += uv[0] < -0.001f || uv[0] > 1.001f || uv[1] < -0.001f || uv[1] > 1.001f;
+                }
+            }
+        }
+    }
+    std::string worst;
+    for (const auto& [map, n] : unplaced_by_map) {
+        if (n > 0 && worst.size() < 300) {
+            worst += map + " " + std::to_string(n) + ", ";
+        }
+    }
+    MESSAGE(placed << " of " << decals << " infodecals land on a face (" << pieces << " pieces); unplaced: " << worst);
+    CHECK(decals == 4609);
+    CHECK(bad_uvs == 0);
+    // The rest are probably on props, or float 8 to 64 units off the nearest face.
+    CHECK(placed >= 4401);
 }
 
 TEST_CASE("BSP integration: every map in the real install loads") {

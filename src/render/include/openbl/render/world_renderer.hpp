@@ -22,6 +22,8 @@ struct WorldStats {
     std::size_t triangles = 0;
     std::size_t batches = 0;
     std::size_t skipped_faces = 0; // Tool, sky and not-yet-supported surfaces.
+    std::size_t decals = 0;        // infodecals placed on brush faces.
+    std::size_t unplaced_decals = 0;
     std::size_t missing_materials = 0;
     std::uint32_t lightmap_width = 0;
     std::uint32_t lightmap_height = 0;
@@ -60,6 +62,7 @@ private:
         std::uint32_t first_index = 0;
         std::uint32_t index_count = 0;
         std::unique_ptr<rhi::BindGroup> bind_group;
+        bool decal = false;
     };
 
     void build_lightmap_atlas(const formats::BspFile& bsp, std::vector<std::array<float, 2>>& face_offsets);
@@ -80,7 +83,10 @@ private:
     std::vector<Batch> opaque_;
     std::vector<Batch> translucent_;
     std::vector<Batch> water_;
+    std::vector<Batch> decals_; // infodecals, drawn over the opaque world.
     std::unique_ptr<rhi::Pipeline> water_pipeline_;
+    std::array<std::unique_ptr<rhi::Pipeline>, 2> decal_pipelines_; // [alpha, modulate]
+    std::unique_ptr<rhi::Sampler> decal_sampler_;                    // Clamped, so edges do not wrap.
     std::array<float, 2> white_luxel_{}; // Lightmap coordinates used by faces without lightmaps.
     LightStyles styles_;
     std::array<float, 4 * 16> style_values_{}; // Current style brightness, uploaded as shader data.

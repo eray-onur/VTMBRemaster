@@ -61,6 +61,7 @@ constexpr std::uint32_t kBlendLayers = 2;
 constexpr std::uint32_t kUnlit = 4;
 constexpr std::uint32_t kSelfIllum = 8;
 constexpr std::uint32_t kTranslucent = 16;
+constexpr std::uint32_t kModulate = 32;
 
 // Source polygons are wound clockwise seen from the front, and stay clockwise
 // in Vulkan framebuffer space with our Y-flipped projection (verified visually
@@ -140,6 +141,33 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
 
     std::vector<Vertex> vertices;
     std::vector<std::uint32_t> indices;
+    // Lightmap coordinates and styles of a point on face `f`, from its
+    // face-relative luxel position.
+    auto light_vertex = [&](Vertex& out, std::size_t f, const std::array<float, 2>& luxel) {
+        const BspFace& face = bsp.faces[f];
+        const bool lit = face_has_lightmap(bsp, face);
+        if (lit) {
+            // Clamp to the face's luxels so bilinear filtering never reads a neighbour.
+            const float s = std::clamp(luxel[0], 0.0f, static_cast<float>(face.lightmap_size[0]));
+            const float t = std::clamp(luxel[1], 0.0f, static_cast<float>(face.lightmap_size[1]));
+            out.lightmap_uv[0] = (lightmap_offsets[f][0] + s + 0.5f) * inv_w;
+            out.lightmap_uv[1] = (lightmap_offsets[f][1] + t + 0.5f) * inv_h;
+        } else {
+            out.lightmap_uv[0] = white_luxel_[0] * inv_w;
+            out.lightmap_uv[1] = white_luxel_[1] * inv_h;
+        }
+        for (std::size_t k = 0; k < 4; ++k) {
+            out.styles[k] = 255;
+        }
+        if (lit) {
+            for (std::size_t k = 0; k < face_styles(face); ++k) {
+                out.styles[k] = face.styles[k];
+            }
+            out.style_step = static_cast<float>(face.lightmap_size[0] + 2) * inv_w;
+        } else {
+            out.styles[0] = 0; // The white luxel, at full brightness.
+        }
+    };
     for (const auto& [name, faces] : by_material) {
         const RenderMaterial& mat = materials.material(name);
         stats_.missing_materials += mat.missing;
@@ -151,9 +179,7 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
         batch.material = &mat;
         batch.first_index = static_cast<std::uint32_t>(indices.size());
         for (const FaceRef& ref : faces) {
-            const BspFace& face = bsp.faces[ref.face];
             const auto mesh = formats::build_face_mesh(bsp, ref.face);
-            const bool lit = face_has_lightmap(bsp, face);
             const auto base = static_cast<std::uint32_t>(vertices.size());
             for (std::size_t v = 0; v < mesh.positions.size(); ++v) {
                 Vertex out{};
@@ -162,27 +188,7 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
                 }
                 out.uv[0] = mesh.uvs[v][0];
                 out.uv[1] = mesh.uvs[v][1];
-                if (lit) {
-                    // Clamp to the face's luxels so bilinear filtering never reads a neighbour.
-                    const float s = std::clamp(mesh.lightmap_uvs[v][0], 0.0f, static_cast<float>(face.lightmap_size[0]));
-                    const float t = std::clamp(mesh.lightmap_uvs[v][1], 0.0f, static_cast<float>(face.lightmap_size[1]));
-                    out.lightmap_uv[0] = (lightmap_offsets[ref.face][0] + s + 0.5f) * inv_w;
-                    out.lightmap_uv[1] = (lightmap_offsets[ref.face][1] + t + 0.5f) * inv_h;
-                } else {
-                    out.lightmap_uv[0] = white_luxel_[0] * inv_w;
-                    out.lightmap_uv[1] = white_luxel_[1] * inv_h;
-                }
-                for (std::size_t k = 0; k < 4; ++k) {
-                    out.styles[k] = 255;
-                }
-                if (lit) {
-                    for (std::size_t k = 0; k < face_styles(face); ++k) {
-                        out.styles[k] = face.styles[k];
-                    }
-                    out.style_step = static_cast<float>(face.lightmap_size[0] + 2) * inv_w;
-                } else {
-                    out.styles[0] = 0; // The white luxel, at full brightness.
-                }
+                light_vertex(out, ref.face, mesh.lightmap_uvs[v]);
                 out.blend = mesh.alphas[v];
                 vertices.push_back(out);
             }
@@ -195,7 +201,60 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
         stats_.triangles += batch.index_count / 3;
         (mat.water ? water_ : mat.translucent ? translucent_ : opaque_).push_back(std::move(batch));
     }
-    stats_.batches = opaque_.size() + translucent_.size() + water_.size();
+
+    // infodecals: the base texture's size times $decalscale, projected onto
+    // nearby brush faces and lifted slightly off them to avoid z-fighting.
+    constexpr float kDecalLift = 0.1f;
+    std::map<const RenderMaterial*, std::vector<formats::BspDecalPiece>> decal_pieces;
+    for (const auto& e : bsp.entities) {
+        const auto cls = e.find("classname");
+        const auto texture = e.find("texture");
+        const auto origin = e.find("origin");
+        if (cls == e.end() || cls->second != "infodecal" || texture == e.end() || origin == e.end()) {
+            continue;
+        }
+        const RenderMaterial& mat = materials.material(texture->second);
+        if (mat.missing || mat.skip) {
+            ++stats_.unplaced_decals;
+            continue;
+        }
+        formats::Vec3 at{};
+        std::istringstream(origin->second) >> at[0] >> at[1] >> at[2];
+        const auto& size = mat.base->desc();
+        auto pieces = formats::project_decal(bsp, at, static_cast<float>(size.width) * mat.decal_scale,
+                                             static_cast<float>(size.height) * mat.decal_scale);
+        (pieces.empty() ? stats_.unplaced_decals : stats_.decals) += 1;
+        auto& list = decal_pieces[&mat];
+        list.insert(list.end(), std::make_move_iterator(pieces.begin()), std::make_move_iterator(pieces.end()));
+    }
+    for (const auto& [mat, pieces] : decal_pieces) {
+        Batch batch;
+        batch.material = mat;
+        batch.decal = true;
+        batch.first_index = static_cast<std::uint32_t>(indices.size());
+        for (const auto& piece : pieces) {
+            const auto base = static_cast<std::uint32_t>(vertices.size());
+            for (std::size_t v = 0; v < piece.positions.size(); ++v) {
+                Vertex out{};
+                for (std::size_t k = 0; k < 3; ++k) {
+                    out.position[k] = piece.positions[v][k] + piece.normal[k] * kDecalLift;
+                }
+                out.uv[0] = piece.uvs[v][0];
+                out.uv[1] = piece.uvs[v][1];
+                light_vertex(out, piece.face, piece.lightmap_uvs[v]);
+                vertices.push_back(out);
+            }
+            // A convex polygon in the face's winding: a triangle fan.
+            for (std::uint32_t k = 2; k < piece.positions.size(); ++k) {
+                indices.insert(indices.end(), {base, base + k - 1, base + k});
+            }
+        }
+        batch.index_count = static_cast<std::uint32_t>(indices.size()) - batch.first_index;
+        if (batch.index_count > 0) {
+            decals_.push_back(std::move(batch));
+        }
+    }
+    stats_.batches = opaque_.size() + translucent_.size() + water_.size() + decals_.size();
 
     if (!vertices.empty()) {
         vertices_ = device.create_buffer({vertices.size() * sizeof(Vertex), rhi::BufferUsage::Vertex},
@@ -228,6 +287,13 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
         }
     }
 
+    pd.cull = rhi::CullMode::Back;
+    pd.depth_write = false;
+    pd.blend = rhi::BlendMode::Alpha;
+    decal_pipelines_[0] = device.create_pipeline(pd);
+    pd.blend = rhi::BlendMode::Modulate;
+    decal_pipelines_[1] = device.create_pipeline(pd);
+
     rhi::PipelineDesc wd;
     wd.vertex.spirv = openbl_water_vs;
     wd.pixel.spirv = openbl_water_ps;
@@ -250,6 +316,13 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
     for (Batch& batch : water_) {
         const rhi::Texture* textures[] = {batch.material->normal_map};
         batch.bind_group = device.create_bind_group(*water_pipeline_, *sampler_, textures);
+    }
+    rhi::SamplerDesc clamped;
+    clamped.address = rhi::AddressMode::Clamp;
+    decal_sampler_ = device.create_sampler(clamped);
+    for (Batch& batch : decals_) {
+        const rhi::Texture* textures[] = {batch.material->base, batch.material->base2, lightmap_.get()};
+        batch.bind_group = device.create_bind_group(*decal_pipelines_[0], *decal_sampler_, textures);
     }
 }
 
@@ -347,7 +420,7 @@ void WorldRenderer::draw_batches(rhi::CommandList& cmd, const std::vector<Batch>
     std::copy(values.begin(), values.end(), style_values_.begin());
     for (const Batch& batch : batches) {
         const RenderMaterial& m = *batch.material;
-        const rhi::Pipeline& pipeline = pipeline_for(m);
+        const rhi::Pipeline& pipeline = batch.decal ? *decal_pipelines_[m.modulate ? 1 : 0] : pipeline_for(m);
         if (&pipeline != bound) {
             cmd.set_pipeline(pipeline);
             cmd.set_shader_data(style_values_.data(), sizeof(style_values_));
@@ -356,7 +429,7 @@ void WorldRenderer::draw_batches(rhi::CommandList& cmd, const std::vector<Batch>
         pc.alpha_ref = m.alpha_ref;
         pc.flags = (m.alpha_test ? kAlphaTest : 0) | (m.blend_layers ? kBlendLayers : 0) |
                    ((m.unlit || settings.fullbright) ? kUnlit : 0) | (m.self_illum ? kSelfIllum : 0) |
-                   (m.translucent ? kTranslucent : 0);
+                   ((m.translucent || batch.decal) ? kTranslucent : 0) | ((batch.decal && m.modulate) ? kModulate : 0);
         cmd.set_bind_group(*batch.bind_group);
         cmd.push_constants(&pc, sizeof(pc));
         cmd.draw_indexed(batch.index_count, batch.first_index);
@@ -378,6 +451,7 @@ void WorldRenderer::draw_opaque(rhi::CommandList& cmd, const std::array<float, 1
     cmd.set_vertex_buffer(*vertices_);
     cmd.set_index_buffer(*indices_);
     draw_batches(cmd, opaque_, view_projection, settings);
+    draw_batches(cmd, decals_, view_projection, settings);
 }
 
 void WorldRenderer::draw_translucent(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,

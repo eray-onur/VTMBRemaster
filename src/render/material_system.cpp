@@ -143,6 +143,10 @@ RenderMaterial MaterialSystem::load(const std::string& name) {
     out.self_illum = flag(*mat, "$selfillum");
     out.no_cull = flag(*mat, "$nocull");
     out.unlit = out.shader.starts_with("unlitgeneric") || out.shader == "sprite";
+    out.modulate = out.shader == "decalmodulate";
+    if (auto scale = mat->param("$decalscale")) {
+        out.decal_scale = static_cast<float>(std::atof(std::string(*scale).c_str()));
+    }
     out.water = out.shader == "water" || out.shader == "waterwarp";
     if (out.water) {
         out.translucent = true;
