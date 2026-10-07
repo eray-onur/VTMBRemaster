@@ -11,6 +11,7 @@ add_library(openbl_formats
     localization.cpp
     mdl.cpp
     path.cpp
+    sav.cpp
     phy.cpp
     text_encoding.cpp
     tth.cpp
