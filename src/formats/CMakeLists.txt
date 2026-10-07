@@ -13,6 +13,7 @@ add_library(openbl_formats
     lip.cpp
     localization.cpp
     mdl.cpp
+    mesh_decal.cpp
     mp3.cpp
     particle.cpp
     path.cpp

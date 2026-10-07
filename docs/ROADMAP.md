@@ -92,7 +92,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Monitors: confirm the camera `FOV` convention, picture brightness and render-target size; cameras parented to moving props
 - [x] Particle simulation and rendering: active `env_particle` effects, emitters, curves, motion, premultiplied sprites ([PARTICLES.md](PARTICLES.md))
 - [ ] Particles: calibrate units and colour scale on more captures (one done: barrel fire), collisions, refraction, `func_particle` rain, script-started effects, fire light
-- [ ] Decals on static props (`$modelmaterial`, about 200 decals); confirm decal orientation against the original
+- [x] Decals: faces just behind the decal, displacements, and props (`$modelmaterial`); 4,520 of 4,609 on the world plus a few on props
+- [ ] Decals: the remaining few dozen (graffiti 20 to 60 units off surfaces), `DecalModulate` on props; confirm orientation against the original
 - [ ] Cloth simulation for hair and clothing; confirm the cloth settings against the running game
 - [ ] Animation: confirm the third fade time (+620) and the last two combo-window values in the running game
 

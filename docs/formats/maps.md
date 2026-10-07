@@ -175,15 +175,12 @@ There are 4,609 `infodecal` entities across 80 maps, each with only a `texture` 
 
 - **Size:** the base texture's size × `$decalscale`, in world units.
 - **Faces:** every visible planar face of the world and of brush entities, at their origins, that has the origin in front of it and within 4 units. Tool brushes such as triggers and clips take no decals.
+- **Behind the surface:** if no face qualifies, faces with the origin up to 8 units *behind* them are used instead. Many shipped decals sit just inside their wall: Santa Monica's Asylum posters 1 to 2 units, tunnel lights 5, a light switch 8.
+- **Displacements:** failing both, the decal is projected onto displacement triangles within 4 units (bumpy terrain and walls), with `project_mesh_decal` (`openbl/formats/mesh_decal.hpp`), one projection direction from the nearest triangle.
 - **Clipping:** the decal rectangle is clipped to each face, so a decal in a corner wraps onto both walls.
-- **Orientation:** the decal's up axis follows world +z on walls and world +y on floors and ceilings. This is our choice, not taken from the engine. Parking-bay stencils in `la_parkinggarage_1` read correctly from the lane on both rows, but other orientations are unconfirmed until there are screenshots of the original.
+- **Orientation:** the decal's up axis follows world +z on walls and world +y on floors and ceilings. This is our choice, not taken from the engine. Parking-bay stencils in `la_parkinggarage_1` read correctly from the lane on both rows, and Santa Monica's posters read correctly, but other orientations are unconfirmed until there are screenshots of the original.
 
-This places 4,401 decals (95.5%). The other 208 have no face within 4 units:
-
-- 111 have no face within 64 units either, so they probably sit on static props, which the original can decal through the `$modelmaterial` variants;
-- the rest float 8 to 64 units in front of the nearest face, probably on props in front of walls.
-
-Model decals are not implemented.
+This places 4,520 of 4,609 decals on the world (98.1%; 4,401 with front faces alone). **Props:** `PropRenderer` projects the rest onto the nearest prop surface within 8 units, in the prop's model space, using the decal's `$modelmaterial` variant if it has one; this finds only a handful (one in `sp_tutorial_1`). The remaining few dozen float 20 to 60 units off any surface, mostly large graffiti sprays in alleys; where the original puts them is unknown.
 
 **Rendering** (`WorldRenderer`):
 

@@ -1,4 +1,5 @@
 #include "openbl/formats/bsp.hpp"
+#include "openbl/formats/mesh_decal.hpp"
 #include "openbl/formats/error.hpp"
 #include "openbl/formats/zip.hpp"
 #include "openbl/vfs/game_filesystem.hpp"
@@ -569,7 +570,9 @@ TEST_CASE("BSP decal projection") {
     CHECK(hi[0] == doctest::Approx(26.0f));
     CHECK(hi[1] == doctest::Approx(8.0f));
     CHECK(hi[2] == doctest::Approx(0.0f));
-    CHECK(project_decal(bsp, {10, 0, -2}, 32, 16).empty()); // Behind the face.
+    // Just behind the face: placed by the fallback (shipped decals often sit inside walls).
+    CHECK_FALSE(project_decal(bsp, {10, 0, -2}, 32, 16).empty());
+    CHECK(project_decal(bsp, {10, 0, -10}, 32, 16).empty()); // Too far behind.
     CHECK(project_decal(bsp, {10, 0, 6}, 32, 16).empty());  // Too far in front.
     // Clipped at the face's edge.
     pieces = project_decal(bsp, {60, 0, 0}, 32, 16);
@@ -581,6 +584,44 @@ TEST_CASE("BSP decal projection") {
     }
     CHECK(max_x == doctest::Approx(64.0f));
     CHECK(max_u == doctest::Approx(0.625f));
+}
+
+TEST_CASE("Mesh decal projection") {
+    // A 32-unit cube, triangles wound counter-clockwise seen from outside.
+    const std::vector<Vec3> p{{0, 0, 0}, {32, 0, 0}, {32, 32, 0}, {0, 32, 0}, {0, 0, 32}, {32, 0, 32}, {32, 32, 32}, {0, 32, 32}};
+    const std::vector<std::uint32_t> idx{0, 2, 1, 0, 3, 2,  4, 5, 6, 4, 6, 7,  0, 1, 5, 0, 5, 4,
+                                         1, 2, 6, 1, 6, 5,  2, 3, 7, 2, 7, 6,  3, 0, 4, 3, 4, 7};
+    const Vec3 z{0, 0, 1}, y{0, 1, 0};
+    // On the -y face (normal -y), 2 units in front of its centre.
+    auto d = project_mesh_decal(p, idx, {16, -2, 16}, 8, 4, z, y);
+    REQUIRE(d);
+    CHECK(d->distance == doctest::Approx(2.0f));
+    float min_x = 1e9f, max_x = -1e9f, max_z = -1e9f;
+    for (std::size_t i = 0; i < d->positions.size(); ++i) {
+        CHECK(d->normals[i][1] == doctest::Approx(-1.0f));
+        CHECK(d->positions[i][1] == doctest::Approx(-0.1f)); // Lifted off the face.
+        min_x = std::min(min_x, d->positions[i][0]);
+        max_x = std::max(max_x, d->positions[i][0]);
+        max_z = std::max(max_z, d->positions[i][2]);
+        // Up follows +z: v = 0 at the top edge.
+        if (d->positions[i][2] == doctest::Approx(18.0f)) {
+            CHECK(d->uvs[i][1] == doctest::Approx(0.0f));
+        }
+    }
+    CHECK(min_x == doctest::Approx(12.0f));
+    CHECK(max_x == doctest::Approx(20.0f));
+    CHECK(max_z == doctest::Approx(18.0f));
+    // Near an edge it stops there: one projection direction, so a side face at
+    // 90 degrees is left out rather than smeared.
+    d = project_mesh_decal(p, idx, {30, -1, 16}, 8, 8, z, y);
+    REQUIRE(d);
+    float edge_x = -1e9f;
+    for (std::size_t i = 0; i < d->positions.size(); ++i) {
+        CHECK(d->normals[i][1] == doctest::Approx(-1.0f));
+        edge_x = std::max(edge_x, d->positions[i][0]);
+    }
+    CHECK(edge_x == doctest::Approx(32.0f));
+    CHECK_FALSE(project_mesh_decal(p, idx, {16, -10, 16}, 8, 8, z, y)); // Too far.
 }
 
 TEST_CASE("BSP lightmap trace") {
@@ -661,8 +702,9 @@ TEST_CASE("BSP integration: infodecals land on world faces") {
     MESSAGE(placed << " of " << decals << " infodecals land on a face (" << pieces << " pieces); unplaced: " << worst);
     CHECK(decals == 4609);
     CHECK(bad_uvs == 0);
-    // The rest are probably on props, or float 8 to 64 units off the nearest face.
-    CHECK(placed >= 4401);
+    // Faces in front, faces up to 8 units behind, then displacements; the rest
+    // are probably on props (PropRenderer places those) or float further off.
+    CHECK(placed >= 4520);
 }
 
 TEST_CASE("BSP integration: every map in the real install loads") {

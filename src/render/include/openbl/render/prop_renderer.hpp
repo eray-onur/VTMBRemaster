@@ -24,6 +24,8 @@ struct PropStats {
     std::size_t missing_models = 0;
     std::size_t triangles = 0;          // Per model, LOD 0, summed over unique models.
     std::size_t generated_normals = 0;  // Models whose normals were computed from geometry.
+    std::size_t decals = 0;             // infodecals placed on props (those the world could not place).
+    std::size_t unplaced_decals = 0;    // infodecals on neither the world nor a prop.
 };
 
 struct PropDrawSettings {
@@ -64,15 +66,28 @@ private:
         std::unique_ptr<rhi::Buffer> indices;
         std::vector<std::vector<Mesh>> skins; // [skin family][mesh]
         std::array<float, 3> center{};        // Bounds centre in model space.
+        float radius = 0;                     // Bounding sphere around `center`.
+        std::vector<formats::Vec3> positions; // LOD 0 triangles, for projecting decals.
+        std::vector<std::uint32_t> triangle_indices;
+    };
+    // An infodecal projected onto one placed prop, in the prop's model space.
+    struct Decal {
+        std::unique_ptr<rhi::Buffer> vertices;
+        std::unique_ptr<rhi::Buffer> indices;
+        std::uint32_t index_count = 0;
+        const RenderMaterial* material = nullptr;
+        std::unique_ptr<rhi::BindGroup> bind_group;
     };
     struct Instance {
         const Model* model = nullptr;
         std::size_t skin = 0;
         std::array<float, 16> transform{}; // Column-major model matrix.
         AmbientCube lighting;              // Model space.
+        std::vector<Decal> decals;
     };
 
     const Model* load_model(const std::string& path);
+    void place_decals(const formats::BspFile& bsp);
     void draw_pass(rhi::CommandList& cmd, const std::array<float, 16>& vp, const PropDrawSettings& settings,
                    bool translucent);
     const rhi::Pipeline& pipeline_for(const RenderMaterial& m) const;

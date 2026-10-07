@@ -1,5 +1,7 @@
 #include "openbl/formats/bsp.hpp"
 
+#include "openbl/formats/mesh_decal.hpp"
+
 #include "binary_reader.hpp"
 #include "physics_solid.hpp"
 #include "openbl/formats/error.hpp"
@@ -1249,7 +1251,7 @@ Vec3 cross3(const Vec3& a, const Vec3& b) {
 // Adds the part of a decal centred near `origin` (in the face's model space)
 // that lies on face `f`, moved by `offset` into world space.
 void append_decal_piece(const BspFile& bsp, std::size_t f, const Vec3& origin, const Vec3& offset, float width,
-                        float height, float reach, std::vector<BspDecalPiece>& out) {
+                        float height, float reach, float behind, std::vector<BspDecalPiece>& out) {
     const BspFace& face = bsp.faces[f];
     if (face.dispinfo >= 0 || face.plane >= bsp.planes.size() || face.texinfo >= bsp.texinfos.size()) {
         return;
@@ -1266,7 +1268,7 @@ void append_decal_piece(const BspFile& bsp, std::size_t f, const Vec3& origin, c
     const Vec3 n{plane.normal[0] * sign, plane.normal[1] * sign, plane.normal[2] * sign};
     const float d = dot3(n, origin) - plane.dist * sign;
     // The decal must be in front of the face (or on it) and close.
-    if (d < -0.5f || d > reach) {
+    if (d < -behind || d > reach) {
         return;
     }
     // Decal axes on the face: up follows world +z on walls and world +y on
@@ -1342,15 +1344,64 @@ std::vector<BspDecalPiece> project_decal(const BspFile& bsp, const Vec3& origin,
         }
         instances.emplace_back(index, at);
     }
-    for (const auto& [model_index, offset] : instances) {
-        const BspModel& model = bsp.models[model_index];
-        const Vec3 local = sub3(origin, offset);
-        for (std::int32_t i = 0; i < model.num_faces; ++i) {
-            const auto f = static_cast<std::size_t>(model.first_face + i);
-            if (f >= bsp.faces.size()) {
-                break;
+    // Faces the origin is in front of (or on); failing that, faces up to 8
+    // units in front of it: many shipped decals sit just inside the wall.
+    for (const float behind : {0.5f, 8.0f}) {
+        for (const auto& [model_index, offset] : instances) {
+            const BspModel& model = bsp.models[model_index];
+            const Vec3 local = sub3(origin, offset);
+            for (std::int32_t i = 0; i < model.num_faces; ++i) {
+                const auto f = static_cast<std::size_t>(model.first_face + i);
+                if (f >= bsp.faces.size()) {
+                    break;
+                }
+                append_decal_piece(bsp, f, local, offset, width, height, reach, behind, out);
             }
-            append_decal_piece(bsp, f, local, offset, width, height, reach, out);
+        }
+        if (!out.empty()) {
+            return out;
+        }
+    }
+    // Displacements (bumpy terrain and walls): project onto their triangles.
+    const float extent = std::max(width, height) * 0.5f + reach;
+    for (std::size_t f = 0; f < bsp.faces.size(); ++f) {
+        if (bsp.faces[f].dispinfo < 0) {
+            continue;
+        }
+        const BspFaceMesh mesh = build_face_mesh(bsp, f);
+        bool near = false;
+        for (const Vec3& p : mesh.positions) {
+            near = near || (std::abs(p[0] - origin[0]) <= extent && std::abs(p[1] - origin[1]) <= extent &&
+                            std::abs(p[2] - origin[2]) <= extent);
+        }
+        if (!near) {
+            continue;
+        }
+        const auto decal = project_mesh_decal(mesh.positions, mesh.indices, origin, width, height, {0, 0, 1}, {0, 1, 0},
+                                              reach, 0.0f);
+        if (!decal) {
+            continue;
+        }
+        // One piece per clipped triangle, with lightmap coordinates interpolated.
+        for (std::size_t t = 0; t + 2 < decal->indices.size(); t += 3) {
+            BspDecalPiece piece;
+            piece.face = f;
+            for (std::size_t k = 0; k < 3; ++k) {
+                const std::uint32_t v = decal->indices[t + k];
+                piece.positions.push_back(decal->positions[v]);
+                piece.uvs.push_back(decal->uvs[v]);
+                const std::size_t src = decal->source_triangles[v];
+                const auto& b = decal->barycentrics[v];
+                std::array<float, 2> luv{};
+                for (std::size_t c = 0; c < 3; ++c) {
+                    const auto& l = mesh.lightmap_uvs[mesh.indices[src + c]];
+                    luv[0] += l[0] * b[c];
+                    luv[1] += l[1] * b[c];
+                }
+                piece.lightmap_uvs.push_back(luv);
+            }
+            piece.normal = decal->normals[decal->indices[t]];
+            out.push_back(std::move(piece));
         }
     }
     return out;

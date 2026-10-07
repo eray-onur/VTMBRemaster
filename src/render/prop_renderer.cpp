@@ -1,5 +1,7 @@
 #include "openbl/render/prop_renderer.hpp"
 
+#include "openbl/formats/mesh_decal.hpp"
+
 #include "openbl/formats/error.hpp"
 #include "openbl/formats/mdl.hpp"
 #include "openbl/formats/path.hpp"
@@ -120,7 +122,7 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
             }
         }
         inst.lighting = lighting.sample(point, rotation);
-        instances_.push_back(inst);
+        instances_.push_back(std::move(inst));
     };
 
     constexpr std::uint8_t kUseLightingOrigin = 0x2;
@@ -149,6 +151,79 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
         add(formats::normalize_game_path(model->second), origin, parse_vec3(e, "angles"), skin, std::nullopt);
     }
     stats_.instances = instances_.size();
+    place_decals(bsp);
+}
+
+void PropRenderer::place_decals(const formats::BspFile& bsp) {
+    // Decals the world cannot place (no brush face within 4 units) go on the
+    // nearest prop surface within this distance.
+    constexpr float kReach = 8.0f;
+    for (const auto& e : bsp.entities) {
+        const auto cls = e.find("classname");
+        const auto texture = e.find("texture");
+        if (cls == e.end() || cls->second != "infodecal" || texture == e.end()) {
+            continue;
+        }
+        const RenderMaterial& mat = materials_.material(texture->second);
+        if (mat.missing || mat.skip) {
+            continue;
+        }
+        const auto origin = parse_vec3(e, "origin");
+        const auto& size = mat.base->desc();
+        const float width = static_cast<float>(size.width) * mat.decal_scale;
+        const float height = static_cast<float>(size.height) * mat.decal_scale;
+        if (!formats::project_decal(bsp, origin, width, height).empty()) {
+            continue; // On the world (WorldRenderer draws it).
+        }
+        Instance* best = nullptr;
+        std::optional<formats::MeshDecal> best_decal;
+        const glm::vec3 o(origin[0], origin[1], origin[2]);
+        for (Instance& inst : instances_) {
+            const glm::mat4 m = glm::make_mat4(inst.transform.data());
+            const glm::vec3 c(m * glm::vec4(glm::make_vec3(inst.model->center.data()), 1.0f));
+            if (glm::length(o - c) > inst.model->radius + kReach) {
+                continue;
+            }
+            const glm::mat4 inv = glm::inverse(m);
+            const glm::vec3 lo(inv * glm::vec4(o, 1.0f));
+            const glm::vec3 z = glm::normalize(glm::vec3(inv * glm::vec4(0, 0, 1, 0)));
+            const glm::vec3 y = glm::normalize(glm::vec3(inv * glm::vec4(0, 1, 0, 0)));
+            auto d = formats::project_mesh_decal(inst.model->positions, inst.model->triangle_indices,
+                                                 {lo.x, lo.y, lo.z}, width, height, {z.x, z.y, z.z}, {y.x, y.y, y.z},
+                                                 kReach);
+            if (d && (!best_decal || d->distance < best_decal->distance)) {
+                best = &inst;
+                best_decal = std::move(d);
+            }
+        }
+        if (!best) {
+            ++stats_.unplaced_decals;
+            continue;
+        }
+        // Models use the decal's $modelmaterial variant when it has one.
+        const RenderMaterial& draw_mat = mat.model_material.empty() ? mat : materials_.material(mat.model_material);
+        if (draw_mat.missing || draw_mat.modulate) {
+            ++stats_.unplaced_decals; // DecalModulate has no prop pipeline yet.
+            continue;
+        }
+        std::vector<Vertex> vertices;
+        for (std::size_t v = 0; v < best_decal->positions.size(); ++v) {
+            const auto& p = best_decal->positions[v];
+            const auto& n = best_decal->normals[v];
+            vertices.push_back({{p[0], p[1], p[2]}, {best_decal->uvs[v][0], best_decal->uvs[v][1]}, {n[0], n[1], n[2]}});
+        }
+        Decal decal;
+        decal.vertices = device_.create_buffer({vertices.size() * sizeof(Vertex), rhi::BufferUsage::Vertex},
+                                               std::as_bytes(std::span(vertices)));
+        decal.indices = device_.create_buffer({best_decal->indices.size() * sizeof(std::uint32_t), rhi::BufferUsage::Index},
+                                              std::as_bytes(std::span(best_decal->indices)));
+        decal.index_count = static_cast<std::uint32_t>(best_decal->indices.size());
+        decal.material = &draw_mat;
+        const rhi::Texture* textures[] = {draw_mat.base, draw_mat.base2};
+        decal.bind_group = device_.create_bind_group(*pipelines_[0][0], *sampler_, textures);
+        best->decals.push_back(std::move(decal));
+        ++stats_.decals;
+    }
 }
 
 PropRenderer::~PropRenderer() = default;
@@ -228,6 +303,12 @@ const PropRenderer::Model* PropRenderer::load_model(const std::string& path) {
                 }
                 const glm::vec3 center = (lo + hi) * 0.5f;
                 model->center = {center.x, center.y, center.z};
+                model->radius = glm::length(hi - lo) * 0.5f;
+                model->positions.reserve(vertices.size());
+                for (const Vertex& v : vertices) {
+                    model->positions.push_back({v.position[0], v.position[1], v.position[2]});
+                }
+                model->triangle_indices = indices;
                 model->vertices = device_.create_buffer({vertices.size() * sizeof(Vertex), rhi::BufferUsage::Vertex},
                                                         std::as_bytes(std::span(vertices)));
                 model->indices = device_.create_buffer({indices.size() * sizeof(std::uint32_t), rhi::BufferUsage::Index},
@@ -314,6 +395,29 @@ void PropRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float, 16>&
                                    : *mesh.frame_bind_groups[m.base_frame % mesh.frame_bind_groups.size()]);
             cmd.push_constants(&pc, sizeof(pc));
             cmd.draw_indexed(mesh.index_count, mesh.first_index);
+        }
+        if (!translucent) {
+            continue;
+        }
+        // Decals on this prop: alpha-blended over it, lit like it.
+        for (const Decal& decal : inst.decals) {
+            const RenderMaterial& m = *decal.material;
+            const rhi::Pipeline& pipeline = *pipelines_[1][0];
+            if (&pipeline != bound_pipeline) {
+                cmd.set_pipeline(pipeline);
+                cmd.set_shader_data(params.data(), rows * sizeof(MaterialParams));
+                bound_pipeline = &pipeline;
+            }
+            cmd.set_vertex_buffer(*decal.vertices);
+            cmd.set_index_buffer(*decal.indices);
+            bound_model = nullptr;
+            pc.alpha_ref = m.alpha_ref;
+            pc.flags = (m.alpha_test ? kAlphaTest : 0) | ((m.unlit || settings.fullbright) ? kUnlit : 0) |
+                       (m.self_illum ? kSelfIllum : 0) | kTranslucent;
+            pc.params_index = m.params_index < rows ? m.params_index : 0;
+            cmd.set_bind_group(*decal.bind_group);
+            cmd.push_constants(&pc, sizeof(pc));
+            cmd.draw_indexed(decal.index_count, 0);
         }
     }
 }

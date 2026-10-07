@@ -314,7 +314,8 @@ public:
             std::cout << "props: " << p.instances << " instances of " << p.models << " models ("
                       << p.missing_models << " missing, " << p.triangles << " triangles), "
                       << p.generated_normals << " models with generated normals; " << bsp_.world_lights.size()
-                      << " world lights\n";
+                      << " world lights; " << p.decals << " decals on props, " << p.unplaced_decals
+                      << " decals placed nowhere\n";
         }
         std::cout << "loaded in " << std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count()
                   << " s\n";

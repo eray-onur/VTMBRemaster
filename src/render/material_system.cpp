@@ -302,6 +302,9 @@ RenderMaterial MaterialSystem::load(const std::string& name, std::optional<forma
     out.no_cull = flag(*mat, "$nocull");
     out.unlit = out.shader.starts_with("unlitgeneric") || out.shader == "sprite" || out.shader == "unlittwotexture";
     out.modulate = out.shader == "decalmodulate";
+    if (auto variant = mat->param("$modelmaterial")) {
+        out.model_material = std::string(*variant);
+    }
     if (auto scale = mat->param("$decalscale")) {
         out.decal_scale = static_cast<float>(std::atof(std::string(*scale).c_str()));
     }
