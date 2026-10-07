@@ -1,6 +1,8 @@
 // Unlit textured geometry. Compiled to SPIR-V by glslang (and to DXIL by DXC
 // once the Direct3D 12 backend exists).
 
+#include "color.hlsli"
+
 struct PushConstants {
     float4x4 mvp;
 };
@@ -27,5 +29,6 @@ VSOutput vs_main(VSInput input) {
 [[vk::binding(1, 0)]] Texture2D base_texture;
 
 float4 ps_main(VSOutput input) : SV_Target {
-    return base_texture.Sample(texture_sampler, input.uv);
+    const float4 c = base_texture.Sample(texture_sampler, input.uv);
+    return float4(linear_to_srgb(c.rgb), c.a);
 }

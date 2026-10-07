@@ -2,6 +2,8 @@
 // six colours for +X, -X, +Y, -Y, +Z, -Z in model space, blended by the
 // squared components of the vertex normal.
 
+#include "color.hlsli"
+
 struct PushConstants {
     float4x4 mvp;
     uint4 cube_a;   // 18 half-floats: rgb for +X, -X, +Y, -Y, +Z, -Z ...
@@ -83,5 +85,5 @@ float4 ps_main(VSOutput input) : SV_Target {
     if (pc.flags & kSelfIllum) {
         color = lerp(color, base.rgb * material_param(3).rgb, base.a);
     }
-    return float4(color, (pc.flags & kTranslucent) ? base.a * tint.a : 1.0);
+    return float4(linear_to_srgb(color), (pc.flags & kTranslucent) ? base.a * tint.a : 1.0);
 }

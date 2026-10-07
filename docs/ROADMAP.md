@@ -76,7 +76,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Parity tooling: viewer shot lists (`--shots`, `--fov`, `--size`), `openbl-cli image compare` (see docs/PARITY.md)
 - [x] Lightmap brightness measured against original-game captures: base × luxel in linear terms (scale 1.0, was 2.3); capture method verified; `--fov` follows the game's 4:3-horizontal convention ([PARITY.md](PARITY.md))
 - [ ] The ceiling fan in `sp_tutorial_1` is drawn without its ceiling rod (seen in the parity captures)
-- [ ] Gamma-space shading option (the original multiplies in pure gamma 2.2; OpenBL's sRGB pipeline is up to ~15% darker in dark tones)
+- [x] Gamma-space blending: plain 8-bit targets, shaders encode sRGB, so translucent surfaces, decals and particles blend on encoded values like the original
+- [ ] Pure gamma 2.2 shading (the original multiplies in gamma 2.2; OpenBL's sRGB decode is up to ~15% darker in dark tones)
 - [x] Static models in maps
 - [x] Skinned and animated models: GPU skinning (per-draw bone data), NPCs from map entities playing their first `ACT_IDLE` sequence
 - [x] Animation: blend grids across pose parameters, fades between sequences, viewer `--npc-sequence`/`--pose` ([ANIMATION.md](ANIMATION.md))

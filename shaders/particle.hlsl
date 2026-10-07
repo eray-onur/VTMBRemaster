@@ -3,6 +3,8 @@
 // colour and mask; velocity). Drawn with premultiplied blending, so a particle
 // both adds light (colour) and darkens what is behind it (mask).
 
+#include "color.hlsli"
+
 struct PushConstants {
     float4x4 view_projection;
     float4 right; // Camera right, world space.
@@ -52,5 +54,8 @@ VSOutput vs_main(VSInput input) {
 
 float4 ps_main(VSOutput input) : SV_Target {
     const float4 t = sprite.Sample(texture_sampler, input.uv);
-    return float4(t.rgb * t.a * input.color.rgb, t.a * input.color.a);
+    // The sprite's colour (already dark where it is transparent) adds light,
+    // scaled on encoded values as in the original; its alpha only drives the
+    // masking of the background (particles/000_template.txt).
+    return float4(linear_to_srgb(t.rgb) * input.color.rgb, t.a * input.color.a);
 }

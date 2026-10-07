@@ -110,19 +110,23 @@ private:
 
 class VulkanRenderTarget final : public RenderTarget {
 public:
-    VulkanRenderTarget(VulkanDevice& device, std::unique_ptr<VulkanTexture> color, VkImage depth, VkImageView depth_view,
-                       VmaAllocation depth_allocation)
-        : device_(device), color_(std::move(color)), depth_(depth), depth_view_(depth_view),
-          depth_allocation_(depth_allocation) {}
+    VulkanRenderTarget(VulkanDevice& device, std::unique_ptr<VulkanTexture> color, VkImageView attachment_view,
+                       VkImage depth, VkImageView depth_view, VmaAllocation depth_allocation)
+        : device_(device), color_(std::move(color)), attachment_view_(attachment_view), depth_(depth),
+          depth_view_(depth_view), depth_allocation_(depth_allocation) {}
     ~VulkanRenderTarget() override;
     const Texture& texture() const override { return *color_; }
     const VulkanTexture& color() const { return *color_; }
+    // Drawn through a plain view (encoded values, like the window); sampled
+    // through the texture's sRGB view, so shaders read linear colour.
+    VkImageView attachment_view() const { return attachment_view_; }
     VkImage depth() const { return depth_; }
     VkImageView depth_view() const { return depth_view_; }
 
 private:
     VulkanDevice& device_;
     std::unique_ptr<VulkanTexture> color_;
+    VkImageView attachment_view_;
     VkImage depth_;
     VkImageView depth_view_;
     VmaAllocation depth_allocation_;
@@ -249,7 +253,7 @@ public:
                          VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT);
         const VkExtent2D extent{target->texture().desc().width, target->texture().desc().height};
         VkRenderingAttachmentInfo color_info{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-        color_info.imageView = target->color().view();
+        color_info.imageView = target->attachment_view();
         color_info.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         color_info.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         color_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -507,12 +511,18 @@ public:
         info.samples = VK_SAMPLE_COUNT_1_BIT;
         info.tiling = VK_IMAGE_TILING_OPTIMAL;
         info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        info.flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
         VkImage image = VK_NULL_HANDLE;
         VmaAllocation allocation = nullptr;
         check(vmaCreateImage(allocator_, &info, &alloc, &image, &allocation, nullptr), "render target image");
-        const VkImageView view = create_view(image, swapchain_format_, VK_IMAGE_ASPECT_COLOR_BIT);
-        TextureDesc desc{width, height, 1, from_vk(swapchain_format_)};
+        const VkFormat sampled = swapchain_format_ == VK_FORMAT_B8G8R8A8_UNORM   ? VK_FORMAT_B8G8R8A8_SRGB
+                                 : swapchain_format_ == VK_FORMAT_R8G8B8A8_UNORM ? VK_FORMAT_R8G8B8A8_SRGB
+                                                                                 : swapchain_format_;
+        const VkImageView attachment_view = create_view(image, swapchain_format_, VK_IMAGE_ASPECT_COLOR_BIT);
+        const VkImageView view = create_view(image, sampled, VK_IMAGE_ASPECT_COLOR_BIT);
+        TextureDesc desc{width, height, 1, from_vk(sampled)};
         auto color = std::make_unique<VulkanTexture>(*this, desc, image, view, allocation);
+        info.flags = 0;
 
         info.format = kDepthFormat;
         info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
@@ -534,7 +544,8 @@ public:
                           VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                           VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
         });
-        return std::make_unique<VulkanRenderTarget>(*this, std::move(color), depth, depth_view, depth_allocation);
+        return std::make_unique<VulkanRenderTarget>(*this, std::move(color), attachment_view, depth, depth_view,
+                                                    depth_allocation);
     }
 
     std::unique_ptr<Pipeline> create_pipeline(const PipelineDesc& desc) override {
@@ -1143,7 +1154,9 @@ private:
         vkGetPhysicalDeviceSurfaceFormatsKHR(physical_, surface_, &count, formats.data());
         VkSurfaceFormatKHR chosen = formats.at(0);
         for (const auto& f : formats) {
-            if ((f.format == VK_FORMAT_B8G8R8A8_SRGB || f.format == VK_FORMAT_R8G8B8A8_SRGB) &&
+            // A plain format: shaders encode sRGB themselves, so blending works
+            // on encoded values (gamma space), as the original's did.
+            if ((f.format == VK_FORMAT_B8G8R8A8_UNORM || f.format == VK_FORMAT_R8G8B8A8_UNORM) &&
                 f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
                 chosen = f;
                 break;
@@ -1425,8 +1438,10 @@ VulkanRenderTarget::~VulkanRenderTarget() {
     VmaAllocator a = device_.allocator();
     VkImage i = depth_;
     VkImageView v = depth_view_;
+    VkImageView av = attachment_view_;
     VmaAllocation m = depth_allocation_;
-    device_.defer([d, a, i, v, m] {
+    device_.defer([d, a, i, v, av, m] {
+        vkDestroyImageView(d, av, nullptr);
         vkDestroyImageView(d, v, nullptr);
         vmaDestroyImage(a, i, m);
     });

@@ -15,8 +15,8 @@ function(openbl_add_shader target source stage entry symbol)
         OUTPUT ${output}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${out_dir}
         COMMAND $<TARGET_FILE:glslang-standalone> -V -D -S ${stage} -e ${entry} --target-env vulkan1.3
-                --vn ${symbol} -o ${output} ${source_abs}
-        DEPENDS ${source_abs} glslang-standalone
+                -I${PROJECT_SOURCE_DIR}/shaders --vn ${symbol} -o ${output} ${source_abs}
+        DEPENDS ${source_abs} ${PROJECT_SOURCE_DIR}/shaders/color.hlsli glslang-standalone
         COMMENT "Compiling shader ${source} (${stage}, ${entry})"
         VERBATIM)
     target_sources(${target} PRIVATE ${output})

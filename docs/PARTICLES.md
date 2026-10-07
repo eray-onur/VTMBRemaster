@@ -22,8 +22,10 @@ How OpenBL runs the effects described in [formats/particles.md](formats/particle
 
 Each particle with a `sprite` (`particles/<sprite>.tga`) is a quad facing the camera, `size` × `width` by `size` × `height` units, rolled by `rotation`; `movealign` stretches it along its motion instead. It is drawn with premultiplied blending, after the translucent world:
 
-- **additive colour** = sprite × (`red`, `green`, `blue`) / 255 × `color` / 255;
-- **darkening** = sprite alpha × `mask` / 255 (smoke darkens what is behind it).
+- **added light** = the sprite's colour × (`red`, `green`, `blue`) / 255 × `color` / 255, on gamma-encoded values (the sprites are already dark where transparent, so their alpha is not applied again);
+- **darkening** = sprite alpha × `mask` / 255: the background is scaled by one minus that (smoke darkens what is behind it).
+
+Blending happens in gamma space, as in the original (see [RENDERING.md](RENDERING.md)).
 
 Particles are sorted back to front each frame and drawn in batches of up to 1,024 per sprite, with their data in the per-draw shader data.
 
@@ -37,12 +39,13 @@ Capture: the barrel fire among the bums in `sm_hub_1` (`BarrelFireEmitter`, came
 | OpenBL | 0.14 | 0.36 | 0.51 | 0.08 | faint glow |
 | Speeds × 0.5, sizes × 2 | 0.09 | 0.35 | 0.62 | 0.20 | less glow |
 | Template semantics | 0.10 | 0.29 | 0.48 | 0.08 | faint glow |
+| ... with gamma-space blending, alpha only masking | 0.10 | 0.43 | 0.63 | 0.07 | glow about 0.1 (original about 0.04) |
 
-With the template's semantics the flames sit in the right place at the right size and the base of the column matches, but the core is about 0.6 as bright as in the original. The likely reason is blending space, not particle parameters: the original adds particles in gamma space (Direct3D 8 era), where overlapping dim sprites sum to much more than the same sprites summed in linear light, as OpenBL does (ten flames of gamma 0.12 saturate in gamma space but reach only about 0.74 when summed linearly). Matching it needs gamma-space blending, which also concerns every other translucent surface (see the gamma-space item in ROADMAP.md).
+With the template's semantics and gamma-space blending the flames sit in the right place at the right size, the base of the column matches and the core reaches about 0.85 of the original's brightness (from 0.6 with linear blending). The haze above the fire is now too bright (about 0.1 against 0.04), probably the large smoke sprites' added light; more captured effects should show whether smoke is drawn differently.
 
 ## Not done yet
 
-- Gamma-space blending, then calibration on more effects (steam, smoke, water drops).
+- Calibration on more effects (steam, smoke, water drops): the smoke above the barrel fire is too bright.
 - Bursts on later frames, `distance` emission, `depth_offset`, `no_z_test`, `flat`, `sortfront`, `lighting` (scaled by scene lighting), `precipitation`.
 - `collide` blocks (bounce, gravity, friction; decals where particles land), `refract` and `normal` (refracting effects).
 - The light that fire effects cast (the original lights the bums around the barrel; probably a separate dynamic light).

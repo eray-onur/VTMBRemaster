@@ -3,6 +3,8 @@
 // each), then a material params row per mesh (texture transform u and v rows,
 // colour and alpha, self-illumination tint).
 
+#include "color.hlsli"
+
 struct PushConstants {
     float4x4 mvp;
     float alpha_ref;
@@ -96,5 +98,5 @@ float4 ps_main(VSOutput input) : SV_Target {
     if (pc.flags & kSelfIllum) {
         color = lerp(color, base.rgb * shader_data[pc.params_row + 3].rgb, base.a);
     }
-    return float4(color, (pc.flags & kTranslucent) ? base.a * tint.a : 1.0);
+    return float4(linear_to_srgb(color), (pc.flags & kTranslucent) ? base.a * tint.a : 1.0);
 }

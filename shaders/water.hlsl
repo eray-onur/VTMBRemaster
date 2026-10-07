@@ -2,6 +2,8 @@
 // fog colour seen from above, reflection tint at grazing angles (Fresnel),
 // rippled by two scrolling layers of the material's normal map.
 
+#include "color.hlsli"
+
 struct PushConstants {
     float4x4 mvp;
     float4 camera_time;  // xyz: camera position, w: time in seconds
@@ -47,5 +49,5 @@ float4 ps_main(VSOutput input) : SV_Target {
     // A faint highlight from a light high above, so the ripples read at night.
     const float3 half_vec = normalize(to_eye + float3(0.0, 0.0, 1.0));
     color += pow(saturate(dot(normal, half_vec)), 80.0) * 0.15 * pc.reflect_tint.rgb;
-    return float4(color, pc.fog_color.a);
+    return float4(linear_to_srgb(color), pc.fog_color.a);
 }
