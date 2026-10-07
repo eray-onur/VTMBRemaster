@@ -83,7 +83,7 @@ Captured automatically by driving the running game window: console commands type
 - `sensitivity 1`, `m_yaw 0.022` and `m_pitch 0.022` give about 0.068° of yaw and 0.061° of pitch per injected mouse count. That isn't quite linear, so each aim is checked against the readout.
 - `noclip` is a toggle, so don't send it twice.
 - A teleport typed while the map is still loading is ignored.
-- Facing directions can't be derived blindly. The hospital monitors and the tutorial terminal face the opposite way from their brush normals or prop yaw; the haven TV doesn't. Check each view with a frame grab before recording.
+- Facing directions can't be derived blindly. The hospital monitor screens face away from their brush normals, and the haven TV faces opposite its prop yaw; the tutorial terminal faces along its prop yaw. Check each view with a frame grab before recording.
 
 There is no station 3 any more. The haven TV is a `func_monitor` (`tv_screen`) showing a live feed from a `point_camera` (`news_camera`) that films the news-ticker strip in a hidden room. The TV starts hidden until switched on, so watching it covers the ticker too. It also means OpenBL needs render-to-texture monitors before this station can match.
 
