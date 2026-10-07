@@ -25,7 +25,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Models: cloth layout (particles, constraints, triangles, edges, per-vertex binding, collision capsules, per-LOD table)
 - [ ] Models: cloth semantics still to confirm against the running game (body parameter, byte array, vertex data, settings records)
 - [x] Physics: `.phy` solids, convex pieces (bounding-tree walk), model-space conversion, text block
-- [ ] Physics: ragdoll constraint semantics; collision for map brushes (with the BSP work)
+- [x] Physics: typed `.phy` text (solids, ragdoll constraints, joint merges, break pieces); ragdoll limits measured as rotations about the child bone's axes from the bind pose
+- [x] Physics: collision hulls for map brushes (bevel sides skipped), cross-checked against the compiled world collision
 - [x] Maps: `.bsp` v17 geometry, faces, displacements, lightmap data, static props, entities, pakfile
 - [x] Maps: BSP nodes and leafs (line-of-sight traces), world lights
 - [x] Maps: full leafs, brushes and sides, visibility (PVS/PAS), areas and area portals, cubemaps, detail props and their lighting, collision (IVPS and MOPP), vertex normals, primitives (crack-free triangulation), leaf water data

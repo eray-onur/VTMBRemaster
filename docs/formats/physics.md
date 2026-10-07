@@ -60,4 +60,25 @@ editparams {
 }
 ```
 
-Ragdolls have one `solid` block per bone (its `name` is the bone name) plus constraint blocks between them. Two files produce KeyValues diagnostics.
+Ragdolls have one `solid` block per bone (its `name` is the bone name) plus constraint blocks between them. Two files produce KeyValues diagnostics. `PhyFile` reads the four block types into typed members.
+
+| Block | Count | Keys |
+|---|---|---|
+| `solid` | 6,785 | `index`, `name`, `parent` (ragdolls: parent bone), `origin`, `angles`, `mass`, `massbias` (2,218), `surfaceprop`, `damping`, `rotdamping`, `inertia`, `volume` |
+| `ragdollconstraint` | 3,929 | `parent`, `child` (solid indices), then `xmin`, `xmax`, `xfriction` and the same for `y` and `z` |
+| `editparams` | 2,854 | `rootname`, `totalmass`, `concave` (922), `jointmerge` (283: two comma-separated bones merged into one solid) |
+| `break` | 737 | `model` (a gib), `health`, `fadetime`, `offset` |
+
+### Ragdoll limits
+
+Limits are in degrees, and min ≤ max on every axis of every constraint. The question is which rotation they bound. To test it, each child solid's rotation relative to its parent solid was sampled from the animations of 286 character models and checked against the limits under several conventions (±10° margin):
+
+| Convention | All three axes inside the limits |
+|---|---|
+| child's own axes, measured from the bind pose (rotation vector) | **69.3%** |
+| child's own axes, measured from the bind pose (Euler angles) | 68.8–69.0% |
+| parent's axes, measured from the bind pose | 65.2–65.6% |
+| relative rotation without subtracting the bind pose | 45.5% |
+| the best other mapping of x, y, z with any signs | at most 68.3% |
+
+So limits bound the rotation about the **child bone's own x, y and z axes, measured from the bind pose**. The Euler order can't be told apart. In the Biped skeletons x runs along the bone, so the x limits bound twist. That axis is also where animations leave the limits most often (78% inside, against 87% for y and z), which suggests twist is limited deliberately tightly. Ragdolls don't need animations to stay inside the limits, so a 69% match is a ranking of the conventions, not a failure.

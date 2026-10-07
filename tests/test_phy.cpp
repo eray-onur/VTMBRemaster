@@ -59,7 +59,11 @@ std::vector<std::byte> build_phy() {
         }
     }
     i32(d, tree + 4, static_cast<std::int32_t>(piece) - static_cast<std::int32_t>(tree));
-    const std::string text = "solid {\n\"index\" \"0\"\n\"mass\" \"10\"\n}\neditparams {\n\"totalmass\" \"10\"\n}\n";
+    const std::string text = "solid {\n\"index\" \"0\"\n\"name\" \"Bip01 Pelvis\"\n\"mass\" \"10\"\n\"origin\" \"1 2 3\"\n}\n"
+                             "ragdollconstraint {\n\"parent\" \"0\"\n\"child\" \"1\"\n\"zmin\" \"-120\"\n"
+                             "\"zmax\" \"4\"\n\"zfriction\" \"1\"\n}\n"
+                             "editparams {\n\"totalmass\" \"10\"\n\"jointmerge\" \"Bip01,Bip01 Spine\"\n}\n"
+                             "break {\n\"model\" \"gibs\\\\head\"\n\"health\" \"100\"\n\"offset\" \"0 0 103\"\n}\n";
     put(d, end, text.data(), text.size() + 1);
     return d;
 }
@@ -80,8 +84,23 @@ TEST_CASE("PHY solids and text") {
     // Physics (0, 1, 0) metres-inches -> model (0, 0, -1); (0, 0, 1) -> (0, 1, 0).
     CHECK(piece.vertices[2][2] == doctest::Approx(-1.0f));
     CHECK(piece.vertices[3][1] == doctest::Approx(1.0f));
-    REQUIRE(phy.text.roots.size() == 2);
+    REQUIRE(phy.text.roots.size() == 4);
     CHECK(phy.text.roots[0].find("mass")->value == "10");
+    REQUIRE(phy.solid_info.size() == 1);
+    CHECK(phy.solid_info[0].name == "Bip01 Pelvis");
+    CHECK(phy.solid_info[0].mass == 10.0f);
+    CHECK(phy.solid_info[0].origin[2] == 3.0f);
+    REQUIRE(phy.constraints.size() == 1);
+    CHECK(phy.constraints[0].child == 1);
+    CHECK(phy.constraints[0].limits[2].min == -120.0f);
+    CHECK(phy.constraints[0].limits[2].friction == 1.0f);
+    CHECK(phy.constraints[0].limits[0].max == 0.0f);
+    CHECK(phy.edit.total_mass == 10.0f);
+    REQUIRE(phy.edit.joint_merges.size() == 1);
+    CHECK(phy.edit.joint_merges[0].second == "Bip01 Spine");
+    REQUIRE(phy.breaks.size() == 1);
+    CHECK(phy.breaks[0].model == "gibs\\\\head");
+    CHECK(phy.breaks[0].offset[2] == 103.0f);
 }
 
 TEST_CASE("PHY rejects malformed files") {
@@ -106,6 +125,7 @@ TEST_CASE("PHY integration: every collision model in the real install parses") {
     }
     const vfs::GameFileSystem gfs(*game);
     std::size_t files = 0, solids = 0, pieces = 0, triangles = 0, stale = 0, text_issues = 0;
+    std::size_t solid_infos = 0, constraints = 0, breaks = 0, joint_merges = 0, bad_text = 0, bad_limits = 0;
     std::vector<float> errors, quantized_errors;
     for (const auto& path : gfs.list_files()) {
         if (!path.ends_with(".phy")) {
@@ -118,6 +138,21 @@ TEST_CASE("PHY integration: every collision model in the real install parses") {
         ++files;
         solids += phy.solids.size();
         text_issues += !phy.text.diagnostics.empty();
+        solid_infos += phy.solid_info.size();
+        constraints += phy.constraints.size();
+        breaks += phy.breaks.size();
+        joint_merges += phy.edit.joint_merges.size();
+        const auto solid_count = static_cast<std::int32_t>(phy.solids.size());
+        for (const auto& s : phy.solid_info) {
+            bad_text += s.index < 0 || s.index >= solid_count || s.name.empty();
+        }
+        for (const auto& c : phy.constraints) {
+            bad_text += c.parent < 0 || c.parent >= solid_count || c.child < 0 || c.child >= solid_count ||
+                        c.parent == c.child;
+            for (const auto& l : c.limits) {
+                bad_limits += l.min > l.max || l.min < -180.0f || l.max > 180.0f;
+            }
+        }
         for (const auto& s : phy.solids) {
             pieces += s.pieces.size();
             for (const auto& p : s.pieces) {
@@ -165,6 +200,13 @@ TEST_CASE("PHY integration: every collision model in the real install parses") {
                   << " triangles; " << stale << " with a checksum that differs from their model; " << text_issues
                   << " with text diagnostics");
     CHECK(files == 2854);
+    MESSAGE(solid_infos << " solid blocks, " << constraints << " ragdoll constraints, " << joint_merges
+                        << " joint merges, " << breaks << " break pieces; " << bad_limits << " inverted limits");
+    CHECK(solid_infos == 6785);
+    CHECK(constraints == 3929);
+    CHECK(breaks == 737);
+    CHECK(bad_text == 0);
+    CHECK(bad_limits == 0);
     // The axis conversion is right if a typical prop's collision bounds match its
     // model's; many hulls are deliberately simplified, so only the median counts.
     REQUIRE(!errors.empty());

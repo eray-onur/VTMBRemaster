@@ -3,6 +3,8 @@
 #include "physics_solid.hpp"
 
 #include <algorithm>
+#include <cstdlib>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 
@@ -19,6 +21,92 @@ constexpr std::size_t kMaxNodes = 1 << 20;
 
 std::array<float, 3> to_model(float x, float y, float z, float scale) {
     return {x * scale, z * scale, -y * scale};
+}
+
+std::string text_value(const KvNode& block, std::string_view key) {
+    const KvNode* n = block.find(key);
+    return n && !n->is_block ? n->value : std::string();
+}
+
+float float_value(const KvNode& block, std::string_view key, float fallback) {
+    const std::string s = text_value(block, key);
+    if (s.empty()) {
+        return fallback;
+    }
+    char* end = nullptr;
+    const float v = std::strtof(s.c_str(), &end);
+    return end == s.c_str() ? fallback : v;
+}
+
+std::array<float, 3> vector_value(const KvNode& block, std::string_view key) {
+    std::array<float, 3> v{};
+    const std::string s = text_value(block, key);
+    const char* p = s.c_str();
+    for (float& c : v) {
+        char* end = nullptr;
+        c = std::strtof(p, &end);
+        if (end == p) {
+            break;
+        }
+        p = end;
+    }
+    return v;
+}
+
+// Typed view of the text block's "solid", "ragdollconstraint", "editparams"
+// and "break" blocks (docs/formats/physics.md).
+void read_phy_text(PhyFile& phy) {
+    for (const KvNode& block : phy.text.roots) {
+        if (!block.is_block) {
+            continue;
+        }
+        if (iequals(block.key, "solid")) {
+            PhySolidInfo s;
+            s.index = static_cast<std::int32_t>(float_value(block, "index", -1.0f));
+            s.name = text_value(block, "name");
+            s.parent = text_value(block, "parent");
+            s.surface_prop = text_value(block, "surfaceprop");
+            s.origin = vector_value(block, "origin");
+            s.angles = vector_value(block, "angles");
+            s.mass = float_value(block, "mass", 0.0f);
+            s.mass_bias = float_value(block, "massbias", 1.0f);
+            s.damping = float_value(block, "damping", 0.0f);
+            s.rotation_damping = float_value(block, "rotdamping", 0.0f);
+            s.inertia = float_value(block, "inertia", 1.0f);
+            s.volume = float_value(block, "volume", 0.0f);
+            phy.solid_info.push_back(std::move(s));
+        } else if (iequals(block.key, "ragdollconstraint")) {
+            PhyRagdollConstraint c;
+            c.parent = static_cast<std::int32_t>(float_value(block, "parent", -1.0f));
+            c.child = static_cast<std::int32_t>(float_value(block, "child", -1.0f));
+            static constexpr std::string_view kAxes[] = {"x", "y", "z"};
+            for (std::size_t a = 0; a < 3; ++a) {
+                const std::string axis(kAxes[a]);
+                c.limits[a] = {float_value(block, axis + "min", 0.0f), float_value(block, axis + "max", 0.0f),
+                               float_value(block, axis + "friction", 0.0f)};
+            }
+            phy.constraints.push_back(c);
+        } else if (iequals(block.key, "editparams")) {
+            phy.edit.root_name = text_value(block, "rootname");
+            phy.edit.total_mass = float_value(block, "totalmass", 0.0f);
+            phy.edit.concave = text_value(block, "concave") == "1";
+            for (const KvNode& n : block.children) {
+                if (iequals(n.key, "jointmerge")) {
+                    const std::size_t comma = n.value.find(',');
+                    phy.edit.joint_merges.emplace_back(n.value.substr(0, comma),
+                                                       comma == std::string::npos ? std::string()
+                                                                                  : n.value.substr(comma + 1));
+                }
+            }
+        } else if (iequals(block.key, "break")) {
+            PhyBreak b;
+            b.model = text_value(block, "model");
+            b.health = float_value(block, "health", 0.0f);
+            b.fade_time = float_value(block, "fadetime", 0.0f);
+            b.offset = vector_value(block, "offset");
+            phy.breaks.push_back(std::move(b));
+        }
+    }
 }
 
 } // namespace
@@ -178,6 +266,7 @@ PhyFile parse_phy(std::span<const std::byte> data) {
         rest = rest.substr(0, nul);
     }
     phy.text = parse_keyvalues(rest);
+    read_phy_text(phy);
     return phy;
 }
 

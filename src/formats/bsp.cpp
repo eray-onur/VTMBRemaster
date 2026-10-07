@@ -797,6 +797,107 @@ std::vector<Vec3> BspFile::face_polygon(const BspFace& face) const {
     return out;
 }
 
+BspBrushHull BspFile::brush_hull(std::size_t brush) const {
+    BspBrushHull hull;
+    if (brush >= brushes.size()) {
+        return hull;
+    }
+    const BspBrush& b = brushes[brush];
+    // Bevel planes only help box traces and never cut a correct brush; some
+    // shipped bevels are wrong and would empty the hull, so they are skipped.
+    std::vector<const BspPlane*> sides;
+    for (std::int32_t s = 0; s < b.num_sides; ++s) {
+        const auto side = static_cast<std::size_t>(b.first_side + s);
+        if (side < brush_sides.size() && brush_sides[side].plane < planes.size() && brush_sides[side].bevel == 0) {
+            sides.push_back(&planes[brush_sides[side].plane]);
+        }
+    }
+    using D3 = std::array<double, 3>;
+    auto dot = [](const D3& a, const Vec3& n) { return a[0] * n[0] + a[1] * n[1] + a[2] * n[2]; };
+    constexpr double kHuge = 65536.0;
+    constexpr double kEpsilon = 0.01;
+    constexpr float kBig = static_cast<float>(kHuge);
+    hull.min = {kBig, kBig, kBig};
+    hull.max = {-kBig, -kBig, -kBig};
+    for (std::size_t i = 0; i < sides.size(); ++i) {
+        const BspPlane& p = *sides[i];
+        // A large square on the plane, wound to face outwards.
+        const D3 n{p.normal[0], p.normal[1], p.normal[2]};
+        const D3 up = std::abs(n[2]) < 0.9 ? D3{0, 0, 1} : D3{1, 0, 0};
+        D3 u{up[1] * n[2] - up[2] * n[1], up[2] * n[0] - up[0] * n[2], up[0] * n[1] - up[1] * n[0]};
+        const double ul = std::sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+        for (double& c : u) {
+            c /= ul;
+        }
+        const D3 v{n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]};
+        std::vector<D3> poly;
+        static constexpr double kCorners[4][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}}; // Counter-clockwise about n.
+        for (const auto& [su, sv] : kCorners) {
+            poly.push_back({n[0] * p.dist + (u[0] * su + v[0] * sv) * kHuge, n[1] * p.dist + (u[1] * su + v[1] * sv) * kHuge,
+                            n[2] * p.dist + (u[2] * su + v[2] * sv) * kHuge});
+        }
+        // Keep the part behind every other side.
+        for (std::size_t j = 0; j < sides.size() && poly.size() >= 3; ++j) {
+            if (j == i) {
+                continue;
+            }
+            const BspPlane& q = *sides[j];
+            if (q.normal == p.normal && q.dist == p.dist) {
+                continue; // Duplicate plane.
+            }
+            std::vector<D3> out;
+            for (std::size_t k = 0; k < poly.size(); ++k) {
+                const D3& a = poly[k];
+                const D3& c = poly[(k + 1) % poly.size()];
+                const double da = dot(a, q.normal) - q.dist;
+                const double dc = dot(c, q.normal) - q.dist;
+                if (da <= kEpsilon) {
+                    out.push_back(a);
+                }
+                if ((da < -kEpsilon && dc > kEpsilon) || (da > kEpsilon && dc < -kEpsilon)) {
+                    const double t = da / (da - dc);
+                    out.push_back({a[0] + (c[0] - a[0]) * t, a[1] + (c[1] - a[1]) * t, a[2] + (c[2] - a[2]) * t});
+                }
+            }
+            poly = std::move(out);
+        }
+        if (poly.size() < 3) {
+            continue;
+        }
+        std::vector<Vec3> face;
+        for (const D3& c : poly) {
+            face.push_back({static_cast<float>(c[0]), static_cast<float>(c[1]), static_cast<float>(c[2])});
+            for (std::size_t k = 0; k < 3; ++k) {
+                hull.min[k] = std::min(hull.min[k], face.back()[k]);
+                hull.max[k] = std::max(hull.max[k], face.back()[k]);
+            }
+        }
+        hull.faces.push_back(std::move(face));
+    }
+    return hull;
+}
+
+bool BspFile::point_in_brush(std::size_t brush, const Vec3& point, float tolerance) const {
+    if (brush >= brushes.size()) {
+        return false;
+    }
+    const BspBrush& b = brushes[brush];
+    for (std::int32_t s = 0; s < b.num_sides; ++s) {
+        const auto side = static_cast<std::size_t>(b.first_side + s);
+        if (side >= brush_sides.size() || brush_sides[side].plane >= planes.size()) {
+            return false;
+        }
+        if (brush_sides[side].bevel != 0) {
+            continue; // See brush_hull.
+        }
+        const BspPlane& p = planes[brush_sides[side].plane];
+        if (p.normal[0] * point[0] + p.normal[1] * point[1] + p.normal[2] * point[2] - p.dist > tolerance) {
+            return false;
+        }
+    }
+    return true;
+}
+
 std::size_t BspFile::leaf_at(const Vec3& point) const {
     std::int32_t node = models.empty() ? 0 : models[0].head_node;
     while (node >= 0 && static_cast<std::size_t>(node) < nodes.size()) {

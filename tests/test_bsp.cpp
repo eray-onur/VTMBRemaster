@@ -8,8 +8,10 @@
 
 #include <zlib.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <map>
 
 using namespace openbl;
 using namespace openbl::formats;
@@ -410,6 +412,124 @@ TEST_CASE("Zip archives") {
     auto bad = data;
     bad.resize(10);
     CHECK_THROWS_AS(ZipArchive{bad}, FormatError);
+}
+
+TEST_CASE("BSP brush hulls") {
+    // A 2 x 4 x 6 box from six axis planes, plus a diagonal plane cutting a corner.
+    BspFile bsp;
+    const Vec3 normals[] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+    const float dists[] = {1, 1, 2, 2, 3, 3};
+    for (std::size_t i = 0; i < 6; ++i) {
+        bsp.planes.push_back({normals[i], dists[i]});
+    }
+    const float r = std::sqrt(0.5f);
+    bsp.planes.push_back({{r, r, 0}, 2.0f * r}); // x + y <= 2
+    for (std::uint16_t i = 0; i < 7; ++i) {
+        bsp.brush_sides.push_back({i});
+    }
+    bsp.brushes.push_back({0, 7, contents::Solid});
+    const auto hull = bsp.brush_hull(0);
+    CHECK(hull.faces.size() == 7);
+    CHECK(hull.min[0] == doctest::Approx(-1.0f));
+    CHECK(hull.max[1] == doctest::Approx(2.0f));
+    CHECK(hull.max[2] == doctest::Approx(3.0f));
+    for (const auto& face : hull.faces) {
+        CHECK(face.size() >= 3);
+        for (const auto& v : face) {
+            CHECK(bsp.point_in_brush(0, v, 0.01f));
+        }
+    }
+    CHECK(bsp.point_in_brush(0, {0, 0, 0}));
+    CHECK_FALSE(bsp.point_in_brush(0, {0.9f, 1.9f, 0}));
+    CHECK(bsp.point_in_brush(0, {0.9f, 1.9f, 0}, 1.0f));
+}
+
+TEST_CASE("BSP integration: brush hulls match the compiled world collision") {
+    auto game = test::game_dir();
+    if (!game) {
+        MESSAGE("OPENBL_GAME_DIR not set; skipping");
+        return;
+    }
+    const vfs::GameFileSystem gfs(*game);
+    std::size_t solid_brushes = 0, empty_hulls = 0, collision_points = 0, covered_points = 0, disp_points = 0;
+    for (const auto& path : gfs.list_files()) {
+        if (!path.ends_with(".bsp")) {
+            continue;
+        }
+        INFO(path);
+        const auto bsp = parse_bsp(*gfs.read(path));
+        // Bucket brush bounds in 256-unit cells to find candidates quickly.
+        constexpr float kCell = 256.0f;
+        std::map<std::array<int, 3>, std::vector<std::size_t>> grid;
+        for (std::size_t b = 0; b < bsp.brushes.size(); ++b) {
+            const auto hull = bsp.brush_hull(b);
+            if ((bsp.brushes[b].contents & contents::Solid) != 0) {
+                ++solid_brushes;
+                empty_hulls += hull.faces.size() < 4;
+            }
+            if (hull.faces.empty()) {
+                continue;
+            }
+            std::array<int, 3> lo{}, hi{};
+            for (std::size_t k = 0; k < 3; ++k) {
+                lo[k] = static_cast<int>(std::floor((hull.min[k] - 1.0f) / kCell));
+                hi[k] = static_cast<int>(std::floor((hull.max[k] + 1.0f) / kCell));
+            }
+            for (int x = lo[0]; x <= hi[0]; ++x) {
+                for (int y = lo[1]; y <= hi[1]; ++y) {
+                    for (int z = lo[2]; z <= hi[2]; ++z) {
+                        grid[{x, y, z}].push_back(b);
+                    }
+                }
+            }
+        }
+        if (bsp.collision.empty() || bsp.collision[0].model != 0) {
+            continue;
+        }
+        // Displacements have collision but no brushes: bucket their vertices too.
+        std::map<std::array<int, 3>, std::vector<Vec3>> disp_grid;
+        for (std::size_t f = 0; f < bsp.faces.size(); ++f) {
+            if (bsp.faces[f].dispinfo < 0) {
+                continue;
+            }
+            for (const auto& v : build_face_mesh(bsp, f).positions) {
+                disp_grid[{static_cast<int>(std::floor(v[0] / kCell)), static_cast<int>(std::floor(v[1] / kCell)),
+                           static_cast<int>(std::floor(v[2] / kCell))}]
+                    .push_back(v);
+            }
+        }
+        // Every vertex of the world's physics hulls should lie on or in a brush.
+        for (const auto& s : bsp.collision[0].solids) {
+            for (const auto& p : s.pieces) {
+                for (const auto& v : p.vertices) {
+                    ++collision_points;
+                    const std::array<int, 3> cell{static_cast<int>(std::floor(v[0] / kCell)),
+                                                  static_cast<int>(std::floor(v[1] / kCell)),
+                                                  static_cast<int>(std::floor(v[2] / kCell))};
+                    const auto it = grid.find(cell);
+                    const bool in_brush =
+                        it != grid.end() && std::any_of(it->second.begin(), it->second.end(), [&](std::size_t b) {
+                            return bsp.point_in_brush(b, v, 1.0f);
+                        });
+                    covered_points += in_brush;
+                    if (!in_brush) {
+                        const auto d = disp_grid.find(cell);
+                        disp_points += d != disp_grid.end() &&
+                                       std::any_of(d->second.begin(), d->second.end(), [&](const Vec3& w) {
+                                           return std::abs(w[0] - v[0]) < 1.0f && std::abs(w[1] - v[1]) < 1.0f &&
+                                                  std::abs(w[2] - v[2]) < 1.0f;
+                                       });
+                    }
+                }
+            }
+        }
+    }
+    MESSAGE(solid_brushes << " solid brushes (" << empty_hulls << " without a closed hull); " << covered_points
+                          << " of " << collision_points << " world collision vertices on or in a brush, "
+                          << disp_points << " more on displacements");
+    CHECK(empty_hulls == 0);
+    // Brushes and displacements together account for the compiled collision.
+    CHECK(covered_points + disp_points > collision_points * 9999 / 10000);
 }
 
 TEST_CASE("BSP integration: every map in the real install loads") {

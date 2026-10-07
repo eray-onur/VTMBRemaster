@@ -167,6 +167,20 @@ All 193,957 leafs of the Steam release have valid ranges, boxes and areas.
 
 `dplt`: `i32` count, then 5-byte `{ColorRGBExp32, u8 style}`. 134,490 detail props in all, mostly trash and grass models.
 
+## Brush collision
+
+`BspFile::brush_hull(brush)` turns a brush into a convex polyhedron: one polygon per side plane, clipped by all the other sides. `point_in_brush` tests a point against the same planes.
+
+**Bevel sides are left out.** The compiler adds bevel planes to speed up box traces, and on a correct brush they never cut the solid. In 9 brushes in the release, though, some bevels contradict the real sides by 3 to 254 units and would leave the hull empty. Examples: `la_hub_1` brush 7215, and five brushes in `la_abandoned_building_1`. Without bevels, all 121,350 solid brushes give closed hulls.
+
+**Check against the compiled collision.** Of the 1,496,635 vertices in the world's physics hulls (lump 29, model 0):
+
+- 1,232,961 lie on or inside a brush, within 1 unit;
+- 263,652 lie on displacement surfaces;
+- 22 are unexplained.
+
+So brushes plus displacements reproduce the world's collision. The test is in `tests/test_bsp.cpp`.
+
 ## Collision (lump 29)
 
 A sequence of blocks `{i32 model, i32 data size, i32 text size, i32 solid count}`, followed by that many solids (`i32` size + data, the same format as `.phy` files; see [physics.md](physics.md)), then KeyValues text (`solid`, `staticsolid`, `fluid`, `materialtable`). A model of −1 ends the list. Every map has collision for model 0 (the world). Most solids use the `IVPS` layout. 165 large world solids use `MOPP`: their pieces are pairs of triangles stored back to back up to a shared point pool, and the tree offset points at compiled MOPP code, which is not needed to read the triangles. In all: 6,237 collision models, 1.93 million triangles.

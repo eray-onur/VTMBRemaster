@@ -299,6 +299,12 @@ struct BspVisibility {
 
 using BspEntity = std::map<std::string, std::string>;
 
+// Collision geometry of one brush; see BspFile::brush_hull.
+struct BspBrushHull {
+    std::vector<std::vector<Vec3>> faces; // Convex polygons, wound consistently per face.
+    Vec3 min{}, max{};
+};
+
 struct BspFile {
     std::int32_t version = 0;
     std::int32_t map_revision = 0;
@@ -346,6 +352,12 @@ struct BspFile {
 
     // Vertex positions of a face's polygon, in winding order.
     std::vector<Vec3> face_polygon(const BspFace& face) const;
+
+    // The convex solid a brush encloses (points behind all of its non-bevel
+    // side planes), as one polygon per bounding side. Degenerate brushes give no faces.
+    BspBrushHull brush_hull(std::size_t brush) const;
+    // True if `point` is inside the brush or within `tolerance` units of it.
+    bool point_in_brush(std::size_t brush, const Vec3& point, float tolerance = 0.0f) const;
 
     // Index of the world leaf containing `point`.
     std::size_t leaf_at(const Vec3& point) const;
