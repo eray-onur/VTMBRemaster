@@ -110,7 +110,9 @@ fs::path game_dir_arg(const std::vector<std::string_view>& args, std::size_t ind
 }
 
 bool write_file(const fs::path& file, const std::vector<std::byte>& data) {
-    fs::create_directories(file.parent_path());
+    if (file.has_parent_path()) { // A bare file name has none, and create_directories("") throws.
+        fs::create_directories(file.parent_path());
+    }
     std::ofstream out(file, std::ios::binary | std::ios::trunc);
     out.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
     return static_cast<bool>(out);
