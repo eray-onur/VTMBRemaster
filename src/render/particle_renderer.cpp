@@ -64,8 +64,9 @@ ParticleRenderer::ParticleRenderer(rhi::Device& device, const AssetSource& asset
         Emitter em;
         em.definition = value(e, "particle_definition");
         std::istringstream(value(e, "origin")) >> em.origin[0] >> em.origin[1] >> em.origin[2];
+        std::istringstream(value(e, "angles")) >> em.angles[0] >> em.angles[1] >> em.angles[2];
         em.seed = seed++;
-        em.system = std::make_unique<particles::ParticleSystem>(library_, em.definition, em.origin, em.seed);
+        em.system = std::make_unique<particles::ParticleSystem>(library_, em.definition, em.origin, em.seed, em.angles);
         if (!em.system->valid()) {
             ++stats_.missing_definitions;
             continue;
@@ -135,7 +136,7 @@ const rhi::Texture* ParticleRenderer::sprite(const std::string& name) {
 void ParticleRenderer::update(float time) {
     if (time < time_) {
         for (Emitter& em : emitters_) {
-            em.system = std::make_unique<particles::ParticleSystem>(library_, em.definition, em.origin, em.seed);
+            em.system = std::make_unique<particles::ParticleSystem>(library_, em.definition, em.origin, em.seed, em.angles);
         }
         time_ = 0;
     }

@@ -53,7 +53,10 @@ struct ParticleQuad {
 // One running effect (e.g. an env_particle).
 class ParticleSystem {
 public:
-    ParticleSystem(ParticleLibrary& library, std::string_view definition, const Vec3& origin, std::uint32_t seed = 1);
+    // `angles`: the system's pitch, yaw and roll (Source order, degrees); its
+    // x/y/z axes rotate with it, while "elevation" is always world up.
+    ParticleSystem(ParticleLibrary& library, std::string_view definition, const Vec3& origin, std::uint32_t seed = 1,
+                   const Vec3& angles = {});
 
     bool valid() const { return root_ != nullptr; }
     // Advances by `dt` seconds (internally in steps of at most 1/30 s).
@@ -76,8 +79,13 @@ private:
         std::uint64_t parent_id = 0; // 0: none (the root).
         std::uint64_t id = 0;
         float age = 0;        // Frames.
-        float lifetime = 0;   // Frames; infinite for looping roots.
+        float lifetime = 0;   // Frames; infinite for looping particles.
+        float key_frames = 30; // `frames`: the span keyframes are spread over (and repeat over when looping).
+        bool loop = false;
         float fps = 30;
+        // Set by the spawn block that emitted this particle.
+        std::array<float, 3> rgb_scale{1, 1, 1};
+        float color_scale = 1, mask_scale = 1, size_scale = 1, width_scale = 1, height_scale = 1, rotation_add = 0;
         float pick = 0.5f;    // One random draw per particle for curve ranges.
         Vec3 anchor{};        // Spawn position (plus inherited parent motion).
         Vec3 offset{};        // Accumulated Cartesian motion.
@@ -90,11 +98,15 @@ private:
 
     void spawn(const formats::ParticleBlock& def, const Particle* parent, const formats::ParticleBlock* spawn_block);
     float curve(const Particle& p, std::string_view key, float fallback) const;
+    // A spawn block's value at its parent's current age.
+    float spawn_value(const Particle& parent, const formats::ParticleBlock& block, std::string_view key, float fallback) const;
+    Vec3 to_world(const Vec3& system) const; // System axes to world.
     void step(float dt);
 
     ParticleLibrary& library_;
     const formats::ParticleBlock* root_ = nullptr;
     Vec3 origin_{};
+    std::array<Vec3, 3> axes_{{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}}; // System x, y, z in world space.
     std::vector<Particle> particles_;
     std::unordered_map<std::uint64_t, std::size_t> index_; // id -> index, rebuilt each step.
     std::uint64_t next_id_ = 1;

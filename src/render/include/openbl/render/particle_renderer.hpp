@@ -44,6 +44,7 @@ private:
     struct Emitter {
         std::string definition;
         particles::Vec3 origin{};
+        particles::Vec3 angles{};
         std::uint32_t seed = 1;
         std::unique_ptr<particles::ParticleSystem> system;
     };
