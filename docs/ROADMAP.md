@@ -41,7 +41,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Key binding lists and `liblist.gam`
 - [ ] Special text formats: `scripts/titles.txt`, `sentences.txt`, `dsp_presets.txt`, `credits.txt`, `experience_table.txt`
 - [ ] Console scripts: `.cfg`, `valve.rc`, `settings.scr` (with the console in Phase 2)
-- [ ] Save games (`.sav`)
+- [x] Save games: `.sav` container and `.HL1` map state (self-describing records, entity table, globals, event queue, physics headers, Python pickles)
+- [ ] Save games: `.HL2`/`.HL3`, a restricted pickle reader, entity trailing data, writing saves
 - [ ] Python bytecode (`.pyc`) in archives; identify the embedded interpreter's version
 
 ## Phase 1: rendering and map viewer
