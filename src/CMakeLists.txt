@@ -1,5 +1,6 @@
 add_subdirectory(formats)
 add_subdirectory(vfs)
+add_subdirectory(anim)
 if(OPENBL_WITH_FFMPEG)
     add_subdirectory(media)
 endif()

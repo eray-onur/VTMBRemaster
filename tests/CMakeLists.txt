@@ -10,6 +10,7 @@ FetchContent_MakeAvailable(doctest)
 add_executable(openbl_tests
     main.cpp
     test_ain.cpp
+    test_animation.cpp
     test_bik.cpp
     test_bsp.cpp
     test_dlg.cpp
@@ -35,7 +36,7 @@ add_executable(openbl_tests
     test_vmt_proxies.cpp
     test_vtf.cpp
     test_wav.cpp)
-target_link_libraries(openbl_tests PRIVATE openbl::formats openbl::vfs doctest::doctest ZLIB::ZLIB openbl_options)
+target_link_libraries(openbl_tests PRIVATE openbl::formats openbl::vfs openbl::anim doctest::doctest ZLIB::ZLIB openbl_options)
 # Include real std headers instead of doctest's forward declarations, which newer MSVC rejects.
 target_compile_definitions(openbl_tests PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
 if(OPENBL_WITH_FFMPEG)

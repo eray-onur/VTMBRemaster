@@ -57,27 +57,6 @@ formats::Vec3 parse_vec3(const formats::BspEntity& e, const char* key) {
     return v;
 }
 
-formats::MdlBonePose blend(const formats::MdlBonePose& a, const formats::MdlBonePose& b, float t) {
-    formats::MdlBonePose out;
-    for (std::size_t k = 0; k < 3; ++k) {
-        out.position[k] = a.position[k] + (b.position[k] - a.position[k]) * t;
-    }
-    // Normalized lerp along the shorter arc.
-    const float d = a.rotation[0] * b.rotation[0] + a.rotation[1] * b.rotation[1] + a.rotation[2] * b.rotation[2] +
-                    a.rotation[3] * b.rotation[3];
-    const float sign = d < 0 ? -1.0f : 1.0f;
-    float len = 0;
-    for (std::size_t k = 0; k < 4; ++k) {
-        out.rotation[k] = a.rotation[k] + (sign * b.rotation[k] - a.rotation[k]) * t;
-        len += out.rotation[k] * out.rotation[k];
-    }
-    len = std::sqrt(len);
-    for (float& c : out.rotation) {
-        c = len > 0 ? c / len : c;
-    }
-    return out;
-}
-
 } // namespace
 
 std::shared_ptr<const formats::MdlFile> ModelLibrary::load(const std::string& path) {
@@ -97,7 +76,7 @@ std::shared_ptr<const formats::MdlFile> ModelLibrary::load(const std::string& pa
 }
 
 CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materials, const AssetSource& assets,
-                                     const formats::BspFile& bsp)
+                                     const formats::BspFile& bsp, const CharacterOptions& options)
     : device_(device), materials_(materials), assets_(assets), library_(assets) {
     rhi::PipelineDesc pd;
     pd.vertex.spirv = openbl_skinned_vs;
@@ -160,34 +139,36 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
         }
         inst.lighting = lighting.sample({origin[0], origin[1], origin[2] + kLightingHeight}, rotation);
 
-        // Idle: the first ACT_IDLE sequence, else any sequence named like an idle.
-        auto found = library_.find_sequence(path, [](const formats::MdlSequence& s) {
-            return formats::iequals(s.activity_name, "ACT_IDLE");
-        });
+        // The requested sequence, else the idle: the first ACT_IDLE sequence,
+        // else any sequence named like an idle.
+        std::optional<ModelLibrary::SequenceRef> found;
+        if (!options.sequence.empty()) {
+            found = library_.find_sequence(path, [&](const formats::MdlSequence& s) {
+                return formats::iequals(s.label, options.sequence) || formats::iequals(s.activity_name, options.sequence);
+            });
+        }
+        if (!found) {
+            found = library_.find_sequence(path, [](const formats::MdlSequence& s) {
+                return formats::iequals(s.activity_name, "ACT_IDLE");
+            });
+        }
         if (!found) {
             found = library_.find_sequence(path, [](const formats::MdlSequence& s) {
                 std::string label = formats::normalize_game_path(s.label);
                 return label.find("idle") != std::string::npos;
             });
         }
+        seed = seed * 1664525u + 1013904223u;
         if (found) {
-            inst.anim_file = found->file;
-            inst.animation = static_cast<std::size_t>(found->file->sequences[found->sequence].animation);
-            const auto& bones = model->mdl->bones;
-            inst.bone_map.assign(bones.size(), -1);
-            for (std::size_t b = 0; b < bones.size(); ++b) {
-                for (std::size_t a = 0; a < inst.anim_file->bones.size(); ++a) {
-                    if (formats::iequals(inst.anim_file->bones[a].name, bones[b].name)) {
-                        inst.bone_map[b] = static_cast<int>(a);
-                        break;
-                    }
-                }
+            inst.player.emplace(model->mdl->bones);
+            for (const auto& [name, value] : options.pose_parameters) {
+                inst.player->set_pose_parameter(name, value);
             }
+            // Start part-way through so crowds do not move in lockstep.
+            inst.player->play(found->file, found->sequence, 0.0f, static_cast<float>(seed % 1000) / 1000.0f);
         } else {
             ++stats_.without_sequence;
         }
-        seed = seed * 1664525u + 1013904223u;
-        inst.phase = static_cast<float>(seed % 1000) / 100.0f;
         inst.skinning = formats::mdl_skinning_matrices(
             model->mdl->bones, formats::mdl_world_transforms(model->mdl->bones, formats::mdl_bind_pose(model->mdl->bones)));
         instances_.push_back(std::move(inst));
@@ -305,32 +286,15 @@ const CharacterRenderer::Model* CharacterRenderer::load_model(const std::string&
 
 void CharacterRenderer::update(float time) {
     for (Instance& inst : instances_) {
-        if (!inst.anim_file) {
+        if (!inst.player) {
             continue;
         }
-        const auto& anim = inst.anim_file->animations[inst.animation];
         const auto& bones = inst.model->mdl->bones;
-        if (anim.frame_count == 0) {
-            continue;
-        }
-        const float frame = std::fmod((time + inst.phase) * anim.fps, static_cast<float>(anim.frame_count));
-        const auto f0 = static_cast<std::uint32_t>(frame);
-        const std::uint32_t f1 = (f0 + 1) % anim.frame_count;
-        const float t = frame - static_cast<float>(f0);
         try {
-            const auto a = inst.anim_file->sample_animation(inst.animation, f0);
-            const auto b = inst.anim_file->sample_animation(inst.animation, f1);
-            auto pose = formats::mdl_bind_pose(bones);
-            for (std::size_t i = 0; i < bones.size(); ++i) {
-                if (inst.bone_map[i] >= 0) {
-                    const auto k = static_cast<std::size_t>(inst.bone_map[i]);
-                    pose[i] = blend(a[k], b[k], t);
-                }
-            }
-            inst.skinning = formats::mdl_skinning_matrices(bones, formats::mdl_world_transforms(bones, pose));
+            inst.skinning = formats::mdl_skinning_matrices(bones, formats::mdl_world_transforms(bones, inst.player->pose(time)));
         } catch (const formats::FormatError& e) {
             std::fprintf(stderr, "animation: %s\n", e.what());
-            inst.anim_file.reset();
+            inst.player.reset();
         }
     }
 }

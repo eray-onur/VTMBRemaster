@@ -4,6 +4,7 @@
 // models playing a looping sequence, with animations found through the
 // model's include chain (e.g. models/character/shared/male/*.mdl).
 
+#include "openbl/anim/animation.hpp"
 #include "openbl/formats/bsp.hpp"
 #include "openbl/formats/mdl.hpp"
 #include "openbl/render/asset_source.hpp"
@@ -49,6 +50,14 @@ struct CharacterStats {
     std::size_t without_sequence = 0; // Shown in their bind pose.
 };
 
+struct CharacterOptions {
+    // Sequence every character plays, by label or activity (case-insensitive);
+    // empty: the idle (first ACT_IDLE sequence, else one named like an idle).
+    std::string sequence;
+    // Pose parameter values, e.g. {"move_yaw", 90} (others stay 0).
+    std::vector<std::pair<std::string, float>> pose_parameters;
+};
+
 struct CharacterDrawSettings {
     float light_scale = 1.0f; // As for the world (docs/RENDERING.md).
     bool fullbright = false;
@@ -59,7 +68,7 @@ struct CharacterDrawSettings {
 class CharacterRenderer {
 public:
     CharacterRenderer(rhi::Device& device, MaterialSystem& materials, const AssetSource& assets,
-                      const formats::BspFile& bsp);
+                      const formats::BspFile& bsp, const CharacterOptions& options = {});
     ~CharacterRenderer();
 
     // Advances every character's animation to `time` (seconds) and computes its skinning matrices.
@@ -90,12 +99,8 @@ private:
         std::size_t skin = 0;
         std::array<float, 16> transform{};
         AmbientCube lighting;
-        // Playing sequence; null file = bind pose.
-        std::shared_ptr<const formats::MdlFile> anim_file;
-        std::size_t animation = 0;
-        std::vector<int> bone_map; // Model bone -> animation file bone, or -1.
-        float phase = 0;           // Seconds, so crowds do not move in lockstep.
-        std::vector<formats::MdlMatrix> skinning; // Updated by update().
+        std::optional<anim::AnimationPlayer> player; // Empty: bind pose.
+        std::vector<formats::MdlMatrix> skinning;    // Updated by update().
     };
 
     const Model* load_model(const std::string& path);

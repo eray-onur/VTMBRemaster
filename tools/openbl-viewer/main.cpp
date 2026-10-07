@@ -46,7 +46,7 @@ using namespace openbl;
 namespace {
 
 constexpr const char* kUsage =
-    "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--show TARGETNAME]... [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
+    "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--show TARGETNAME]... [--npc-sequence NAME] [--pose NAME=VALUE]... [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
     "                     [--light-scale F] [--fullbright] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
     "                     [--validation] [--no-vsync]";
 
@@ -54,6 +54,7 @@ struct Options {
     std::optional<std::filesystem::path> game_dir;
     std::vector<std::string> mods; // Mod folders mounted over the game, e.g. Unofficial_Patch.
     std::vector<std::string> shown; // Targetnames of StartHidden brush entities to draw anyway.
+    render::CharacterOptions characters_options; // --npc-sequence, --pose.
     std::optional<std::string> map;
     std::optional<glm::vec3> position;
     std::optional<glm::vec2> angles; // pitch, yaw
@@ -97,6 +98,15 @@ Options parse_args(int argc, char** argv) {
             o.mods.push_back(next());
         } else if (a == "--show") {
             o.shown.push_back(next());
+        } else if (a == "--npc-sequence") {
+            o.characters_options.sequence = next();
+        } else if (a == "--pose") {
+            const std::string spec = next();
+            const auto eq = spec.find('=');
+            if (eq == std::string::npos) {
+                throw std::runtime_error("--pose expects NAME=VALUE");
+            }
+            o.characters_options.pose_parameters.emplace_back(spec.substr(0, eq), std::stof(spec.substr(eq + 1)));
         } else if (a == "--map") {
             o.map = next();
         } else if (a == "--pos") {
@@ -268,7 +278,7 @@ public:
             props_ = std::make_unique<render::PropRenderer>(device, *materials_, *assets_, bsp_);
         }
         if (options.characters) {
-            characters_ = std::make_unique<render::CharacterRenderer>(device, *materials_, *assets_, bsp_);
+            characters_ = std::make_unique<render::CharacterRenderer>(device, *materials_, *assets_, bsp_, options.characters_options);
             const auto& c = characters_->stats();
             std::cout << "characters: " << c.instances << " instances of " << c.models << " models ("
                       << c.missing_models << " missing), " << c.without_sequence << " without an idle sequence\n";
