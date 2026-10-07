@@ -9,7 +9,7 @@ struct PushConstants {
     uint cube_c;
     float alpha_ref;
     uint flags;
-    float padding;
+    uint params_index; // Row of the material params table.
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -17,6 +17,14 @@ static const uint kAlphaTest = 1;
 static const uint kUnlit = 4;
 static const uint kSelfIllum = 8;
 static const uint kTranslucent = 16;
+
+// Material params table: 4 elements per row (texture transform u and v rows,
+// colour and alpha, self-illumination tint).
+[[vk::binding(0, 1)]] StructuredBuffer<float4> material_params;
+
+float4 material_param(uint k) {
+    return material_params[pc.params_index * 4 + k];
+}
 
 struct VSInput {
     [[vk::location(0)]] float3 position : POSITION;
@@ -44,7 +52,9 @@ float3 cube_color(uint face) {
 VSOutput vs_main(VSInput input) {
     VSOutput output;
     output.position = mul(pc.mvp, float4(input.position, 1.0));
-    output.uv = input.uv;
+    const float4 tu = material_param(0);
+    const float4 tv = material_param(1);
+    output.uv = float2(dot(tu.xyz, float3(input.uv, 1.0)), dot(tv.xyz, float3(input.uv, 1.0)));
     const float3 n = normalize(input.normal);
     const float3 n2 = n * n;
     output.light = n2.x * cube_color(n.x >= 0 ? 0 : 1) +
@@ -61,9 +71,10 @@ float4 ps_main(VSOutput input) : SV_Target {
     if (pc.flags & kAlphaTest) {
         clip(base.a - pc.alpha_ref);
     }
-    float3 color = (pc.flags & kUnlit) ? base.rgb : base.rgb * input.light;
+    const float4 tint = material_param(2); // $color, $alpha.
+    float3 color = base.rgb * tint.rgb * ((pc.flags & kUnlit) ? float3(1, 1, 1) : input.light);
     if (pc.flags & kSelfIllum) {
-        color = lerp(color, base.rgb, base.a);
+        color = lerp(color, base.rgb * material_param(3).rgb, base.a);
     }
-    return float4(color, (pc.flags & kTranslucent) ? base.a : 1.0);
+    return float4(color, (pc.flags & kTranslucent) ? base.a * tint.a : 1.0);
 }

@@ -1,5 +1,8 @@
 #pragma once
 
+#include "openbl/formats/vmt.hpp"
+#include "openbl/formats/vmt_proxies.hpp"
+#include "openbl/formats/vtf.hpp"
 #include "openbl/render/asset_source.hpp"
 #include "openbl/rhi/rhi.hpp"
 
@@ -9,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 namespace openbl::render {
 
@@ -36,7 +40,28 @@ struct RenderMaterial {
     const rhi::Texture* normal_map = nullptr; // Linear; a flat normal if missing.
     std::array<float, 3> fog_color{0.05f, 0.06f, 0.06f};
     std::array<float, 3> reflect_tint{1.0f, 1.0f, 1.0f};
+
+    // Animation from material proxies, updated by MaterialSystem::update.
+    // Frames of an animated base texture or water normal map (empty if not
+    // animated; frame 0 is also in `base` / `normal_map`).
+    std::vector<const rhi::Texture*> base_frames;
+    std::vector<const rhi::Texture*> normal_frames;
+    std::uint32_t base_frame = 0;
+    std::uint32_t normal_frame = 0;
+    // Row of MaterialSystem::params() with the texture transform and tints;
+    // 0 for materials with the defaults.
+    std::uint32_t params_index = 0;
 };
+
+// Per-material values the shaders read from a table, one row per material
+// that needs them (row 0: defaults). Colours are linear.
+struct MaterialParams {
+    std::array<float, 4> transform_u{1, 0, 0, 0}; // $basetexturetransform rows: u' = x u + y v + z.
+    std::array<float, 4> transform_v{0, 1, 0, 0};
+    std::array<float, 4> color{1, 1, 1, 1};       // $color, $alpha.
+    std::array<float, 4> self_illum_tint{1, 1, 1, 0};
+};
+static_assert(sizeof(MaterialParams) == 64);
 
 // Parses a Source colour parameter: "{r g b}" in 0-255 or "[r g b]" in 0-1.
 std::optional<std::array<float, 3>> parse_vmt_color(std::string_view value);
@@ -52,17 +77,39 @@ public:
     // Colour textures are sRGB; data textures (normal maps) must pass srgb = false.
     const rhi::Texture* texture(const std::string& path, bool srgb = true);
 
+    // Every frame of an animated texture (one entry if not animated; empty if missing).
+    std::vector<const rhi::Texture*> texture_frames(const std::string& path, bool srgb = true);
+
     std::size_t missing_textures() const { return missing_textures_; }
 
+    // Runs the material proxies of every loaded material and refreshes their
+    // frames and params() rows.
+    void update(const formats::ProxyContext& context);
+    const std::vector<MaterialParams>& params() const { return params_; }
+    // Loaded materials whose proxies run, and how many of them animate a texture.
+    std::size_t proxy_materials() const { return dynamic_.size(); }
+    std::size_t animated_materials() const;
+
 private:
-    RenderMaterial load(const std::string& name);
+    struct Dynamic {
+        RenderMaterial* material;
+        formats::MaterialProxies proxies;
+        std::string base_frame_var, normal_frame_var; // Empty if not animated.
+    };
+
+    RenderMaterial load(const std::string& name, std::optional<formats::Material>& source);
+    void register_dynamic(RenderMaterial& material, const formats::Material& source);
+    std::optional<formats::VtfTexture> read_vtf(const std::string& path);
 
     rhi::Device& device_;
     const AssetSource& assets_;
     std::unique_ptr<rhi::Texture> checker_;
     std::unique_ptr<rhi::Texture> flat_normal_;
     std::unordered_map<std::string, std::unique_ptr<rhi::Texture>> textures_; // Null entries cache misses.
+    std::unordered_map<std::string, std::vector<const rhi::Texture*>> frames_;
     std::unordered_map<std::string, RenderMaterial> materials_;
+    std::vector<Dynamic> dynamic_;
+    std::vector<MaterialParams> params_{MaterialParams{}};
     std::size_t missing_textures_ = 0;
 };
 

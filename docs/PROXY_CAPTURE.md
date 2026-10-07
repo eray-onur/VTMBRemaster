@@ -114,6 +114,6 @@ Spectrum resolution is 1/clip length (0.05 Hz for 20 s, 0.067 Hz for 15 s).
 
 ## What OpenBL needs for the comparison
 
-- **Viewer time and frame sequences:** `--time T` to start the clock, plus a frame-sequence screenshot mode, so proxies can be captured at matching times and in matching sequences.
-- **Proxy implementations** in the material system. Today proxies are catalogued but not run.
+- **Viewer time and frame sequences:** `--time T` fixes the clock (done); a frame-sequence screenshot mode is still needed to measure timings from OpenBL the same way as from the clips.
+- **Proxy implementations** in the material system: done for the visible outputs ([formats/proxies.md](formats/proxies.md#in-openbl)); second-layer transforms, environment-map tints and the engine inputs (player distance, wetness) are still missing.
 - **Image comparison:** `openbl-cli image compare` per frame, plus a timing comparison for animated values. Sine period and scroll speed are measured from frame sequences rather than single images.

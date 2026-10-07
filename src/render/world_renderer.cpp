@@ -41,7 +41,7 @@ struct PushConstants {
     float alpha_ref;
     float light_scale;
     std::uint32_t flags;
-    float padding;
+    std::uint32_t params_index;
 };
 static_assert(sizeof(PushConstants) == 80);
 
@@ -309,13 +309,22 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
     sampler_ = device.create_sampler({});
     for (auto* list : {&opaque_, &translucent_}) {
         for (Batch& batch : *list) {
-            const rhi::Texture* textures[] = {batch.material->base, batch.material->base2, lightmap_.get()};
+            const RenderMaterial& m = *batch.material;
+            const rhi::Texture* textures[] = {m.base, m.base2, lightmap_.get()};
             batch.bind_group = device.create_bind_group(*pipelines_[0][0], *sampler_, textures);
+            for (const rhi::Texture* frame : m.base_frames) {
+                const rhi::Texture* frame_textures[] = {frame, m.blend_layers ? m.base2 : frame, lightmap_.get()};
+                batch.frame_bind_groups.push_back(device.create_bind_group(*pipelines_[0][0], *sampler_, frame_textures));
+            }
         }
     }
     for (Batch& batch : water_) {
         const rhi::Texture* textures[] = {batch.material->normal_map};
         batch.bind_group = device.create_bind_group(*water_pipeline_, *sampler_, textures);
+        for (const rhi::Texture* frame : batch.material->normal_frames) {
+            const rhi::Texture* frame_textures[] = {frame};
+            batch.frame_bind_groups.push_back(device.create_bind_group(*water_pipeline_, *sampler_, frame_textures));
+        }
     }
     rhi::SamplerDesc clamped;
     clamped.address = rhi::AddressMode::Clamp;
@@ -327,6 +336,14 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
 }
 
 WorldRenderer::~WorldRenderer() = default;
+
+const rhi::BindGroup& WorldRenderer::Batch::current_bind_group() const {
+    if (!frame_bind_groups.empty()) {
+        const std::uint32_t frame = material->water ? material->normal_frame : material->base_frame;
+        return *frame_bind_groups[frame % frame_bind_groups.size()];
+    }
+    return *bind_group;
+}
 
 void WorldRenderer::build_lightmap_atlas(const BspFile& bsp, std::vector<std::array<float, 2>>& offsets) {
     offsets.assign(bsp.faces.size(), {0, 0});
@@ -417,20 +434,31 @@ void WorldRenderer::draw_batches(rhi::CommandList& cmd, const std::vector<Batch>
     if (!settings.light_styles) {
         std::fill(values.begin() + 1, values.end(), 0.0f);
     }
-    std::copy(values.begin(), values.end(), style_values_.begin());
+    // Light styles, then as many material params rows as fit in the shader data.
+    constexpr std::size_t kStyleFloats = 4 * 16;
+    constexpr std::size_t kRowFloats = sizeof(MaterialParams) / sizeof(float);
+    const std::size_t rows = std::min<std::size_t>(settings.material_params ? settings.material_params->size() : 1,
+                                                   (rhi::kMaxShaderDataSize / sizeof(float) - kStyleFloats) / kRowFloats);
+    shader_data_.assign(kStyleFloats + std::max<std::size_t>(rows, 1) * kRowFloats, 0.0f);
+    std::copy(values.begin(), values.end(), shader_data_.begin());
+    for (std::size_t r = 0; r < std::max<std::size_t>(rows, 1); ++r) {
+        const MaterialParams p = settings.material_params && r < rows ? (*settings.material_params)[r] : MaterialParams{};
+        std::memcpy(shader_data_.data() + kStyleFloats + r * kRowFloats, &p, sizeof(p));
+    }
     for (const Batch& batch : batches) {
         const RenderMaterial& m = *batch.material;
         const rhi::Pipeline& pipeline = batch.decal ? *decal_pipelines_[m.modulate ? 1 : 0] : pipeline_for(m);
         if (&pipeline != bound) {
             cmd.set_pipeline(pipeline);
-            cmd.set_shader_data(style_values_.data(), sizeof(style_values_));
+            cmd.set_shader_data(shader_data_.data(), shader_data_.size() * sizeof(float));
             bound = &pipeline;
         }
         pc.alpha_ref = m.alpha_ref;
         pc.flags = (m.alpha_test ? kAlphaTest : 0) | (m.blend_layers ? kBlendLayers : 0) |
                    ((m.unlit || settings.fullbright) ? kUnlit : 0) | (m.self_illum ? kSelfIllum : 0) |
                    ((m.translucent || batch.decal) ? kTranslucent : 0) | ((batch.decal && m.modulate) ? kModulate : 0);
-        cmd.set_bind_group(*batch.bind_group);
+        pc.params_index = m.params_index < std::max<std::size_t>(rows, 1) ? m.params_index : 0;
+        cmd.set_bind_group(batch.current_bind_group());
         cmd.push_constants(&pc, sizeof(pc));
         cmd.draw_indexed(batch.index_count, batch.first_index);
     }
@@ -485,7 +513,7 @@ void WorldRenderer::draw_water(rhi::CommandList& cmd, const std::array<float, 16
             pc.reflect_tint[k] = m.reflect_tint[k];
         }
         pc.fog_color[3] = kWaterOpacity;
-        cmd.set_bind_group(*batch.bind_group);
+        cmd.set_bind_group(batch.current_bind_group());
         cmd.push_constants(&pc, sizeof(pc));
         cmd.draw_indexed(batch.index_count, batch.first_index);
     }

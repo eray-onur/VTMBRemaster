@@ -32,6 +32,7 @@ add_executable(openbl_tests
     test_vcd.cpp
     test_vdata.cpp
     test_vmt.cpp
+    test_vmt_proxies.cpp
     test_vtf.cpp
     test_wav.cpp)
 target_link_libraries(openbl_tests PRIVATE openbl::formats openbl::vfs doctest::doctest ZLIB::ZLIB openbl_options)

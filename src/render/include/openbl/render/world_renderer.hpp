@@ -39,6 +39,8 @@ struct WorldDrawSettings {
     std::array<float, 3> camera_position{}; // For water.
     float time = 0.0f;                      // Seconds; animates water and light styles.
     bool light_styles = true;               // false: lightmap style 0 only (debugging).
+    // Material params table (MaterialSystem::params()); null: defaults only.
+    const std::vector<MaterialParams>* material_params = nullptr;
 };
 
 class WorldRenderer {
@@ -62,7 +64,11 @@ private:
         std::uint32_t first_index = 0;
         std::uint32_t index_count = 0;
         std::unique_ptr<rhi::BindGroup> bind_group;
+        // One per frame of an animated texture (base, or the water normal map).
+        std::vector<std::unique_ptr<rhi::BindGroup>> frame_bind_groups;
         bool decal = false;
+
+        const rhi::BindGroup& current_bind_group() const;
     };
 
     void build_lightmap_atlas(const formats::BspFile& bsp, std::vector<std::array<float, 2>>& face_offsets);
@@ -89,7 +95,8 @@ private:
     std::unique_ptr<rhi::Sampler> decal_sampler_;                    // Clamped, so edges do not wrap.
     std::array<float, 2> white_luxel_{}; // Lightmap coordinates used by faces without lightmaps.
     LightStyles styles_;
-    std::array<float, 4 * 16> style_values_{}; // Current style brightness, uploaded as shader data.
+    // Shader data: style brightness (16 float4), then the material params table.
+    std::vector<float> shader_data_;
 };
 
 } // namespace openbl::render

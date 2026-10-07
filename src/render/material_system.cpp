@@ -71,6 +71,23 @@ MaterialSystem::MaterialSystem(rhi::Device& device, const AssetSource& assets)
 
 MaterialSystem::~MaterialSystem() = default;
 
+std::optional<formats::VtfTexture> MaterialSystem::read_vtf(const std::string& path) {
+    try {
+        if (auto tth = assets_.read(path + ".tth")) {
+            const auto ttz = assets_.read(path + ".ttz");
+            auto assembled =
+                formats::assemble_vtf(*tth, ttz ? std::optional(std::span<const std::byte>(*ttz)) : std::nullopt);
+            return formats::VtfTexture::parse(std::move(assembled.data));
+        }
+        if (auto vtf = assets_.read(path + ".vtf")) {
+            return formats::VtfTexture::parse(std::move(*vtf));
+        }
+    } catch (const formats::FormatError& e) {
+        std::fprintf(stderr, "texture %s: %s\n", path.c_str(), e.what());
+    }
+    return std::nullopt;
+}
+
 const rhi::Texture* MaterialSystem::texture(const std::string& path, bool srgb) {
     const std::string key = srgb ? path : path + "#linear";
     auto it = textures_.find(key);
@@ -79,13 +96,8 @@ const rhi::Texture* MaterialSystem::texture(const std::string& path, bool srgb) 
     }
     std::unique_ptr<rhi::Texture> tex;
     try {
-        if (auto tth = assets_.read(path + ".tth")) {
-            const auto ttz = assets_.read(path + ".ttz");
-            auto assembled =
-                formats::assemble_vtf(*tth, ttz ? std::optional(std::span<const std::byte>(*ttz)) : std::nullopt);
-            tex = upload_vtf(device_, formats::VtfTexture::parse(std::move(assembled.data)), srgb);
-        } else if (auto vtf = assets_.read(path + ".vtf")) {
-            tex = upload_vtf(device_, formats::VtfTexture::parse(std::move(*vtf)), srgb);
+        if (auto vtf = read_vtf(path)) {
+            tex = upload_vtf(device_, *vtf, srgb);
         }
     } catch (const formats::FormatError& e) {
         std::fprintf(stderr, "texture %s: %s\n", path.c_str(), e.what());
@@ -96,21 +108,145 @@ const rhi::Texture* MaterialSystem::texture(const std::string& path, bool srgb) 
     return textures_.emplace(key, std::move(tex)).first->second.get();
 }
 
+std::vector<const rhi::Texture*> MaterialSystem::texture_frames(const std::string& path, bool srgb) {
+    const std::string key = srgb ? path : path + "#linear";
+    if (auto it = frames_.find(key); it != frames_.end()) {
+        return it->second;
+    }
+    std::vector<const rhi::Texture*> frames;
+    if (const auto* first = texture(path, srgb)) {
+        frames.push_back(first);
+        if (auto vtf = read_vtf(path)) {
+            for (std::uint32_t f = 1; f < vtf->header().frame_count; ++f) {
+                try {
+                    auto tex = upload_vtf(device_, *vtf, srgb, f);
+                    frames.push_back(tex.get());
+                    textures_.emplace(key + "#frame" + std::to_string(f), std::move(tex));
+                } catch (const formats::FormatError& e) {
+                    std::fprintf(stderr, "texture %s frame %u: %s\n", path.c_str(), f, e.what());
+                    break;
+                }
+            }
+        }
+    }
+    return frames_.emplace(key, std::move(frames)).first->second;
+}
+
 const RenderMaterial& MaterialSystem::material(std::string_view name) {
     const std::string key = formats::normalize_game_path(name);
     auto it = materials_.find(key);
     if (it != materials_.end()) {
         return it->second;
     }
-    return materials_.emplace(key, load(key)).first->second;
+    std::optional<formats::Material> source;
+    RenderMaterial& out = materials_.emplace(key, load(key, source)).first->second;
+    if (source) {
+        register_dynamic(out, *source);
+    }
+    return out;
 }
 
-RenderMaterial MaterialSystem::load(const std::string& name) {
+namespace {
+
+std::array<float, 3> to_linear(std::array<float, 3> c) {
+    for (float& f : c) {
+        f = std::pow(std::max(f, 0.0f), 2.2f);
+    }
+    return c;
+}
+
+// The params row described by a material's variables (static values, or
+// values after its proxies ran).
+MaterialParams params_from(const formats::MaterialProxies& vars) {
+    MaterialParams p;
+    if (const auto* t = vars.var("$basetexturetransform"); t && t->is_matrix) {
+        p.transform_u = {t->m[0], t->m[1], t->m[2], 0};
+        p.transform_v = {t->m[3], t->m[4], t->m[5], 0};
+    }
+    auto rgb = [](const formats::ProxyVar& v) {
+        return v.count >= 3 ? std::array<float, 3>{v.v[0], v.v[1], v.v[2]} : std::array<float, 3>{v.v[0], v.v[0], v.v[0]};
+    };
+    // Material colours are authored in gamma space; the shaders work in linear.
+    if (const auto* c = vars.var("$color"); c && !c->is_matrix) {
+        const auto lin = to_linear(rgb(*c));
+        p.color = {lin[0], lin[1], lin[2], 1};
+    }
+    if (const auto* a = vars.var("$alpha"); a && !a->is_matrix) {
+        p.color[3] = std::clamp(a->v[0], 0.0f, 1.0f);
+    }
+    if (const auto* s = vars.var("$selfillumtint"); s && !s->is_matrix) {
+        const auto lin = to_linear(rgb(*s));
+        p.self_illum_tint = {lin[0], lin[1], lin[2], 0};
+    }
+    return p;
+}
+
+bool is_default(const MaterialParams& p) {
+    const MaterialParams d;
+    return p.transform_u == d.transform_u && p.transform_v == d.transform_v && p.color == d.color &&
+           p.self_illum_tint == d.self_illum_tint;
+}
+
+} // namespace
+
+void MaterialSystem::register_dynamic(RenderMaterial& material, const formats::Material& source) {
+    formats::MaterialProxies proxies(source, static_cast<std::uint32_t>(dynamic_.size() + 1));
+    std::string base_var, normal_var;
+    for (const auto& [texture_var, frame_var] : proxies.animated_textures()) {
+        const bool normal = texture_var == "$normalmap" || texture_var == "$bumpmap";
+        if (texture_var != "$basetexture" && !normal) {
+            continue; // Other layers are not animated in OpenBL yet.
+        }
+        const auto path = source.texture_path(texture_var);
+        if (!path) {
+            continue;
+        }
+        auto frames = texture_frames(*path, !normal);
+        if (frames.size() <= 1) {
+            continue;
+        }
+        proxies.set_frame_count(texture_var, static_cast<std::uint32_t>(frames.size()));
+        (normal ? material.normal_frames : material.base_frames) = std::move(frames);
+        (normal ? normal_var : base_var) = frame_var;
+    }
+    const MaterialParams initial = params_from(proxies);
+    if (proxies.empty() && is_default(initial)) {
+        return;
+    }
+    material.params_index = static_cast<std::uint32_t>(params_.size());
+    params_.push_back(initial);
+    if (!proxies.empty()) {
+        dynamic_.push_back({&material, std::move(proxies), base_var, normal_var});
+    }
+}
+
+std::size_t MaterialSystem::animated_materials() const {
+    return static_cast<std::size_t>(std::count_if(dynamic_.begin(), dynamic_.end(), [](const Dynamic& d) {
+        return !d.base_frame_var.empty() || !d.normal_frame_var.empty();
+    }));
+}
+
+void MaterialSystem::update(const formats::ProxyContext& context) {
+    for (Dynamic& d : dynamic_) {
+        d.proxies.evaluate(context);
+        params_[d.material->params_index] = params_from(d.proxies);
+        auto frame = [&](const std::string& var, std::size_t count) -> std::uint32_t {
+            const auto* v = var.empty() ? nullptr : d.proxies.var(var);
+            if (!v || count == 0) {
+                return 0;
+            }
+            return static_cast<std::uint32_t>(std::max(0.0f, v->v[0])) % static_cast<std::uint32_t>(count);
+        };
+        d.material->base_frame = frame(d.base_frame_var, d.material->base_frames.size());
+        d.material->normal_frame = frame(d.normal_frame_var, d.material->normal_frames.size());
+    }
+}
+
+RenderMaterial MaterialSystem::load(const std::string& name, std::optional<formats::Material>& mat) {
     RenderMaterial out;
     out.name = name;
     out.base = out.base2 = checker_.get();
 
-    std::optional<formats::Material> mat;
     try {
         mat = read_material(assets_, "materials/" + name + ".vmt");
     } catch (const formats::FormatError& e) {

@@ -5,7 +5,7 @@ struct PushConstants {
     float alpha_ref;
     float light_scale;
     uint flags;
-    float padding;
+    uint params_index; // Row of the material params table (after the light styles).
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -34,17 +34,26 @@ struct VSOutput {
     [[vk::location(4)]] nointerpolation float style_step : TEXCOORD4;
 };
 
-// Brightness of each of the 64 light styles (4 per element).
+// Brightness of each of the 64 light styles (4 per element), then the
+// material params table: 4 elements per row (texture transform u and v rows,
+// colour and alpha, self-illumination tint).
 [[vk::binding(0, 1)]] StructuredBuffer<float4> style_values;
+static const uint kParamsStart = 16;
 
 float style_value(uint style) {
     return style_values[style >> 2][style & 3];
 }
 
+float4 material_param(uint k) {
+    return style_values[kParamsStart + pc.params_index * 4 + k];
+}
+
 VSOutput vs_main(VSInput input) {
     VSOutput output;
     output.position = mul(pc.mvp, float4(input.position, 1.0));
-    output.uv = input.uv;
+    const float4 tu = material_param(0);
+    const float4 tv = material_param(1);
+    output.uv = float2(dot(tu.xyz, float3(input.uv, 1.0)), dot(tv.xyz, float3(input.uv, 1.0)));
     output.lightmap_uv = input.lightmap_uv;
     output.blend = input.blend;
     output.styles = input.styles;
@@ -85,9 +94,10 @@ float4 ps_main(VSOutput input) : SV_Target {
         // 2^2.2 saturates (docs/RENDERING.md).
         light = min(light, 4.5948) * pc.light_scale;
     }
-    float3 color = base.rgb * light;
+    const float4 tint = material_param(2); // $color, $alpha.
+    float3 color = base.rgb * tint.rgb * light;
     if (pc.flags & kSelfIllum) {
-        color = lerp(color, base.rgb, base.a);
+        color = lerp(color, base.rgb * material_param(3).rgb, base.a);
     }
-    return float4(color, (pc.flags & kTranslucent) ? base.a : 1.0);
+    return float4(color, (pc.flags & kTranslucent) ? base.a * tint.a : 1.0);
 }

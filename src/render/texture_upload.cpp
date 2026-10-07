@@ -31,7 +31,7 @@ std::optional<rhi::Format> native_format(formats::VtfFormat f, bool srgb) {
 
 } // namespace
 
-std::unique_ptr<rhi::Texture> upload_vtf(rhi::Device& device, const formats::VtfTexture& vtf, bool srgb) {
+std::unique_ptr<rhi::Texture> upload_vtf(rhi::Device& device, const formats::VtfTexture& vtf, bool srgb, std::uint32_t frame) {
     const auto& h = vtf.header();
     const std::uint32_t first = vtf.largest_available_mip();
     if (first >= h.mip_count) {
@@ -47,13 +47,13 @@ std::unique_ptr<rhi::Texture> upload_vtf(rhi::Device& device, const formats::Vtf
     if (auto native = native_format(h.format, srgb)) {
         desc.format = *native;
         for (std::uint32_t m = first; m < h.mip_count; ++m) {
-            mips.push_back(vtf.image(m));
+            mips.push_back(vtf.image(m, frame));
         }
     } else {
         desc.format = srgb ? rhi::Format::RGBA8_sRGB : rhi::Format::RGBA8_UNorm;
         decoded.reserve(desc.mip_levels);
         for (std::uint32_t m = first; m < h.mip_count; ++m) {
-            decoded.push_back(formats::decode_to_rgba8(h.format, vtf.image(m), vtf.mip_width(m), vtf.mip_height(m)));
+            decoded.push_back(formats::decode_to_rgba8(h.format, vtf.image(m, frame), vtf.mip_width(m), vtf.mip_height(m)));
             mips.push_back(std::as_bytes(std::span(decoded.back())));
         }
     }

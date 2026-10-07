@@ -46,7 +46,7 @@ namespace {
 
 constexpr const char* kUsage =
     "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
-    "                     [--light-scale F] [--fullbright] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--shots FILE --out DIR]\n"
+    "                     [--light-scale F] [--fullbright] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--shots FILE --out DIR]\n"
     "                     [--validation] [--no-vsync]";
 
 struct Options {
@@ -67,6 +67,7 @@ struct Options {
     std::optional<std::filesystem::path> shots;     // Shot list: "name x y z pitch yaw" per line.
     std::filesystem::path shots_dir = ".";
     int frames = 0; // With --screenshot: frames to render before capturing.
+    std::optional<float> time; // Fixed scene clock in seconds (animated materials, light styles).
     bool validation = false;
     bool vsync = true;
 };
@@ -129,6 +130,8 @@ Options parse_args(int argc, char** argv) {
             o.shots_dir = next();
         } else if (a == "--frames") {
             o.frames = std::stoi(next());
+        } else if (a == "--time") {
+            o.time = std::stof(next());
         } else if (a == "--validation") {
             o.validation = true;
         } else if (a == "--no-vsync") {
@@ -270,6 +273,9 @@ public:
                   << " batches, lightmap " << s.lightmap_width << "x" << s.lightmap_height << ", "
                   << s.missing_materials << " missing materials, " << materials_->missing_textures()
                   << " missing textures, " << s.skipped_faces << " faces skipped\n";
+        std::cout << "materials: " << materials_->proxy_materials() << " with proxies ("
+                  << materials_->animated_materials() << " animated textures), " << materials_->params().size() - 1
+                  << " with non-default colour or transform\n";
         if (props_) {
             const auto& p = props_->stats();
             std::cout << "props: " << p.instances << " instances of " << p.models << " models ("
@@ -307,11 +313,13 @@ public:
               float time) override {
         settings_.camera_position = {camera.position.x, camera.position.y, camera.position.z};
         settings_.time = time;
+        materials_->update({.time = time});
+        settings_.material_params = &materials_->params();
         if (sky_) {
             sky_->draw(cmd, to_array(projection * glm::mat4(glm::mat3(view))));
         }
         const auto m = to_array(projection * view);
-        const render::PropDrawSettings prop_settings{settings_.light_scale, settings_.fullbright};
+        const render::PropDrawSettings prop_settings{settings_.light_scale, settings_.fullbright, &materials_->params()};
         const render::CharacterDrawSettings character_settings{settings_.light_scale, settings_.fullbright};
         if (characters_) {
             characters_->update(time);
@@ -436,7 +444,7 @@ int run(const Options& options) {
                 continue;
             }
             const float aspect = static_cast<float>(device->frame_width()) / static_cast<float>(device->frame_height());
-            const float time = std::chrono::duration<float>(now - start_time).count();
+            const float time = options.time.value_or(std::chrono::duration<float>(now - start_time).count());
             scene->draw(*cmd, camera.projection(aspect), camera.view(), camera, time);
             device->end_frame();
 

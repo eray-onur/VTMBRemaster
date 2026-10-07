@@ -40,7 +40,7 @@ struct PushConstants {
     std::uint32_t cube[9]; // 18 half-floats: rgb per cube face
     float alpha_ref;
     std::uint32_t flags;
-    float padding;
+    std::uint32_t params_index;
 };
 static_assert(sizeof(PushConstants) == 112);
 
@@ -79,6 +79,7 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
     pd.attributes = {{0, rhi::Format::RGB32_Float, 0}, {1, rhi::Format::RG32_Float, 12}, {2, rhi::Format::RGB32_Float, 20}};
     pd.texture_count = 1;
     pd.push_constant_size = sizeof(PushConstants);
+    pd.shader_data = true; // Material params table.
     pd.front_counter_clockwise = false;
     const rhi::BlendMode blends[] = {rhi::BlendMode::Opaque, rhi::BlendMode::Alpha, rhi::BlendMode::Additive};
     for (std::size_t b = 0; b < 3; ++b) {
@@ -237,6 +238,11 @@ const PropRenderer::Model* PropRenderer::load_model(const std::string& path) {
                         }
                         const rhi::Texture* textures[] = {mesh.material->base};
                         mesh.bind_group = device_.create_bind_group(*pipelines_[0][0], *sampler_, textures);
+                        for (const rhi::Texture* frame : mesh.material->base_frames) {
+                            const rhi::Texture* frame_textures[] = {frame};
+                            mesh.frame_bind_groups.push_back(
+                                device_.create_bind_group(*pipelines_[0][0], *sampler_, frame_textures));
+                        }
                         model->skins[f].push_back(std::move(mesh));
                     }
                 }
@@ -264,6 +270,9 @@ void PropRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float, 16>&
     const rhi::Pipeline* bound_pipeline = nullptr;
     const Model* bound_model = nullptr;
     PushConstants pc{};
+    static const std::vector<MaterialParams> kDefaults{MaterialParams{}};
+    const std::vector<MaterialParams>& params = settings.material_params ? *settings.material_params : kDefaults;
+    const std::size_t rows = std::min(params.size(), rhi::kMaxShaderDataSize / sizeof(MaterialParams));
     for (const Instance& inst : instances_) {
         const glm::mat4 mvp = view_projection * glm::make_mat4(inst.transform.data());
         std::memcpy(pc.mvp, glm::value_ptr(mvp), sizeof(pc.mvp));
@@ -279,6 +288,7 @@ void PropRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float, 16>&
             const rhi::Pipeline& pipeline = pipeline_for(m);
             if (&pipeline != bound_pipeline) {
                 cmd.set_pipeline(pipeline);
+                cmd.set_shader_data(params.data(), rows * sizeof(MaterialParams));
                 bound_pipeline = &pipeline;
             }
             if (inst.model != bound_model) {
@@ -289,7 +299,10 @@ void PropRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float, 16>&
             pc.alpha_ref = m.alpha_ref;
             pc.flags = (m.alpha_test ? kAlphaTest : 0) | ((m.unlit || settings.fullbright) ? kUnlit : 0) |
                        (m.self_illum ? kSelfIllum : 0) | (m.translucent ? kTranslucent : 0);
-            cmd.set_bind_group(*mesh.bind_group);
+            pc.params_index = m.params_index < rows ? m.params_index : 0;
+            cmd.set_bind_group(mesh.frame_bind_groups.empty()
+                                   ? *mesh.bind_group
+                                   : *mesh.frame_bind_groups[m.base_frame % mesh.frame_bind_groups.size()]);
             cmd.push_constants(&pc, sizeof(pc));
             cmd.draw_indexed(mesh.index_count, mesh.first_index);
         }

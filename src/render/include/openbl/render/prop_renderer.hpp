@@ -29,6 +29,8 @@ struct PropStats {
 struct PropDrawSettings {
     float light_scale = 1.0f; // As for the world (docs/RENDERING.md).
     bool fullbright = false;
+    // Material params table (MaterialSystem::params()); null: defaults only.
+    const std::vector<MaterialParams>* material_params = nullptr;
 };
 
 class PropRenderer {
@@ -54,6 +56,7 @@ private:
         std::uint32_t index_count = 0;
         const RenderMaterial* material = nullptr;
         std::unique_ptr<rhi::BindGroup> bind_group;
+        std::vector<std::unique_ptr<rhi::BindGroup>> frame_bind_groups; // Animated base texture.
     };
     struct Model {
         std::unique_ptr<rhi::Buffer> vertices;
