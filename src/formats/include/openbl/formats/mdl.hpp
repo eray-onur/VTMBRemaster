@@ -147,11 +147,11 @@ struct MdlVertex {
 // Quantized16, 12 steps (202 normals) for Quantized8.
 const std::vector<std::array<float, 3>>& mdl_normal_table(int steps);
 
-// One vertex moved by a flex. The 6-byte delta encoding is not decoded yet
-// (see docs/formats/models.md), so the bytes are kept as they are.
+// One vertex moved by a flex at full weight (see docs/formats/models.md).
 struct MdlFlexVertex {
-    std::uint16_t index = 0; // Mesh-relative vertex index.
-    std::array<std::uint8_t, 6> raw{};
+    std::uint32_t index = 0;                // Mesh-relative vertex index.
+    std::array<float, 3> delta{};           // Position offset, model units.
+    std::array<float, 3> normal_delta{};    // Added to the normal (renormalise after).
 };
 
 // A facial morph target on one mesh.

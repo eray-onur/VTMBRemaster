@@ -20,7 +20,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Animations: unknown sequence fields (+620, +660 block, +752…)
 - [x] Models: hitboxes, attachments, flex controllers and rules, mesh flexes (which vertices), mouths, IK chains, surface property
 - [x] Models: packed normal tables for quantized vertices (closed form, recovered from the data)
-- [ ] Models: flex vertex delta encoding; cloth data on 74 hair/cloth meshes
+- [x] Models: flex vertex deltas (packed directions with byte lengths; a float form on one model)
+- [ ] Models: cloth data on 74 hair/cloth meshes
 - [x] Physics: `.phy` solids, convex pieces (bounding-tree walk), model-space conversion, text block
 - [ ] Physics: ragdoll constraint semantics; collision for map brushes (with the BSP work)
 - [x] Maps: `.bsp` v17 geometry, faces, displacements, lightmap data, static props, entities, pakfile

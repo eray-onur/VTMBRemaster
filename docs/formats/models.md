@@ -79,7 +79,23 @@ All integers are little-endian. "rel" means an offset relative to the start of t
 
 **Flex rule** (12 bytes): `i32 flex`, `i32 op count`, `i32 op offset (rel)`. A rule computes the weight of one flex from the controllers with a small stack program of 8-byte ops, `{i32 op, i32/f32 value}`: 1 pushes a constant, 2 pushes a controller, 3 pushes another flex's weight, 4/5/6 add, subtract and multiply, and 7 is a further two-operand operator (division is assumed, unverified). The value field of operator ops holds leftover bytes. All 9,865 rules leave exactly one value on the stack. Example: `upper_right_raiser = right_lid_raiser × (1 − 0.8 × c4) × (1 − c6)`.
 
-**Mesh flex** (32 bytes): `i32 flex`, `f32 targets[4]`, `i32 vertex count`, `i32 vertex offset (rel)`, `i32 pair`. 15,184 mesh flexes. **Flex vertex** (8 bytes): `u16 vertex index` (mesh-relative), then 6 bytes of delta whose encoding is **not decoded**: three signed 16-bit values, signed bytes, 10/11-bit fields and half-floats all fail a test against spatial neighbours. About 2% of indices exceed the mesh's vertex count, and a few blocks are spaced 20 bytes per vertex, so there may be a second record form. A second attempt over all 2.79 million records found the following. The index is right: a flex's vertices cluster within 4% of model size. Bytes 6 and 7 are mostly 0–5 (3.9 and 5.5 bits of entropy), while bytes 2–5 are spread (5.9–7.6 bits). Two signed 16-bit values, shifted fields and 10/10/10 or 11/11/10 packing over bytes 2–5 also fail the neighbour test. **Open:** morph targets (facial animation, lip-sync shapes) cannot be rendered until this is decoded. Characters render in their neutral face meanwhile.
+**Mesh flex** (32 bytes): `i32 flex`, `f32 targets[4]`, `i32 vertex count`, `i32 vertex offset (rel)`, `i32 pair`. 15,184 mesh flexes, moving 2,793,996 vertices in all. The targets are a ramp over the flex weight: the morph fades in from `targets[0]` to `targets[1]`, holds until `targets[2]` and fades out by `targets[3]`. Most are `0, 1, 10, 11`. A flex can have several mesh flexes with different ramps. Eyelids, for example, have one mesh flex that closes the lid below the neutral weight and another that raises it above.
+
+**Flex vertex.** The model field at +0xC0 selects one of two record forms:
+
+| +0xC0 | Size | Layout | Used by |
+|---|---|---|---|
+| 2 | 8 bytes | `u16 index`, `u16 delta direction`, `u16 normal-delta direction`, `u8 delta length`, `u8 normal-delta length` | every flexed model but one |
+| 0 | 20 bytes | `i32 index`, `f32 delta[3]`, `u16 normal-delta direction`, `u8 normal-delta length`, `u8` 0 | `mingxiao_transformation.mdl` (deltas up to 121 units, too large for a byte length) |
+
+The index is relative to the mesh. A direction is a code into the 64-step packed normal table used by `Quantized16` vertices (code = 12 × table index; every code in the release is valid). Each length scales its unit direction: the position delta in units of **1/32 inch** (up to about 8 inches), the normal delta in units of **1/128** (up to about 2, the most a unit normal can change). Add the normal delta, then renormalise.
+
+The units were measured, not assumed:
+
+- **Position (1/32):** on 162 heads, scaling the lid-closing delta to make the upper eyelid meet the lower lid gives a median of 1/31.7.
+- **Normal (1/128):** keeping morphed normals at unit length, which requires dot(n, d) = −|d|/2, gives 1/119 to 1/134.
+
+`openbl-cli mdl export <model> <out.obj> --flex AU27Z=1` writes a morphed model. Jaw drop, eye closing and smiling all look right on the blood doll.
 
 **Mouth** (20 bytes): `i32 bone`, `f32 forward[3]` (0, −1, 0), `i32 flex`.
 

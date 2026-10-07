@@ -264,6 +264,25 @@ std::vector<std::byte> build_mdl(MdlVertexFormat format) {
     b.i32(chain + 12, 16);
     b.i32(0x188, static_cast<std::int32_t>(b.str("metal")));
 
+    // "smile" moves two vertices of the mesh (packed flex format 2). Normal
+    // table code 0 is -z and 5313 * 12 is +z.
+    b.i32(model + 0xc0, 2);
+    const std::size_t mesh_flex = b.size();
+    b.grow(mesh_flex + 32 + 16);
+    b.i32(mesh + 16, 1);
+    b.i32(mesh + 20, static_cast<std::int32_t>(mesh_flex - mesh));
+    b.f32(mesh_flex + 8, 1.0f);
+    b.i32(mesh_flex + 20, 2);
+    b.i32(mesh_flex + 24, 32);
+    const std::size_t flex_vert = mesh_flex + 32;
+    b.u16(flex_vert, 2);
+    b.u16(flex_vert + 2, 5313 * 12);
+    b.u8(flex_vert + 6, 64);  // 2 units up
+    b.u8(flex_vert + 7, 128); // normal delta of length 1, down
+    b.u16(flex_vert + 8, 1);
+    b.u16(flex_vert + 12, 5313 * 12);
+    b.u8(flex_vert + 14, 16); // 0.5 units down (direction code 0)
+
     const std::size_t include = b.size();
     b.grow(include + 116);
     b.i32(0x194, 1);
@@ -445,6 +464,16 @@ TEST_CASE("MDL animations, sequences and include models") {
     CHECK(mdl.flex_rules[0].ops[0].kind == MdlFlexOp::Controller);
     CHECK(mdl.flex_rules[0].ops[1].value == 0.5f);
     CHECK(mdl.flex_rules[0].ops[2].kind == MdlFlexOp::Mul);
+    const auto& mesh_flexes = mdl.body_parts[0].models[0].meshes[0].flexes;
+    REQUIRE(mesh_flexes.size() == 1);
+    CHECK(mesh_flexes[0].targets[1] == 1.0f);
+    REQUIRE(mesh_flexes[0].vertices.size() == 2);
+    CHECK(mesh_flexes[0].vertices[0].index == 2);
+    CHECK(mesh_flexes[0].vertices[0].delta[2] == doctest::Approx(2.0f));
+    CHECK(mesh_flexes[0].vertices[0].normal_delta[2] == doctest::Approx(-1.0f));
+    CHECK(mesh_flexes[0].vertices[1].index == 1);
+    CHECK(mesh_flexes[0].vertices[1].delta[2] == doctest::Approx(-0.5f));
+    CHECK(mesh_flexes[0].vertices[1].normal_delta[2] == 0.0f);
     REQUIRE(mdl.mouths.size() == 1);
     CHECK(mdl.mouths[0].forward[1] == -1.0f);
     REQUIRE(mdl.ik_chains.size() == 1);
@@ -563,6 +592,7 @@ TEST_CASE("MDL integration: every model in the real install loads") {
                 melee_hits = 0;
     std::size_t missing_normals = 0;
     std::size_t hitboxes = 0, attachments = 0, flex_rules = 0, ik_chains = 0, mesh_flexes = 0, bad_flex_targets = 0;
+    std::size_t flex_vertices = 0, off_unit_flex_normals = 0;
     std::map<MdlVertexFormat, std::size_t> formats;
     for (const auto& path : gfs.list_files()) {
         if (!path.ends_with(".mdl")) {
@@ -609,6 +639,16 @@ TEST_CASE("MDL integration: every model in the real install loads") {
                     mesh_flexes += mesh.flexes.size();
                     for (const auto& f : mesh.flexes) {
                         bad_flex_targets += f.flex < 0 || f.flex >= static_cast<std::int32_t>(mdl.flex_names.size());
+                        flex_vertices += f.vertices.size();
+                        // A correct normal delta keeps the morphed normal near unit length.
+                        for (const auto& fv : f.vertices) {
+                            const auto& n = m.vertices[mesh.vertex_offset + fv.index].normal;
+                            float len2 = 0.0f;
+                            for (std::size_t k = 0; k < 3; ++k) {
+                                len2 += (n[k] + fv.normal_delta[k]) * (n[k] + fv.normal_delta[k]);
+                            }
+                            off_unit_flex_normals += std::abs(std::sqrt(len2) - 1.0f) > 0.1f;
+                        }
                     }
                 }
             }
@@ -701,8 +741,11 @@ TEST_CASE("MDL integration: every model in the real install loads") {
     CHECK(bad_blend_params == 0);
     CHECK(bad_movements == 0);
     MESSAGE(hitboxes << " hitboxes, " << attachments << " attachments, " << flex_rules << " flex rules, "
-                     << mesh_flexes << " mesh flexes, " << ik_chains << " IK chains");
+                     << mesh_flexes << " mesh flexes (" << flex_vertices << " vertices, " << off_unit_flex_normals
+                     << " morphed normals off unit length), " << ik_chains << " IK chains");
     CHECK(bad_flex_targets == 0);
+    CHECK(flex_vertices == 2793996);
+    CHECK(off_unit_flex_normals * 20 < flex_vertices);
     CHECK(missing_normals == 0); // Every quantized normal code is in its table.
     CHECK(hitboxes == 12705);
     CHECK(flex_rules == 9865);

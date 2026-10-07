@@ -56,7 +56,10 @@ constexpr std::size_t kIkChainSize = 16;
 constexpr std::size_t kIkLinkSize = 28;
 constexpr std::size_t kMouthSize = 20;
 constexpr std::size_t kMeshFlexSize = 32;
-constexpr std::size_t kFlexVertexSize = 8;
+constexpr std::size_t kPackedFlexVertexSize = 8; // Model flex format 2.
+constexpr std::size_t kFloatFlexVertexSize = 20; // Model flex format 0.
+constexpr float kFlexPositionUnit = 1.0f / 32.0f;
+constexpr float kFlexNormalUnit = 1.0f / 128.0f;
 constexpr std::size_t kMovementSize = 44;
 constexpr std::size_t kEventSize = 76;
 constexpr std::size_t kMeleeSweepSize = 24;
@@ -537,6 +540,21 @@ private:
         model.vertex_format = static_cast<MdlVertexFormat>(format);
         const auto origin = vec3(at + 0xa0);
         const auto scale = vec3(at + 0xac);
+        const std::int32_t flex_format = i32(at + 0xc0);
+        if (flex_format != 0 && flex_format != 2) {
+            in_.fail("unknown flex vertex format " + std::to_string(flex_format));
+        }
+        const std::size_t flex_stride = flex_format == 2 ? kPackedFlexVertexSize : kFloatFlexVertexSize;
+        const auto& directions = mdl_normal_table(64);
+        // A packed direction is a normal-table code (12 x index) times a length.
+        auto direction = [&](std::size_t code_at, float length) {
+            const std::uint16_t code = u16(code_at);
+            if (code % 12 != 0 || code / 12u >= directions.size()) {
+                in_.fail("flex direction code out of range");
+            }
+            const auto& d = directions[code / 12u];
+            return std::array<float, 3>{d[0] * length, d[1] * length, d[2] * length};
+        };
 
         need(mesh_base, std::uint64_t{mesh_count} * kMeshSize);
         std::uint64_t mesh_vertices = 0;
@@ -561,13 +579,25 @@ private:
                 const std::uint32_t verts = count(fx + 20, "flex vertex");
                 const std::size_t vert_base = rel(fx, i32(fx + 24));
                 flex.pair = i32(fx + 28);
-                need(vert_base, std::uint64_t{verts} * kFlexVertexSize);
+                need(vert_base, std::uint64_t{verts} * flex_stride);
                 flex.vertices.resize(verts);
                 for (std::uint32_t v = 0; v < verts; ++v) {
-                    const std::size_t at_v = vert_base + std::size_t{v} * kFlexVertexSize;
-                    flex.vertices[v].index = u16(at_v);
-                    for (std::size_t k = 0; k < 6; ++k) {
-                        flex.vertices[v].raw[k] = u8(at_v + 2 + k);
+                    const std::size_t at_v = vert_base + std::size_t{v} * flex_stride;
+                    MdlFlexVertex& out = flex.vertices[v];
+                    if (flex_format == 2) {
+                        // u16 index, u16 position direction, u16 normal direction,
+                        // u8 position length (1/32 inch), u8 normal length (1/128).
+                        out.index = u16(at_v);
+                        out.delta = direction(at_v + 2, static_cast<float>(u8(at_v + 6)) * kFlexPositionUnit);
+                        out.normal_delta = direction(at_v + 4, static_cast<float>(u8(at_v + 7)) * kFlexNormalUnit);
+                    } else {
+                        // u32 index, f32 delta[3], u16 normal direction, u8 normal length, u8 pad.
+                        out.index = u32(at_v);
+                        out.delta = vec3(at_v + 4);
+                        out.normal_delta = direction(at_v + 16, static_cast<float>(u8(at_v + 18)) * kFlexNormalUnit);
+                    }
+                    if (out.index >= mesh.vertex_count) {
+                        in_.fail("flex vertex index exceeds the mesh's vertex count");
                     }
                 }
                 mesh.flexes.push_back(std::move(flex));

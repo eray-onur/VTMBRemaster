@@ -58,7 +58,7 @@ void usage() {
                  "  openbl-cli mat info <material> [game-dir]\n"
                  "  openbl-cli mat catalogue [out.md|-] [game-dir]\n"
                  "  openbl-cli mdl info <model> [game-dir]\n"
-                 "  openbl-cli mdl export <model> <out.obj> [game-dir]\n"
+                 "  openbl-cli mdl export <model> <out.obj> [--flex name=weight ...] [game-dir]\n"
                  "  openbl-cli mdl sequences <model> [game-dir]\n"
                  "  openbl-cli mdl pose <model> <sequence> <frame> <out.obj> [game-dir]\n"
                  "  openbl-cli bsp info <map> [game-dir]\n"
@@ -805,10 +805,33 @@ int cmd_mdl(const std::vector<std::string_view>& args) {
         return 0;
     }
     if (args.size() >= 4 && args[1] == "export") {
-        const vfs::GameFileSystem gfs(game_dir_arg(args, 4), game_mods());
+        // Optional "--flex name=weight" options (anywhere after the output path) apply facial morphs.
+        std::vector<std::pair<std::string, float>> flex_weights;
+        std::vector<std::string_view> rest(args.begin(), args.begin() + 4);
+        for (std::size_t i = 4; i < args.size(); ++i) {
+            if (args[i] == "--flex" && i + 1 < args.size()) {
+                const std::string spec(args[++i]);
+                const std::size_t eq = spec.find('=');
+                flex_weights.emplace_back(spec.substr(0, eq), eq == std::string::npos ? 1.0f : std::stof(spec.substr(eq + 1)));
+            } else {
+                rest.push_back(args[i]);
+            }
+        }
+        const vfs::GameFileSystem gfs(game_dir_arg(rest, 4), game_mods());
         const auto model = load_model(gfs, args[2]);
         std::ofstream out{fs::path(args[3])};
         out << "# Exported by openbl-cli from " << model.mdl.name << " (first model of each body part, LOD 0)\n";
+        // A mesh flex's influence ramps up from targets[0] to targets[1], holds
+        // until targets[2] and ramps down to targets[3].
+        auto ramp = [](const std::array<float, 4>& t, float w) {
+            if (w <= t[0] || w >= t[3]) {
+                return 0.0f;
+            }
+            if (w < t[1]) {
+                return (w - t[0]) / (t[1] - t[0]);
+            }
+            return w <= t[2] ? 1.0f : (t[3] - w) / (t[3] - t[2]);
+        };
         std::size_t base = 1;
         for (std::size_t b = 0; b < model.mdl.body_parts.size(); ++b) {
             const auto& part = model.mdl.body_parts[b];
@@ -816,9 +839,30 @@ int cmd_mdl(const std::vector<std::string_view>& args) {
                 continue;
             }
             const auto& mo = part.models[0];
-            out << "o " << part.name << "\n";
+            std::vector<std::array<float, 3>> positions;
             for (const auto& v : mo.vertices) {
-                out << "v " << v.position[0] << " " << v.position[1] << " " << v.position[2] << "\n";
+                positions.push_back(v.position);
+            }
+            for (const auto& mesh : mo.meshes) {
+                for (const auto& f : mesh.flexes) {
+                    for (const auto& [name, weight] : flex_weights) {
+                        if (f.flex < 0 || model.mdl.flex_names[static_cast<std::size_t>(f.flex)] != name) {
+                            continue;
+                        }
+                        const float s = ramp(f.targets, weight);
+                        for (const auto& fv : f.vertices) {
+                            for (std::size_t k = 0; k < 3; ++k) {
+                                positions[mesh.vertex_offset + fv.index][k] += s * fv.delta[k];
+                            }
+                        }
+                    }
+                }
+            }
+            out << "o " << part.name << "\n";
+            for (std::size_t i = 0; i < mo.vertices.size(); ++i) {
+                const auto& v = mo.vertices[i];
+                const auto& p = positions[i];
+                out << "v " << p[0] << " " << p[1] << " " << p[2] << "\n";
                 out << "vt " << v.uv[0] << " " << 1.0f - v.uv[1] << "\n";
             }
             const auto& lod = model.vtx.body_parts[b].models[0].lods[0];
@@ -1102,7 +1146,7 @@ constexpr FormatStatus kFormats[] = {
     {".vmt", "parsed", "materials"},
     {".tth", "parsed", "texture headers + small mips"},
     {".ttz", "parsed", "texture large mips (zlib)"},
-    {".mdl", "parsed", "models, animations (partial: flexes, attachments, multi-blend)"},
+    {".mdl", "parsed", "models, animations, flexes (partial: cloth data)"},
     {".vtx", "parsed", "model triangle strips"},
     {".bsp", "parsed", "maps (partial: brushes, visibility, cubemaps, detail props, overlays)"},
     {".tga", "parsed", "particle and font images"},
