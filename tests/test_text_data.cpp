@@ -1,3 +1,4 @@
+#include "openbl/formats/console_script.hpp"
 #include "openbl/formats/keyvalues.hpp"
 #include "openbl/formats/localization.hpp"
 #include "openbl/formats/script_text.hpp"
@@ -167,4 +168,72 @@ TEST_CASE("Script text integration: the shipped files parse") {
     CHECK(titles.diagnostics.empty());
     CHECK(dsp.diagnostics.size() == 1); // A column header at line 765 lacks its "//".
     CHECK(xp.rows.size() == 167);
+}
+
+TEST_CASE("Console scripts") {
+    const auto s = parse_console_script(R"(// comment
+bind "]" "invprev"
+sv_cheats 1; noclip // fly
+bind x "open
+)");
+    REQUIRE(s.commands.size() == 4);
+    CHECK(s.commands[0].tokens == std::vector<std::string>{"bind", "]", "invprev"});
+    CHECK(s.commands[1].tokens == std::vector<std::string>{"sv_cheats", "1"});
+    CHECK(s.commands[2].tokens == std::vector<std::string>{"noclip"});
+    CHECK(s.commands[2].line == 3);
+    CHECK(s.commands[3].tokens.back() == "open");
+    CHECK(s.diagnostics.size() == 1); // The unterminated quote.
+
+    const auto settings = parse_settings_script(R"(VERSION 1.0
+DESCRIPTION SERVER_OPTIONS
+{
+    "mp_fraglimit" { "Frag Limit" { NUMBER 0.000000 -1.000000 } { "0.000000" } }
+    "mp_falldamage" { "Falling Damage" { LIST "Normal" "0" "Realistic" "1" } { "0.000000" } }
+    "mp_teamplay" { "Teamplay" { BOOL } { "0" } }
+})");
+    CHECK(settings.diagnostics.empty());
+    CHECK(settings.version == "1.0");
+    REQUIRE(settings.options.size() == 3);
+    CHECK(settings.options[0].info == std::vector<std::string>{"0.000000", "-1.000000"});
+    REQUIRE(settings.options[1].list.size() == 2);
+    CHECK(settings.options[1].list[1].first == "Realistic");
+    CHECK(settings.options[2].type == "BOOL");
+    CHECK(settings.options[2].default_value == "0");
+}
+
+TEST_CASE("Console scripts integration: the shipped configs parse") {
+    auto game = test::game_dir();
+    if (!game) {
+        MESSAGE("OPENBL_GAME_DIR not set; skipping");
+        return;
+    }
+    const vfs::GameFileSystem gfs(*game);
+    auto text = [&](std::string_view path) {
+        const auto d = gfs.read(path);
+        REQUIRE(d);
+        return std::string(reinterpret_cast<const char*>(d->data()), d->size());
+    };
+    std::size_t commands = 0, diagnostics = 0;
+    std::map<std::string, std::size_t> per_file;
+    for (const char* f : {"cfg/default.cfg", "cfg/skill1.cfg", "cfg/language.cfg", "cfg/valve.rc"}) {
+        const auto s = parse_console_script(text(f));
+        per_file[f] = s.commands.size();
+        commands += s.commands.size();
+        diagnostics += s.diagnostics.size();
+    }
+    const auto rc = parse_console_script(text("cfg/valve.rc"));
+    std::vector<std::string> execs;
+    for (const auto& c : rc.commands) {
+        if (c.tokens[0] == "exec" && c.tokens.size() > 1) {
+            execs.push_back(c.tokens[1]);
+        }
+    }
+    const auto settings = parse_settings_script(text("scripts/settings.scr"));
+    MESSAGE(commands << " commands (default.cfg " << per_file["cfg/default.cfg"] << ", skill1.cfg "
+                     << per_file["cfg/skill1.cfg"] << "), " << diagnostics << " diagnostics; settings.scr: "
+                     << settings.options.size() << " options");
+    CHECK(diagnostics == 0);
+    CHECK(execs == std::vector<std::string>{"language.cfg", "joystick.cfg", "autoexec.cfg"});
+    CHECK(settings.diagnostics.empty());
+    CHECK(settings.options.size() == 12);
 }

@@ -1,6 +1,7 @@
 add_library(openbl_formats
     ain.cpp
     bsp.cpp
+    console_script.cpp
     dlg.cpp
     expressions.cpp
     fnt.cpp

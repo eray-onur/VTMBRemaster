@@ -102,4 +102,18 @@ Parser: `openbl/formats/script_text.hpp`.
 
 One shipped flaw: the column header at line 765 of `dsp_presets.txt` lacks its `//` and is skipped.
 
+## Console scripts
+
+Parser: `openbl/formats/console_script.hpp`.
+
+| File | Contents |
+|---|---|
+| `cfg/valve.rc` | The startup script: `exec language.cfg`, `exec joystick.cfg`, `exec autoexec.cfg`, then `stuffcmds` (command-line `+` commands). `exec default.cfg` is commented out. |
+| `cfg/default.cfg` | 163 commands: `unbindall`, the default key bindings (e.g. `bind "1" "vhotkey #1"`) and settings |
+| `cfg/skill1.cfg` | 71 skill cvars: NPC health, and player/NPC damage and maximum ammo per weapon (`sk_plr_dmg_deserteagle_round "8"`) |
+| `cfg/language.cfg` | `sv_language 0` |
+| `scripts/settings.scr` | Leftover Half-Life multiplayer server options layout: `VERSION 1.0`, then `DESCRIPTION SERVER_OPTIONS { … }` with 12 options, each `"cvar" { "prompt" { TYPE info } { "default" } }` (BOOL, NUMBER min max, STRING, LIST label/value pairs) |
+
+**Console syntax.** Commands end at a line break or at `;` outside quotes. `//` starts a comment. Quotes group an argument, and a quote left open ends at the line break. None of the shipped files has a syntax error. `joystick.cfg` and `autoexec.cfg` aren't shipped; they're optional user files.
+
 Facial expression tables (`expressions/*.txt`) have their own page: [expressions.md](expressions.md).
