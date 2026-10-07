@@ -47,6 +47,7 @@ enum : std::size_t {
     VertexNormals = 30,
     VertexNormalIndices = 31,
     DispLightmapAlphas = 32,
+    DispLightmapSamplePositions = 34,
     DispVerts = 33,
     GameLump = 35,
     LeafWaterData = 36,
@@ -271,6 +272,13 @@ struct BspPrimitive {
     std::uint16_t first_vertex = 0, vertex_count = 0;
 };
 
+// Where a displacement lightmap luxel was sampled: a triangle of the
+// displacement and barycentric weights in 0..255 (summing to 253-255).
+struct BspDispSample {
+    std::uint16_t triangle = 0;
+    std::array<std::uint8_t, 3> barycentric{};
+};
+
 // Collision for one brush model (model 0 is the world).
 struct BspCollisionModel {
     std::int32_t model = 0;
@@ -330,6 +338,8 @@ struct BspFile {
     std::vector<Vec3> primitive_vertices;
     std::vector<std::uint16_t> primitive_indices;
     std::vector<std::uint8_t> disp_lightmap_alphas; // One byte per displacement lightmap luxel.
+    // One per displacement lightmap luxel, displacement faces in face order.
+    std::vector<BspDispSample> disp_lightmap_samples;
     std::vector<std::string> static_prop_models;
     std::vector<BspStaticProp> static_props;
     std::vector<std::byte> pakfile; // Uncompressed zip; see ZipArchive.

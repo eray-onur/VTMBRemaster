@@ -196,6 +196,7 @@ public:
         for (const std::byte b : lump_data(bsp_lump::DispLightmapAlphas)) {
             bsp.disp_lightmap_alphas.push_back(std::to_integer<std::uint8_t>(b));
         }
+        parse_disp_samples(bsp);
         for_each(bsp_lump::Nodes, 32, [&](detail::BinaryReader& r) {
             BspNode node;
             node.plane = r.i32();
@@ -345,6 +346,49 @@ private:
             if (f.dispinfo >= 0 && static_cast<std::size_t>(f.dispinfo) >= bsp.dispinfos.size()) {
                 in_.fail("face references missing displacement");
             }
+        }
+    }
+
+    // One sample per luxel of every displacement face (in face order): a
+    // triangle index (one byte, or 255 plus a second byte) and three
+    // barycentric bytes.
+    void parse_disp_samples(BspFile& bsp) {
+        const auto bytes = lump_data(bsp_lump::DispLightmapSamplePositions);
+        if (bytes.empty()) {
+            return;
+        }
+        std::size_t p = 0;
+        auto next = [&] {
+            if (p >= bytes.size()) {
+                in_.fail("displacement sample positions run past their lump");
+            }
+            return std::to_integer<std::uint8_t>(bytes[p++]);
+        };
+        for (const BspFace& f : bsp.faces) {
+            if (f.dispinfo < 0) {
+                continue;
+            }
+            const auto& disp = bsp.dispinfos[static_cast<std::size_t>(f.dispinfo)];
+            const std::uint32_t triangles = 2u * static_cast<std::uint32_t>(disp.vertices_per_side() - 1) *
+                                            static_cast<std::uint32_t>(disp.vertices_per_side() - 1);
+            const std::size_t luxels = std::size_t(f.lightmap_size[0] + 1) * std::size_t(f.lightmap_size[1] + 1);
+            for (std::size_t i = 0; i < luxels; ++i) {
+                BspDispSample sample;
+                sample.triangle = next();
+                if (sample.triangle == 255) {
+                    sample.triangle = static_cast<std::uint16_t>(sample.triangle + next());
+                }
+                for (auto& w : sample.barycentric) {
+                    w = next();
+                }
+                if (sample.triangle >= triangles) {
+                    in_.fail("displacement sample triangle out of range");
+                }
+                bsp.disp_lightmap_samples.push_back(sample);
+            }
+        }
+        if (p != bytes.size()) {
+            in_.fail("displacement sample positions do not fill their lump");
         }
     }
 

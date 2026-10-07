@@ -423,7 +423,7 @@ TEST_CASE("BSP integration: every map in the real install loads") {
                 missing_props = 0;
     std::size_t brushes = 0, clusters = 0, bad_vis = 0, detail_props = 0, bad_detail_styles = 0, cubemaps = 0,
                 collision_models = 0, collision_triangles = 0, world_collision = 0, primitive_faces = 0,
-                bad_primitive_area = 0;
+                bad_primitive_area = 0, disp_samples = 0;
     for (const auto& path : gfs.list_files()) {
         if (!path.ends_with(".bsp")) {
             continue;
@@ -501,6 +501,8 @@ TEST_CASE("BSP integration: every map in the real install loads") {
             }
         }
         world_collision += !bsp.collision.empty() && bsp.collision[0].model == 0;
+        disp_samples += bsp.disp_lightmap_samples.size();
+        CHECK(bsp.disp_lightmap_samples.size() == bsp.disp_lightmap_alphas.size());
     }
     MESSAGE(maps << " maps, " << faces << " faces, " << triangles << " triangles, " << props << " static props ("
                  << missing_props << " prop models missing), " << missing_materials << " of " << materials
@@ -512,6 +514,7 @@ TEST_CASE("BSP integration: every map in the real install loads") {
     CHECK(bad_vis == 0);
     CHECK(bad_detail_styles == 0);
     CHECK(world_collision == maps);
+    MESSAGE(disp_samples << " displacement lightmap samples");
     MESSAGE(primitive_faces << " faces triangulated from primitives, " << bad_primitive_area
                             << " whose area differs from the polygon");
     CHECK(bad_primitive_area == 0);

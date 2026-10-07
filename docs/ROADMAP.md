@@ -26,7 +26,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Maps: `.bsp` v17 geometry, faces, displacements, lightmap data, static props, entities, pakfile
 - [x] Maps: BSP nodes and leafs (line-of-sight traces), world lights
 - [x] Maps: full leafs, brushes and sides, visibility (PVS/PAS), areas and area portals, cubemaps, detail props and their lighting, collision (IVPS and MOPP), vertex normals, primitives (crack-free triangulation), leaf water data
-- [ ] Maps: displacement lightmap sample positions (lump 34); decals from `infodecal` entities (rendering)
+- [x] Maps: displacement lightmap sample positions (lump 34)
+- [ ] Maps: decals from `infodecal` entities (rendering)
 - [x] Coverage report: `openbl-cli fs coverage` lists every extension in the game data with its status
 - [x] AI node graphs: `.ain` (text in Bloodlines) and `.loc`
 - [x] Dialogue: `.dlg`. Lip-sync: `.lip`. Choreography: `.vcd`

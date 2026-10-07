@@ -39,7 +39,7 @@ Implementation: `src/formats/bsp.cpp` (lumps, entities, face meshes) and `src/fo
 | 30 | Vertex normals | 12 | unit vectors (one map has a few that are not) |
 | 31 | Vertex normal indices | 2 | one per face corner, in face order: the faces' surfedges concatenated |
 | 32 | Displacement lightmap alphas | 1 | one byte per displacement lightmap luxel |
-| 34 | Displacement lightmap sample positions | | not decoded |
+| 34 | Displacement lightmap sample positions | 4–5 per luxel | for each luxel of each displacement face, in face order: the displacement triangle it was sampled on (one byte, or 255 plus a second byte), then three barycentric weights (bytes summing to 253–255). The lump decodes exactly in all 44 maps that have it (1,087,966 samples). |
 | 33 | DispVerts | 20 | direction, distance, alpha |
 | 35 | Game lump | | `sprp` v4 (static props), `dprp` v2 (detail props), `dplt` (detail prop lighting); see below |
 | 36 | Leaf water data | 12 | `f32` surface z, `f32` minimum z, `i16` texinfo, `i16` |
