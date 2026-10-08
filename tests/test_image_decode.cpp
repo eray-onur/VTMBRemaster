@@ -67,6 +67,8 @@ TEST_CASE("Uncompressed formats") {
     CHECK(decode_to_rgba8(VtfFormat::RGB565, raw({0x00, 0xF8}), 1, 1) == Px{255, 0, 0, 255});
     CHECK(decode_to_rgba8(VtfFormat::IA88, raw({9, 7}), 1, 1) == Px{9, 9, 9, 7});
     CHECK(decode_to_rgba8(VtfFormat::BGR888_BlueScreen, raw({255, 0, 0}), 1, 1) == Px{0, 0, 255, 0});
+    // Signed dudv bytes (0, -1, +127, -128), biased like a normal map.
+    CHECK(decode_to_rgba8(VtfFormat::UVWQ8888, raw({0, 255, 127, 128}), 1, 1) == Px{128, 127, 255, 0});
 }
 
 TEST_CASE("Decode rejects short input and unsupported formats") {

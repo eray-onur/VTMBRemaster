@@ -48,15 +48,15 @@ static_assert(sizeof(PushConstants) == 80);
 
 struct WaterPushConstants {
     float mvp[16];
-    float camera_time[4];
-    float fog_color[4];
-    float reflect_tint[4]; // w: world fog start.
-    float world_fog[4];    // rgb: world fog colour, w: world fog end (<= start: none).
+    float refract[4]; // Tint (encoded), amount.
+    float reflect[4]; // Tint (encoded; the original's DX9 shader does not apply it), amount.
+    float bump_u[4];  // dudv and normal map transform, u row; w: flags.
+    float bump_v[4];  // v row.
 };
 static_assert(sizeof(WaterPushConstants) == 128);
 
-// Water opacity; the original refracts what is below instead.
-constexpr float kWaterOpacity = 0.85f;
+constexpr std::uint32_t kWaterReflect = 1;
+constexpr std::uint32_t kWaterRefract = 2;
 
 constexpr std::uint32_t kAlphaTest = 1;
 constexpr std::uint32_t kBlendLayers = 2;
@@ -183,6 +183,37 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
     // Key: material name, the monitor whose picture its faces show (-1: none),
     // and whether the faces are in the 3D skybox.
     std::map<std::tuple<std::string, int, bool>, std::vector<FaceRef>> by_material;
+    // Water faces at one height (within 2 units) make up one water plane.
+    auto water_plane = [&](std::size_t f, const formats::Vec3& origin, bool skybox) {
+        const auto mesh = formats::build_face_mesh(bsp, f);
+        float z = 0;
+        formats::Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+        for (const auto& p : mesh.positions) {
+            z += p[2] + origin[2];
+            for (int k = 0; k < 3; ++k) {
+                lo[k] = std::min(lo[k], p[k] + origin[k]);
+                hi[k] = std::max(hi[k], p[k] + origin[k]);
+            }
+        }
+        z /= static_cast<float>(std::max<std::size_t>(mesh.positions.size(), 1));
+        for (std::size_t i = 0; i < water_planes_.size(); ++i) {
+            WaterPlane& plane = water_planes_[i];
+            if (plane.skybox == skybox && std::abs(plane.z - z) <= 2.0f) {
+                for (int k = 0; k < 3; ++k) {
+                    plane.mins[k] = std::min(plane.mins[k], lo[k]);
+                    plane.maxs[k] = std::max(plane.maxs[k], hi[k]);
+                }
+                return i;
+            }
+        }
+        WaterPlane plane;
+        plane.z = z;
+        plane.mins = lo;
+        plane.maxs = hi;
+        plane.skybox = skybox;
+        water_planes_.push_back(plane);
+        return water_planes_.size() - 1;
+    };
     for (const ModelInstance& inst : model_instances(bsp)) {
         int monitor = -1;
         if (inst.entity && entity_value(*inst.entity, "StartHidden") == "1" &&
@@ -225,9 +256,24 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
             }
             const auto texdata = static_cast<std::size_t>(bsp.texinfos[bsp.faces[f].texinfo].texdata);
             const std::string& name = bsp.texdatas[texdata].material;
-            const int screen = monitor >= 0 && materials.material(name).camera_feed ? monitor : -1;
+            const RenderMaterial& mat = materials.material(name);
+            const int screen = monitor >= 0 && mat.camera_feed ? monitor : -1;
             const bool skybox = inst.entity ? entity_in_skybox : in_skybox[f] != 0;
             stats_.skybox_faces += skybox;
+            if (mat.water && !mat.skip) {
+                // Only the upward-facing faces are water surfaces. The others
+                // (undersides with the $bottommaterial, and sides) are seen
+                // from below the water, which is not drawn yet.
+                const auto& face = bsp.faces[f];
+                const float up = bsp.planes[face.plane].normal[2] * (face.side ? -1.0f : 1.0f);
+                if (up < 0.9f) {
+                    ++stats_.skipped_faces;
+                    continue;
+                }
+                WaterPlane& p = water_planes_[water_plane(f, inst.origin, skybox)];
+                // The first material decides the plane's water fog.
+                p.fog_material = p.fog_material ? p.fog_material : &mat;
+            }
             by_material[{name, screen, skybox}].push_back({f, inst.origin});
         }
     }
@@ -352,6 +398,7 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
         }
     }
     stats_.batches = opaque_.size() + translucent_.size() + water_.size() + decals_.size();
+    stats_.water_planes = water_planes_.size();
 
     if (!vertices.empty()) {
         vertices_ = device.create_buffer({vertices.size() * sizeof(Vertex), rhi::BufferUsage::Vertex},
@@ -396,12 +443,17 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
     wd.pixel.spirv = openbl_water_ps;
     wd.vertex_stride = sizeof(Vertex);
     wd.attributes = {{0, rhi::Format::RGB32_Float, 0}, {1, rhi::Format::RG32_Float, 12}};
-    wd.texture_count = 1;
+    wd.texture_count = 4; // dudv, normal map, reflection, refraction.
     wd.push_constant_size = sizeof(WaterPushConstants);
+    wd.shader_data = true;
     wd.cull = rhi::CullMode::None;
-    wd.blend = rhi::BlendMode::Alpha;
+    // The refraction replaces what is behind the surface.
+    wd.blend = rhi::BlendMode::Opaque;
     wd.depth_write = false;
     water_pipeline_ = device.create_pipeline(wd);
+    const std::array<std::uint8_t, 4> black{0, 0, 0, 255};
+    const std::span<const std::byte> black_mip = std::as_bytes(std::span(black));
+    black_ = device.create_texture({1, 1, 1, rhi::Format::RGBA8_UNorm}, std::span(&black_mip, 1));
 
     sampler_ = device.create_sampler({});
     for (auto* list : {&opaque_, &translucent_}) {
@@ -420,14 +472,7 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
             }
         }
     }
-    for (Batch& batch : water_) {
-        const rhi::Texture* textures[] = {batch.material->normal_map};
-        batch.bind_group = device.create_bind_group(*water_pipeline_, *sampler_, textures);
-        for (const rhi::Texture* frame : batch.material->normal_frames) {
-            const rhi::Texture* frame_textures[] = {frame};
-            batch.frame_bind_groups.push_back(device.create_bind_group(*water_pipeline_, *sampler_, frame_textures));
-        }
-    }
+    create_water_targets(0, 0); // Bind groups with stand-ins until the viewer sizes the targets.
     rhi::SamplerDesc clamped;
     clamped.address = rhi::AddressMode::Clamp;
     decal_sampler_ = device.create_sampler(clamped);
@@ -438,6 +483,40 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
 }
 
 WorldRenderer::~WorldRenderer() = default;
+
+void WorldRenderer::create_water_targets(std::uint32_t width, std::uint32_t height) {
+    const bool built = water_.empty() || water_.front().bind_group;
+    if (built && water_target_size_ == std::array<std::uint32_t, 2>{width, height}) {
+        return;
+    }
+    if (built) {
+        device_.wait_idle(); // The old targets and bind groups may still be in use.
+    }
+    water_target_size_ = {width, height};
+    const bool targets = width > 0 && height > 0 &&
+                         std::any_of(water_planes_.begin(), water_planes_.end(), [](const WaterPlane& p) { return !p.skybox; });
+    water_reflection_ = targets ? device_.create_render_target(width, height) : nullptr;
+    water_refraction_ = targets ? device_.create_render_target(width, height) : nullptr;
+    for (Batch& batch : water_) {
+        // Water in the 3D skybox is not drawn into the targets' view, so it does not sample them.
+        const bool sampled = water_reflection_ && !batch.skybox;
+        const rhi::Texture* reflection = sampled ? &water_reflection_->texture() : black_.get();
+        const rhi::Texture* refraction = sampled ? &water_refraction_->texture() : black_.get();
+        const RenderMaterial& m = *batch.material;
+        auto group = [&](const rhi::Texture* dudv, const rhi::Texture* normal) {
+            const rhi::Texture* textures[] = {dudv, normal, reflection, refraction};
+            return device_.create_bind_group(*water_pipeline_, *sampler_, textures);
+        };
+        batch.bind_group = group(m.dudv, m.normal_map);
+        batch.frame_bind_groups.clear();
+        // The dudv and normal maps step through their frames together.
+        const std::size_t frames = std::max(m.dudv_frames.size(), m.normal_frames.size());
+        for (std::size_t f = 0; f < frames; ++f) {
+            batch.frame_bind_groups.push_back(group(f < m.dudv_frames.size() ? m.dudv_frames[f] : m.dudv,
+                                                    f < m.normal_frames.size() ? m.normal_frames[f] : m.normal_map));
+        }
+    }
+}
 
 const rhi::BindGroup& WorldRenderer::Batch::current_bind_group() const {
     if (!frame_bind_groups.empty()) {
@@ -606,31 +685,35 @@ void WorldRenderer::draw_translucent(rhi::CommandList& cmd, const std::array<flo
 
 void WorldRenderer::draw_water(rhi::CommandList& cmd, const std::array<float, 16>& vp,
                                const WorldDrawSettings& settings) {
-    if (water_.empty()) {
+    if (water_.empty() || !settings.draw_water) {
         return;
     }
     cmd.set_pipeline(*water_pipeline_);
+    // Shader data: camera position and time, then the world fog.
+    const auto fog = settings.fog.rows();
+    water_data_.assign({settings.camera_position[0], settings.camera_position[1], settings.camera_position[2],
+                        settings.time});
+    water_data_.insert(water_data_.end(), fog.begin(), fog.end());
+    cmd.set_shader_data(water_data_.data(), water_data_.size() * sizeof(float));
     WaterPushConstants pc{};
     std::memcpy(pc.mvp, vp.data(), sizeof(pc.mvp));
-    for (int k = 0; k < 3; ++k) {
-        pc.camera_time[k] = settings.camera_position[static_cast<std::size_t>(k)];
-    }
-    pc.camera_time[3] = settings.time;
-    for (int k = 0; k < 3; ++k) {
-        pc.world_fog[k] = settings.fog.color[static_cast<std::size_t>(k)];
-    }
-    pc.world_fog[3] = settings.fog.enabled ? settings.fog.end : 0.0f;
     for (const Batch& batch : water_) {
         if (batch.skybox != settings.skybox) {
             continue;
         }
         const RenderMaterial& m = *batch.material;
+        const bool targets = settings.water_targets && water_reflection_ && !batch.skybox;
+        const bool refract = targets && m.refract;
         for (std::size_t k = 0; k < 3; ++k) {
-            pc.fog_color[k] = m.fog_color[k];
-            pc.reflect_tint[k] = m.reflect_tint[k];
+            // Without a refraction, the surface shows its fog colour.
+            pc.refract[k] = refract ? m.refract_tint[k] : m.fog_color[k];
+            pc.reflect[k] = m.reflect_tint[k];
+            pc.bump_u[k] = m.bump_transform[k];
+            pc.bump_v[k] = m.bump_transform[3 + k];
         }
-        pc.fog_color[3] = kWaterOpacity;
-        pc.reflect_tint[3] = settings.fog.start;
+        pc.refract[3] = m.refract_amount;
+        pc.reflect[3] = m.reflect_amount;
+        pc.bump_u[3] = static_cast<float>((targets && m.reflect ? kWaterReflect : 0) | (refract ? kWaterRefract : 0));
         cmd.set_bind_group(batch.current_bind_group());
         cmd.push_constants(&pc, sizeof(pc));
         cmd.draw_indexed(batch.index_count, batch.first_index);

@@ -1,6 +1,6 @@
 # How the original renders
 
-This page describes what the original game's pixel shaders do, in prose. The shaders ship with the retail game as DirectX 8 assembly in `materials/dxshaders/*.psh` (112 files), plus compiled `shaders/*.vcs`. Reading them for this purpose is allowed by [LEGAL.md](LEGAL.md). Their code is never copied into this repository, and OpenBL's shaders are written independently.
+This page describes what the original game's pixel shaders do, in prose. The shaders ship with the retail game as DirectX 8 assembly in `materials/dxshaders/*.psh` (112 files), plus compiled `shaders/*.vcs` (plain shader bytecode with constant tables, one shader per combination). Reading them for this purpose is allowed by [LEGAL.md](LEGAL.md). Their code is never copied into this repository, and OpenBL's shaders are written independently.
 
 The original works in **gamma space**: colours from textures are used as stored, multiplied together, and written to the screen with no linear conversion. OpenBL works in linear space, so each rule below is followed by its linear equivalent.
 
@@ -71,6 +71,25 @@ OpenBL gives each visible monitor its own 512 × 512 render target. Each frame, 
 
 **Hidden entities.** Entities with `StartHidden 1` are invisible until a script shows them, so OpenBL does not draw them: brush entities (138 `func_brush`, 164 `func_physbox`, 41 `func_illusionary`, 11 `func_monitor`, ...), `prop_*` entities and NPCs. Examples are the haven TV (off until switched on) and the hospital's `monitor_1_dead`, a static screen shown once its camera is broken; without this the static covered the live picture. Scripts often show such entities as soon as the map loads (the haven bum in `sm_hub_1` starts hidden and greets the player at once), so which ones are visible in play needs the map scripts (Phase 2). `openbl-viewer --show NAME` draws a hidden entity anyway (brush entities, props and NPCs), as `ent_fire NAME ScriptUnhide` does in the original.
 
+## Water (`Water`)
+
+90 materials. At DirectX 9 the original draws them with the shader it registers as `Water_Old_dx80_dx81_dx90`: the vertex shader `water_vs20_old` and the pixel shaders `waterrefract_ps20_old` and `waterreflect_ps20_old` (in `shaders/fxc/`; the newer single-pass `water_ps20` ships too but nothing registers it). Read from the compiled code:
+
+- **Two passes.** The refraction pass draws the refraction target (the scene below the surface) times `$refracttint`. The reflection pass draws the reflection target times a Fresnel weight, (1 − max(cos, 0))⁴, where cos is between the view direction and the normal-map normal in the surface's tangent frame. No `$reflecttint` appears in the DX9 shaders. OpenBL adds the two (the blend states are set by the engine binary and are not read).
+- **Distortion.** Both targets are sampled at the pixel's screen position plus an offset from the dudv map (`$bumpmap`, signed bytes; [formats/textures.md](formats/textures.md)). The offset is a displacement along the surface: amount (`$refractamount` or `$reflectamount`) × (du × tangent + dv × binormal), in world units, projected by the view-projection matrix and divided by the pixel's depth. The result is used directly as a texture offset (twice the size of the true projected shift). The dudv and normal maps share a transform (`$bumptransform` or `$bumpoffset`, scrolled by `TextureScroll`) and step through their 29 frames together.
+- **Water fog.** While drawing what lies below a water surface, the world's vertex shaders fog by the length of the view ray under the water: view depth × max(water z − z, 0) ÷ (eye z − z), with the material's `$fogcolor`, `$fogstart` and `$fogend`.
+
+Every water material names the same two targets, `_rt_WaterReflection` and `_rt_WaterRefraction`, so the original has one reflection and one refraction per frame, for one surface height. OpenBL does the same. OpenBL groups the upward-facing water faces by height (within 2 units) into water planes (21 of the 101 maps have water, with 1 to 12 planes; the Warrens have the most), picks the nearest plane in view, and draws the two targets at the window's size before the main view. Water at other heights samples the same targets, as in the original:
+
+- **Reflection:** the camera mirrored about the plane, with the projection's near plane moved onto the water (oblique clipping), so only what is above the surface is drawn. The picture is also flipped left to right, which keeps the triangle winding.
+- **Refraction:** the normal camera, clipped to what is below the surface (a unit of overlap keeps the shore closed), in the water fog.
+
+The colours combine on encoded values, as in the original. Materials without `$refracttexture` show their fog colour instead, as does all water with `openbl-viewer --no-water`. Water and monitors are left out of both targets. Faces using a water material that do not face up (the undersides, which use `$bottommaterial`, and the sides) are only seen from below the water and are skipped for now. Across the `ch_lotus_1` pool at 1600 × 900, the two passes take a release build from about 6 to about 8 ms per frame (a debug build from 19 to about 29 ms).
+
+**Checked** on `ch_lotus_1` (station 10 in [PROXY_CAPTURE.md](PROXY_CAPTURE.md), looking down into the pool): the floor shows through and warps as much as in the original. The warp amplitude, estimated as temporal change ÷ spatial gradient over 24–60 frames, is 3.7 px against the original's 3.8 px on lightly blurred frames, and 5.6 against 6.8 px on more blurred ones. The original's warp breaks into horizontal streaks a few pixels tall, which OpenBL does not reproduce; they look like how the hardware samples the signed dudv texture. Colours over the pool are within 10% except blue (18 against 22 of 255), but the stone rim beside the pool is about 30% darker in OpenBL as well, so that difference is the room's lighting, not the water.
+
+**Not done:** the view from below the surface (`$bottommaterial`, and fog around an underwater camera), cheap water (`$envmap` blended in between `$cheapwaterstartdistance` and `$cheapwaterenddistance`, `$forcecheap`), water in the 3D skybox (drawn without targets), `WaterWarp`, and a capture comparing the reflections.
+
 ## Still to read
 
-Water (`waterreflect.psh`, `waterrefract.psh`), eyes, the envmap and mask variants, and the compiled vertex shaders, which hold the vertex lighting and fog.
+Eyes, the envmap and mask variants, and the compiled vertex shaders, which hold the vertex lighting.

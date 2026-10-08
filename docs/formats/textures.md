@@ -76,6 +76,8 @@ Image formats used in the Steam release:
 | BGRA8888 | 12 | 48 |
 | UVWQ8888 | 23 | 11 |
 
+UVWQ8888 holds signed bytes (two's complement): the water dudv maps (`dev/water_dudv` and its kin), whose U and V offsets are small (95% within ±0.05), with W = +1. OpenBL decodes them biased by 128 like an unsigned normal map (byte 0 becomes 128), so they filter correctly and a shader reads `2·x − 1` (to within 1/255).
+
 Thumbnails are DXT1, or absent in 261 textures. 42 textures are animated (more than one frame), and 42 are cubemaps.
 
 ## Damaged textures in the Steam release

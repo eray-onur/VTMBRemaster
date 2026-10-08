@@ -43,8 +43,9 @@ struct PushConstants {
     float alpha_ref;
     std::uint32_t flags;
     std::uint32_t params_index;
+    float model_z[4]; // World z row of the model transform (water fog).
 };
-static_assert(sizeof(PushConstants) == 112);
+static_assert(sizeof(PushConstants) == 128);
 
 constexpr std::uint32_t kAlphaTest = 1;
 constexpr std::uint32_t kUnlit = 4;
@@ -400,6 +401,9 @@ void PropRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float, 16>&
         }
         const glm::mat4 mvp = view_projection * glm::make_mat4(inst.transform.data());
         std::memcpy(pc.mvp, glm::value_ptr(mvp), sizeof(pc.mvp));
+        for (std::size_t k = 0; k < 4; ++k) {
+            pc.model_z[k] = inst.transform[k * 4 + 2]; // Column-major: row 2.
+        }
         for (std::size_t h = 0; h < 18; ++h) {
             const std::uint32_t half = detail::to_half(inst.lighting.color[h / 3][h % 3] * settings.light_scale);
             pc.cube[h / 2] = (h % 2) ? ((pc.cube[h / 2] & 0xFFFFu) | (half << 16)) : half;

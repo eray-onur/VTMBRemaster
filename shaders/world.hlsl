@@ -37,7 +37,7 @@ struct VSOutput {
     [[vk::location(3)]] nointerpolation uint4 styles : TEXCOORD3;
     [[vk::location(4)]] nointerpolation float style_step : TEXCOORD4;
     [[vk::location(5)]] float2 uv2 : TEXCOORD5;
-    [[vk::location(6)]] float view_depth : TEXCOORD6;
+    [[vk::location(6)]] float2 depth_z : TEXCOORD6; // View depth, world z (for fog).
 };
 
 // Brightness of each of the 64 light styles (4 per element), the fog (2
@@ -64,7 +64,7 @@ VSOutput vs_main(VSInput input) {
     output.uv = float2(dot(tu.xyz, float3(input.uv, 1.0)), dot(tv.xyz, float3(input.uv, 1.0)));
     output.uv2 = float2(dot(material_param(4).xyz, float3(input.uv, 1.0)), dot(material_param(5).xyz, float3(input.uv, 1.0)));
     output.lightmap_uv = input.lightmap_uv;
-    output.view_depth = output.position.w;
+    output.depth_z = float2(output.position.w, input.position.z);
     output.blend = input.blend;
     output.styles = input.styles;
     output.style_step = input.style_step;
@@ -88,7 +88,7 @@ float4 ps_main(VSOutput input) : SV_Target {
         clip(base.a - pc.alpha_ref);
     }
     const float4 fog_color = style_values[kFogStart];
-    const float fog = fog_amount(input.view_depth, fog_color, style_values[kFogStart + 1]);
+    const float fog = fog_amount(input.depth_z.x, input.depth_z.y, fog_color, style_values[kFogStart + 1]);
     if (pc.flags & kModulate) {
         // The blend computes 2 * src * dst on encoded values: the original's
         // "2 x texture" in gamma space, exactly. Fog fades it to neutral (0.5).

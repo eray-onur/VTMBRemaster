@@ -11,6 +11,7 @@ struct PushConstants {
     uint flags;
     uint params_row; // Element where this mesh's material params start.
     uint flex_base;  // Element of flex slot 0's offset (float4 per slot); 0 when no flex is active.
+    float4 model_z;  // Model-to-world z row, for water fog.
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -42,7 +43,7 @@ struct VSOutput {
     float4 position : SV_Position;
     [[vk::location(0)]] float2 uv : TEXCOORD0;
     [[vk::location(1)]] float3 light : COLOR0;
-    [[vk::location(2)]] float view_depth : TEXCOORD1;
+    [[vk::location(2)]] float2 depth_z : TEXCOORD1; // View depth, world z (for fog).
 };
 
 float3 transform(uint bone, float4 v) {
@@ -68,7 +69,7 @@ VSOutput vs_main(VSInput input) {
 
     VSOutput output;
     output.position = mul(pc.mvp, float4(position, 1.0));
-    output.view_depth = output.position.w;
+    output.depth_z = float2(output.position.w, dot(pc.model_z, float4(position, 1.0)));
     const float4 tu = shader_data[pc.params_row];
     const float4 tv = shader_data[pc.params_row + 1];
     output.uv = float2(dot(tu.xyz, float3(input.uv, 1.0)), dot(tv.xyz, float3(input.uv, 1.0)));
@@ -103,7 +104,7 @@ float4 ps_main(VSOutput input) : SV_Target {
         color = lerp(color, base.rgb * shader_data[pc.params_row + 3].rgb, base.a);
     }
     const float4 fog_color = shader_data[kFogStart];
-    const float fog = fog_amount(input.view_depth, fog_color, shader_data[kFogStart + 1]);
+    const float fog = fog_amount(input.depth_z.x, input.depth_z.y, fog_color, shader_data[kFogStart + 1]);
     const float3 encoded = linear_to_srgb(color);
     const float3 result = (pc.flags & kAdditive) ? encoded * (1.0 - fog) : fogged(encoded, fog_color, fog);
     return float4(result, (pc.flags & kTranslucent) ? base.a * tint.a : 1.0);

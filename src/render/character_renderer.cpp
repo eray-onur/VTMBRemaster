@@ -42,7 +42,9 @@ struct PushConstants {
     std::uint32_t flags;
     std::uint32_t params_row; // Shader-data element where this mesh's material params start.
     std::uint32_t flex_base;  // Shader-data element of flex slot 0; 0 when no flex is active.
+    float model_z[4];         // World z row of the model transform (water fog).
 };
+static_assert(sizeof(PushConstants) == 96);
 
 constexpr std::uint32_t kAlphaTest = 1;
 constexpr std::uint32_t kUnlit = 4;
@@ -403,6 +405,9 @@ void CharacterRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float,
         pc.flex_base = flex_base;
         const glm::mat4 mvp = view_projection * glm::make_mat4(inst.transform.data());
         std::memcpy(pc.mvp, glm::value_ptr(mvp), sizeof(pc.mvp));
+        for (std::size_t k = 0; k < 4; ++k) {
+            pc.model_z[k] = inst.transform[k * 4 + 2]; // Column-major: row 2.
+        }
 
         const rhi::Pipeline* bound = nullptr;
         std::size_t mesh_index = 0;

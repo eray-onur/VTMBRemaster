@@ -2,7 +2,8 @@
 
 // Distance fog from worldspawn (or a sky_camera for the 3D skybox): linear in
 // view depth between `start` and `end`, blended on encoded colour
-// (shaders/color.hlsli; docs/RENDERING.md).
+// (shaders/color.hlsli; docs/RENDERING.md). Also the water fog seen through
+// a water surface.
 
 #include "openbl/formats/bsp.hpp"
 
@@ -16,6 +17,23 @@ struct Fog {
     bool enabled = false;
     std::array<float, 3> color{}; // Encoded (gamma) 0-1, as authored.
     float start = 0, end = 0;     // World units of view depth.
+    // Water fog, for drawing what lies below a water surface at `water_z`
+    // seen from `eye_z`: only the part of the view ray below the surface counts.
+    bool water = false;
+    float water_z = 0, eye_z = 0;
+
+    // A water material's fog ($fogcolor, $fogstart, $fogend), below `water_z`.
+    static Fog underwater(const std::array<float, 3>& color, float start, float end, float water_z, float eye_z) {
+        Fog fog;
+        fog.enabled = end > start;
+        fog.color = color;
+        fog.start = start;
+        fog.end = end;
+        fog.water = true;
+        fog.water_z = water_z;
+        fog.eye_z = eye_z;
+        return fog;
+    }
 
     // From "fogenable", "fogcolor" (0-255), "fogstart" and "fogend".
     static Fog from_entity(const formats::BspEntity& e) {
@@ -43,9 +61,12 @@ struct Fog {
         return fog;
     }
 
-    // The two float4 the shaders read: (colour, enabled) and (start, end, 0, 0).
+    // Shader fog mode: 0 none, 1 distance, 2 water (shaders/color.hlsli).
+    float mode() const { return !enabled ? 0.0f : water ? 2.0f : 1.0f; }
+
+    // The two float4 the shaders read: (colour, mode) and (start, end, water z, eye z).
     std::array<float, 8> rows() const {
-        return {color[0], color[1], color[2], enabled ? 1.0f : 0.0f, start, end, 0.0f, 0.0f};
+        return {color[0], color[1], color[2], mode(), start, end, water_z, eye_z};
     }
 };
 

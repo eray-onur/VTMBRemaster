@@ -185,6 +185,22 @@ MaterialParams params_from(const formats::MaterialProxies& vars) {
     return p;
 }
 
+// Water's dudv and normal map transform: $bumptransform or $bumpoffset
+// (materials scroll either), a matrix once TextureScroll has run, else an offset.
+std::array<float, 6> bump_transform(const formats::MaterialProxies& vars) {
+    const auto* v = vars.var("$bumptransform");
+    if (!v || !v->is_matrix) {
+        v = vars.var("$bumpoffset");
+    }
+    if (!v) {
+        return {1, 0, 0, 0, 1, 0};
+    }
+    if (v->is_matrix) {
+        return v->m;
+    }
+    return {1, 0, v->v[0], 0, 1, v->count >= 2 ? v->v[1] : v->v[0]};
+}
+
 bool is_default(const MaterialParams& p) {
     const MaterialParams d;
     return p.transform_u == d.transform_u && p.transform_v == d.transform_v && p.color == d.color &&
@@ -211,7 +227,15 @@ void MaterialSystem::register_dynamic(RenderMaterial& material, const formats::M
             continue;
         }
         proxies.set_frame_count(texture_var, static_cast<std::uint32_t>(frames.size()));
-        (normal ? material.normal_frames : material.base_frames) = std::move(frames);
+        if (material.water && texture_var == "$bumpmap") {
+            // Water steps its dudv map ($bumpmap) and normal map together.
+            material.dudv_frames = std::move(frames);
+            if (const auto normal_path = source.texture_path("$normalmap")) {
+                material.normal_frames = texture_frames(*normal_path, false);
+            }
+        } else {
+            (normal ? material.normal_frames : material.base_frames) = std::move(frames);
+        }
         (normal ? normal_var : base_var) = frame_var;
     }
     const MaterialParams initial = params_from(proxies);
@@ -243,7 +267,11 @@ void MaterialSystem::update(const formats::ProxyContext& context) {
             return static_cast<std::uint32_t>(std::max(0.0f, v->v[0])) % static_cast<std::uint32_t>(count);
         };
         d.material->base_frame = frame(d.base_frame_var, d.material->base_frames.size());
-        d.material->normal_frame = frame(d.normal_frame_var, d.material->normal_frames.size());
+        d.material->normal_frame = frame(d.normal_frame_var,
+                                         std::max(d.material->normal_frames.size(), d.material->dudv_frames.size()));
+        if (d.material->water) {
+            d.material->bump_transform = bump_transform(d.proxies);
+        }
     }
 }
 
@@ -312,24 +340,38 @@ RenderMaterial MaterialSystem::load(const std::string& name, std::optional<forma
     if (out.water) {
         out.translucent = true;
         out.no_cull = true;
-        out.normal_map = flat_normal_.get();
+        // A flat normal map is also a zero dudv offset (both 0.5, 0.5).
+        out.normal_map = out.dudv = flat_normal_.get();
         if (auto path = mat->texture_path("$normalmap")) {
             if (const auto* t = texture(*path, false)) {
                 out.normal_map = t;
             }
         }
-        // Material colours are authored in gamma space; the shader works in linear.
-        auto linear = [](std::array<float, 3> c) {
-            for (float& f : c) {
-                f = std::pow(std::max(f, 0.0f), 2.2f);
+        if (auto path = mat->texture_path("$bumpmap")) {
+            if (const auto* t = texture(*path, false)) {
+                out.dudv = t;
             }
-            return c;
+        }
+        auto number = [&](const char* key) {
+            const auto v = mat->param(key);
+            return v ? static_cast<float>(std::atof(std::string(*v).c_str())) : 0.0f;
         };
+        out.reflect = mat->param("$reflecttexture").has_value();
+        out.refract = mat->param("$refracttexture").has_value();
+        out.reflect_amount = number("$reflectamount");
+        out.refract_amount = number("$refractamount");
         if (auto c = mat->param("$fogcolor"); c && parse_vmt_color(*c)) {
-            out.fog_color = linear(*parse_vmt_color(*c));
+            out.fog_color = *parse_vmt_color(*c);
+        }
+        if (flag(*mat, "$fogenable")) {
+            out.fog_start = number("$fogstart");
+            out.fog_end = number("$fogend");
         }
         if (auto c = mat->param("$reflecttint"); c && parse_vmt_color(*c)) {
-            out.reflect_tint = linear(*parse_vmt_color(*c));
+            out.reflect_tint = *parse_vmt_color(*c);
+        }
+        if (auto c = mat->param("$refracttint"); c && parse_vmt_color(*c)) {
+            out.refract_tint = *parse_vmt_color(*c);
         }
     }
     // Tool materials are compiled into the map but never drawn.

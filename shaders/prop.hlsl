@@ -12,6 +12,7 @@ struct PushConstants {
     float alpha_ref;
     uint flags;
     uint params_index; // Row of the material params table.
+    float4 model_z;    // Model-to-world z row (world z = dot(model_z, (position, 1))), for water fog.
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -43,7 +44,7 @@ struct VSOutput {
     [[vk::location(0)]] float2 uv : TEXCOORD0;
     [[vk::location(1)]] float3 light : COLOR0;
     [[vk::location(2)]] float2 uv2 : TEXCOORD1;
-    [[vk::location(3)]] float view_depth : TEXCOORD2;
+    [[vk::location(3)]] float2 depth_z : TEXCOORD2; // View depth, world z (for fog).
 };
 
 float cube_half(uint i) {
@@ -60,7 +61,7 @@ float3 cube_color(uint face) {
 VSOutput vs_main(VSInput input) {
     VSOutput output;
     output.position = mul(pc.mvp, float4(input.position, 1.0));
-    output.view_depth = output.position.w;
+    output.depth_z = float2(output.position.w, dot(pc.model_z, float4(input.position, 1.0)));
     const float4 tu = material_param(0);
     const float4 tv = material_param(1);
     output.uv = float2(dot(tu.xyz, float3(input.uv, 1.0)), dot(tv.xyz, float3(input.uv, 1.0)));
@@ -90,7 +91,7 @@ float4 ps_main(VSOutput input) : SV_Target {
     if (pc.flags & kSelfIllum) {
         color = lerp(color, base.rgb * material_param(3).rgb, base.a);
     }
-    const float fog = fog_amount(input.view_depth, material_params[0], material_params[1]);
+    const float fog = fog_amount(input.depth_z.x, input.depth_z.y, material_params[0], material_params[1]);
     const float3 encoded = linear_to_srgb(color);
     const float3 result = (pc.flags & kAdditive) ? encoded * (1.0 - fog) : fogged(encoded, material_params[0], fog);
     return float4(result, (pc.flags & kTranslucent) ? base.a * tint.a : 1.0);

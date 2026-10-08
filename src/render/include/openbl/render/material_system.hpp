@@ -39,17 +39,29 @@ struct RenderMaterial {
     bool missing = false;    // The .vmt could not be found or parsed.
     bool camera_feed = false; // $basetexture is the camera render target (func_monitor screens).
 
-    // Water shader parameters (linear RGB).
+    // Water shader parameters. Colours are as authored (gamma-encoded): the
+    // original multiplies encoded render-target colour by them.
     bool water = false;
-    const rhi::Texture* normal_map = nullptr; // Linear; a flat normal if missing.
-    std::array<float, 3> fog_color{0.05f, 0.06f, 0.06f};
+    const rhi::Texture* normal_map = nullptr; // $normalmap, linear; a flat normal if missing.
+    const rhi::Texture* dudv = nullptr;       // $bumpmap: signed offsets, biased (0.5 = none).
+    bool reflect = false;                     // Has $reflecttexture.
+    bool refract = false;                     // Has $refracttexture.
     std::array<float, 3> reflect_tint{1.0f, 1.0f, 1.0f};
+    std::array<float, 3> refract_tint{1.0f, 1.0f, 1.0f};
+    float reflect_amount = 0.0f; // World units of displacement per unit of dudv offset.
+    float refract_amount = 0.0f;
+    std::array<float, 3> fog_color{0.0f, 0.0f, 0.0f}; // Below the surface ($fogcolor, $fogstart, $fogend).
+    float fog_start = 0.0f, fog_end = 0.0f;
+    // $bumptransform or $bumpoffset (scrolled by TextureScroll): u' = [0] u + [1] v + [2], v' = [3] u + [4] v + [5].
+    std::array<float, 6> bump_transform{1, 0, 0, 0, 1, 0};
 
     // Animation from material proxies, updated by MaterialSystem::update.
     // Frames of an animated base texture or water normal map (empty if not
-    // animated; frame 0 is also in `base` / `normal_map`).
+    // animated; frame 0 is also in `base` / `normal_map`). Water dudv frames
+    // follow the normal map's frame.
     std::vector<const rhi::Texture*> base_frames;
     std::vector<const rhi::Texture*> normal_frames;
+    std::vector<const rhi::Texture*> dudv_frames;
     std::uint32_t base_frame = 0;
     std::uint32_t normal_frame = 0;
     // Row of MaterialSystem::params() with the texture transform and tints;

@@ -189,7 +189,8 @@ void ParticleRenderer::draw(rhi::CommandList& cmd, const std::array<float, 16>& 
     pc.right[3] = fog.start;
     pc.up[3] = fog.end;
     std::copy(fog.color.begin(), fog.color.end(), pc.fog);
-    pc.fog[3] = fog.enabled ? 1.0f : 0.0f;
+    pc.fog[3] = fog.mode();
+    pc.eye[3] = fog.water_z;
     cmd.set_pipeline(*pipeline_);
     cmd.set_vertex_buffer(*corners_);
     cmd.set_index_buffer(*indices_);

@@ -28,6 +28,7 @@ struct WorldStats {
     std::size_t hidden_entities = 0; // Brush entities with StartHidden, not drawn.
     std::size_t monitors = 0;        // func_monitor screens drawing a camera view.
     std::size_t skybox_faces = 0;    // Faces in the 3D skybox's area.
+    std::size_t water_planes = 0;    // Heights of water surfaces.
     std::size_t decals = 0;        // infodecals placed on brush faces.
     std::size_t unplaced_decals = 0;
     std::size_t missing_materials = 0;
@@ -53,6 +54,24 @@ struct WorldDrawSettings {
     Fog fog;
     // true: draw only the 3D skybox (the sky_camera's area); false: everything else.
     bool skybox = false;
+    // false while drawing a water reflection or refraction (or a monitor), so
+    // no water target is sampled while it is being drawn.
+    bool draw_water = true;
+    // The water targets hold this frame's reflection and refraction; if not,
+    // water shows its fog colour.
+    bool water_targets = false;
+};
+
+// A horizontal water surface: the water faces at one height. As in the
+// original, all water samples one reflection and one refraction target per
+// frame, drawn for one plane (the nearest in view): the scene mirrored about
+// its surface (only what is above it) and the scene as seen (only what is
+// below it, in its water fog).
+struct WaterPlane {
+    float z = 0;
+    std::array<float, 3> mins{}, maxs{}; // Bounds of its faces.
+    bool skybox = false;                 // In the 3D skybox's area (drawn without targets).
+    const RenderMaterial* fog_material = nullptr; // Its water fog ($fogcolor, $fogstart, $fogend).
 };
 
 // The 3D skybox: a miniature scene in a sealed area of the map, seen from
@@ -93,6 +112,14 @@ public:
     const std::vector<MonitorView>& monitors() const { return monitors_; }
     const std::optional<SkyCamera>& sky_camera() const { return sky_camera_; }
 
+    const std::vector<WaterPlane>& water_planes() const { return water_planes_; }
+    // (Re)creates the water's reflection and refraction targets at this size
+    // (the window's, so they match the view they are sampled in); a no-op if
+    // unchanged. Null targets until then, or if the map has no water.
+    void create_water_targets(std::uint32_t width, std::uint32_t height);
+    const rhi::RenderTarget* water_reflection() const { return water_reflection_.get(); }
+    const rhi::RenderTarget* water_refraction() const { return water_refraction_.get(); }
+
 private:
     struct Batch {
         const RenderMaterial* material = nullptr;
@@ -129,7 +156,12 @@ private:
     std::vector<Batch> decals_; // infodecals, drawn over the opaque world.
     std::vector<MonitorView> monitors_;
     std::optional<SkyCamera> sky_camera_;
+    std::vector<WaterPlane> water_planes_;
+    std::unique_ptr<rhi::RenderTarget> water_reflection_, water_refraction_;
+    std::array<std::uint32_t, 2> water_target_size_{};
+    std::unique_ptr<rhi::Texture> black_;  // Stands in for water targets not drawn.
     std::unique_ptr<rhi::Pipeline> water_pipeline_;
+    std::vector<float> water_data_; // Water shader data: camera and time, world fog.
     std::array<std::unique_ptr<rhi::Pipeline>, 2> decal_pipelines_; // [alpha, modulate]
     std::unique_ptr<rhi::Sampler> decal_sampler_;                    // Clamped, so edges do not wrap.
     std::array<float, 2> white_luxel_{}; // Lightmap coordinates used by faces without lightmaps.

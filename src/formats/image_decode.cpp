@@ -123,9 +123,12 @@ Rgba decode_pixel(VtfFormat format, const std::byte* p) {
     auto b = [p](int i) { return static_cast<std::uint8_t>(p[i]); };
     switch (format) {
     case VtfFormat::RGBA8888:
-    case VtfFormat::UVWQ8888:
     case VtfFormat::UVLX8888:
         return {b(0), b(1), b(2), b(3)};
+    case VtfFormat::UVWQ8888:
+        // Signed bytes, biased to unsigned (0 -> 128) like a normal map.
+        return {static_cast<std::uint8_t>(b(0) ^ 0x80), static_cast<std::uint8_t>(b(1) ^ 0x80),
+                static_cast<std::uint8_t>(b(2) ^ 0x80), static_cast<std::uint8_t>(b(3) ^ 0x80)};
     case VtfFormat::ABGR8888:
         return {b(3), b(2), b(1), b(0)};
     case VtfFormat::ARGB8888:

@@ -29,6 +29,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdio>
@@ -48,7 +49,7 @@ namespace {
 
 constexpr const char* kUsage =
     "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--show TARGETNAME]... [--npc-sequence NAME] [--pose NAME=VALUE]... [--flex CONTROLLER=VALUE]... [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
-    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
+    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
     "                     [--validation] [--no-vsync]";
 
 struct Options {
@@ -67,6 +68,7 @@ struct Options {
     bool props = true;
     bool light_styles = true;
     bool fog = true; // --no-fog: ignore the map's distance fog.
+    bool water = true; // --no-water: no reflection and refraction passes (water shows its fog colour).
     bool characters = true;
     std::optional<std::filesystem::path> screenshot;
     std::optional<std::filesystem::path> shots;     // Shot list: "name x y z pitch yaw" per line.
@@ -144,6 +146,8 @@ Options parse_args(int argc, char** argv) {
             o.fullbright = true;
         } else if (a == "--no-fog") {
             o.fog = false;
+        } else if (a == "--no-water") {
+            o.water = false;
         } else if (a == "--no-light-styles") {
             o.light_styles = false;
         } else if (a == "--no-props") {
@@ -182,6 +186,41 @@ std::array<float, 16> to_array(const glm::mat4& m) {
     std::array<float, 16> out;
     std::memcpy(out.data(), glm::value_ptr(m), sizeof(out));
     return out;
+}
+
+// Moves a projection's near plane onto `plane` (view space; points with
+// dot(plane, (p, 1)) >= 0 are kept) while keeping its far plane: oblique
+// near-plane clipping (Lengyel), for depth 0..1. Used to draw only what is
+// above or below a water surface.
+glm::mat4 oblique_projection(glm::mat4 projection, const glm::vec4& plane) {
+    const glm::mat4 inverse = glm::inverse(projection);
+    const glm::vec4 clip_plane = glm::transpose(inverse) * plane;
+    const glm::vec4 corner = inverse * glm::vec4(clip_plane.x >= 0 ? 1.0f : -1.0f, clip_plane.y >= 0 ? 1.0f : -1.0f, 1.0f, 1.0f);
+    const glm::vec4 w_row(projection[0][3], projection[1][3], projection[2][3], projection[3][3]);
+    const glm::vec4 z_row = plane * (glm::dot(w_row, corner) / glm::dot(plane, corner));
+    for (int c = 0; c < 4; ++c) {
+        projection[c][2] = z_row[c];
+    }
+    return projection;
+}
+
+// A world-space plane (normal, offset) in the space of `view`.
+glm::vec4 plane_in_view(const glm::mat4& view, const glm::vec4& plane) {
+    return glm::transpose(glm::inverse(view)) * plane;
+}
+
+// False if the box is certainly outside the view.
+bool box_visible(const glm::mat4& view_projection, const std::array<float, 3>& lo, const std::array<float, 3>& hi) {
+    std::array<int, 5> outside{}; // Left, right, top, bottom, behind.
+    for (int i = 0; i < 8; ++i) {
+        const glm::vec4 c = view_projection * glm::vec4(i & 1 ? hi[0] : lo[0], i & 2 ? hi[1] : lo[1], i & 4 ? hi[2] : lo[2], 1.0f);
+        outside[0] += c.x < -c.w;
+        outside[1] += c.x > c.w;
+        outside[2] += c.y < -c.w;
+        outside[3] += c.y > c.w;
+        outside[4] += c.w <= 0.0f;
+    }
+    return std::find(outside.begin(), outside.end(), 8) == outside.end();
 }
 
 class Scene {
@@ -266,7 +305,7 @@ private:
 class MapScene final : public Scene {
 public:
     MapScene(rhi::Device& device, const vfs::GameFileSystem& gfs, const std::string& name, const Options& options)
-        : settings_{options.light_scale, options.fullbright, {}, 0.0f, options.light_styles} {
+        : settings_{options.light_scale, options.fullbright, {}, 0.0f, options.light_styles}, device_(device) {
         std::string path = formats::normalize_game_path(name);
         if (!path.starts_with("maps/")) {
             path.insert(0, "maps/");
@@ -286,6 +325,7 @@ public:
         world_ = std::make_unique<render::WorldRenderer>(device, *materials_, bsp_, options.shown);
         world_fog_ = render::Fog::from_entity(bsp_.entities.at(0));
         world_fog_.enabled = world_fog_.enabled && options.fog;
+        water_targets_ = options.water;
         if (options.props) {
             props_ = std::make_unique<render::PropRenderer>(device, *materials_, *assets_, bsp_, options.shown);
         }
@@ -310,7 +350,8 @@ public:
                   << " batches, lightmap " << s.lightmap_width << "x" << s.lightmap_height << ", "
                   << s.missing_materials << " missing materials, " << materials_->missing_textures()
                   << " missing textures, " << s.skipped_faces << " faces skipped, " << s.hidden_entities
-                  << " hidden brush entities, " << s.monitors << " monitors, " << s.skybox_faces << " skybox faces\n";
+                  << " hidden brush entities, " << s.monitors << " monitors, " << s.skybox_faces << " skybox faces, "
+                  << s.water_planes << " water planes\n";
         std::cout << "materials: " << materials_->proxy_materials() << " with proxies ("
                   << materials_->animated_materials() << " animated textures), " << materials_->params().size() - 1
                   << " with non-default colour or transform\n";
@@ -366,17 +407,100 @@ public:
             monitor_projection[1][1] *= -1.0f; // Vulkan clip space has +Y down.
             const float black[4] = {0, 0, 0, 1};
             cmd.begin_render_target(*monitor.target, black);
-            draw_view(cmd, monitor_projection, glm::lookAt(eye, at, glm::vec3(0, 0, 1)), eye, false);
+            View v{monitor_projection, monitor_projection, glm::lookAt(eye, at, glm::vec3(0, 0, 1)), eye};
+            v.monitors = v.water = false;
+            draw_view(cmd, v);
             cmd.end_render_target();
         }
-        draw_view(cmd, projection, view, camera.position, true);
+        settings_.water_targets = water_targets_ && draw_water_targets(cmd, projection, view, camera.position);
+        draw_view(cmd, View{projection, projection, view, camera.position});
     }
 
 private:
-    void draw_view(rhi::CommandList& cmd, const glm::mat4& projection, const glm::mat4& view, const glm::vec3& eye,
-                   bool monitors) {
-        settings_.draw_monitors = monitors;
-        if (sky_) {
+    struct View {
+        glm::mat4 projection;      // For the sky and the 3D skybox.
+        glm::mat4 clip_projection; // For the scene (oblique: clipped at a water surface).
+        glm::mat4 view;
+        glm::vec3 eye;
+        bool monitors = true;
+        bool water = true;
+        bool sky = true;
+        std::optional<render::Fog> fog; // Instead of the world's.
+    };
+
+    // The water's reflection (the scene mirrored about the surface, only what
+    // is above it, drawn mirrored left to right so the triangle winding is
+    // unchanged) and refraction (the scene below the surface, in the water's
+    // fog), drawn without water or monitors. As in the original, one pair of
+    // targets serves all water: it is drawn for the nearest plane in view.
+    // Returns false if no water is in view.
+    bool draw_water_targets(rhi::CommandList& cmd, const glm::mat4& projection, const glm::mat4& view,
+                            const glm::vec3& eye) {
+        world_->create_water_targets(device_.frame_width(), device_.frame_height());
+        if (!world_->water_reflection()) {
+            return false;
+        }
+        const glm::mat4 view_projection = projection * view;
+        const render::WaterPlane* nearest = nullptr;
+        float nearest_distance = 0.0f;
+        for (const render::WaterPlane& plane : world_->water_planes()) {
+            if (plane.skybox || !box_visible(view_projection, plane.mins, plane.maxs)) {
+                continue;
+            }
+            float d2 = 0.0f;
+            for (int k = 0; k < 3; ++k) {
+                const float d = eye[k] - std::clamp(eye[k], plane.mins[k], plane.maxs[k]);
+                d2 += d * d;
+            }
+            if (!nearest || d2 < nearest_distance) {
+                nearest = &plane;
+                nearest_distance = d2;
+            }
+        }
+        if (!nearest) {
+            return false;
+        }
+        const render::WaterPlane& plane = *nearest;
+        const bool above = eye.z >= plane.z;
+        const float black[4] = {0, 0, 0, 1};
+        cmd.begin_render_target(*world_->water_reflection(), black);
+        if (above) {
+            // Mirror about z = plane.z; the flip of x restores the winding.
+            glm::mat4 mirror(1.0f);
+            mirror[2][2] = -1.0f;
+            mirror[3][2] = 2.0f * plane.z;
+            const glm::mat4 flipped = glm::scale(glm::mat4(1.0f), glm::vec3(-1, 1, 1)) * projection;
+            const glm::mat4 mirrored_view = view * mirror;
+            View v{flipped, oblique_projection(flipped, plane_in_view(mirrored_view, glm::vec4(0, 0, 1, -plane.z))),
+                   mirrored_view, glm::vec3(eye.x, eye.y, 2.0f * plane.z - eye.z)};
+            v.monitors = v.water = false;
+            draw_view(cmd, v);
+        }
+        cmd.end_render_target();
+
+        cmd.begin_render_target(*world_->water_refraction(), black);
+        // What lies past the surface: below it from above, above it from below.
+        // A unit of overlap keeps the shore line closed.
+        const glm::vec4 keep = above ? glm::vec4(0, 0, -1, plane.z + 1.0f) : glm::vec4(0, 0, 1, 1.0f - plane.z);
+        View v{projection, oblique_projection(projection, plane_in_view(view, keep)), view, eye};
+        v.monitors = v.water = false;
+        v.sky = !above;
+        if (above && plane.fog_material) {
+            const render::RenderMaterial& m = *plane.fog_material;
+            v.fog = render::Fog::underwater(m.fog_color, m.fog_start, m.fog_end, plane.z, eye.z);
+        }
+        draw_view(cmd, v);
+        cmd.end_render_target();
+        return true;
+    }
+
+    void draw_view(rhi::CommandList& cmd, const View& v) {
+        const glm::mat4& projection = v.projection;
+        const glm::mat4& view = v.view;
+        const glm::vec3& eye = v.eye;
+        settings_.draw_monitors = v.monitors;
+        settings_.draw_water = v.water;
+        if (sky_ && v.sky) {
             sky_->draw(cmd, to_array(projection * glm::mat4(glm::mat3(view))));
         }
         // Camera axes in world space are the rows of the view rotation.
@@ -385,7 +509,7 @@ private:
         // The 3D skybox: its area seen from the sky camera plus the eye / scale,
         // same orientation, with its own fog; then the depth is cleared so the
         // world draws over it.
-        if (const auto& sky = world_->sky_camera()) {
+        if (const auto& sky = world_->sky_camera(); sky && v.sky) {
             const glm::vec3 sky_eye = glm::vec3(sky->origin[0], sky->origin[1], sky->origin[2]) + eye / sky->scale;
             const auto sm = to_array(projection * glm::mat4(glm::mat3(view)) * glm::translate(glm::mat4(1.0f), -sky_eye));
             settings_.camera_position = {sky_eye.x, sky_eye.y, sky_eye.z};
@@ -410,13 +534,14 @@ private:
             settings_.skybox = false;
             prop_settings.skybox = false;
         }
+        const render::Fog fog = v.fog.value_or(world_fog_);
         settings_.camera_position = {eye.x, eye.y, eye.z};
-        settings_.fog = world_fog_;
-        prop_settings.fog = world_fog_;
-        const auto m = to_array(projection * view);
+        settings_.fog = fog;
+        prop_settings.fog = fog;
+        const auto m = to_array(v.clip_projection * view);
         render::CharacterDrawSettings character_settings{settings_.light_scale, settings_.fullbright,
                                                          &materials_->params()};
-        character_settings.fog = world_fog_;
+        character_settings.fog = fog;
         world_->draw_opaque(cmd, m, settings_);
         if (props_) {
             props_->draw_opaque(cmd, m, prop_settings);
@@ -431,10 +556,12 @@ private:
         if (characters_) {
             characters_->draw_translucent(cmd, m, character_settings);
         }
-        particles_->draw(cmd, m, right, up, {eye.x, eye.y, eye.z}, world_fog_, false);
+        particles_->draw(cmd, m, right, up, {eye.x, eye.y, eye.z}, fog, false);
     }
 
     render::WorldDrawSettings settings_;
+    rhi::Device& device_;
+    bool water_targets_ = true; // false: water without reflection and refraction (--no-water).
     render::Fog world_fog_; // From worldspawn.
     formats::BspFile bsp_;
     std::unique_ptr<formats::ZipArchive> pak_;
