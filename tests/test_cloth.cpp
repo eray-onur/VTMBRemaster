@@ -131,6 +131,29 @@ TEST_CASE("Cloth: a piece flung far from its skinned shape restarts there") {
     CHECK(sim.positions()[1] == Vec3{100, 0, -4});
 }
 
+TEST_CASE("Cloth: clothing near the body does not sink into it") {
+    // One free particle authored 1 unit above a horizontal capsule (radius 3):
+    // gravity would lay it on the capsule (z 3); it stays within the margin.
+    formats::MdlCloth cloth;
+    cloth.particles = {0};
+    ClothSettings settings;
+    settings.shape_stiffness = 0.0f;
+    const std::vector<Vec3> skinned{{0, 0, 4}};
+    const ClothCapsule capsule{{-5, 0, 0}, {5, 0, 0}, 3.0f};
+    ClothSimulation sim(cloth, skinned, settings);
+    for (int i = 0; i < 120; ++i) {
+        sim.update(1.0f / 60.0f, skinned, std::span(&capsule, 1));
+    }
+    CHECK(sim.positions()[0][2] == doctest::Approx(4.0f - settings.body_margin));
+    // Without the rule it rests on the capsule.
+    settings.body_reach = 0.0f;
+    ClothSimulation loose(cloth, skinned, settings);
+    for (int i = 0; i < 120; ++i) {
+        loose.update(1.0f / 60.0f, skinned, std::span(&capsule, 1));
+    }
+    CHECK(loose.positions()[0][2] == doctest::Approx(3.0f).epsilon(0.01));
+}
+
 TEST_CASE("Cloth: triangle normals per particle") {
     formats::MdlCloth cloth;
     cloth.particles = {0, 1, 2};

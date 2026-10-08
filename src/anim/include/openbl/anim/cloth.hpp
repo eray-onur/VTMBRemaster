@@ -29,6 +29,13 @@ struct ClothSettings {
     // If a particle ends a step farther than this from its skinned position
     // (a teleport, or a bad frame), the piece restarts from the skinned shape.
     float max_stray = 64.0f;
+    // Free particles whose skinned position lies within this distance of a
+    // capsule's surface are clothing on the body: they may not sink deeper
+    // than `body_margin` behind their skinned position, measured away from
+    // the capsule's axis. The capsules alone are too thin to keep a skirt
+    // out of the hips. 0 = off.
+    float body_reach = 8.0f;
+    float body_margin = 0.25f;
 };
 
 // A collision capsule in model space (start, end, radius).
@@ -67,6 +74,7 @@ private:
     ClothSettings settings_;
     std::vector<Vec3> positions_;
     std::vector<Vec3> previous_;
+    std::vector<Vec3> body_out_; // Per particle, this step: out from the nearest capsule, or zero.
     float pending_ = 0.0f; // Time not yet simulated.
 };
 

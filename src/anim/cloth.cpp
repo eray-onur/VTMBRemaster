@@ -64,6 +64,26 @@ void ClothSimulation::step(std::span<const Vec3> skinned, std::span<const ClothC
             p[k] += (skinned[i][k] - p[k]) * settings_.shape_stiffness;
         }
     }
+    // Clothing on the body: the direction out from the nearest capsule axis
+    // at each particle's skinned position (zero where no capsule is near).
+    body_out_.assign(n, Vec3{});
+    if (settings_.body_reach > 0.0f) {
+        for (std::size_t i = attached_; i < n; ++i) {
+            float best = settings_.body_reach;
+            for (const ClothCapsule& cap : capsules) {
+                const Vec3 axis = sub(cap.end, cap.start);
+                const float len2 = dot(axis, axis);
+                const Vec3 rel = sub(skinned[i], cap.start);
+                const float t = len2 > 0.0f ? std::clamp(dot(rel, axis) / len2, 0.0f, 1.0f) : 0.0f;
+                const Vec3 out = sub(rel, Vec3{axis[0] * t, axis[1] * t, axis[2] * t});
+                const float dist = std::sqrt(dot(out, out));
+                if (dist > 1e-4f && dist - cap.radius < best) {
+                    best = dist - cap.radius;
+                    body_out_[i] = {out[0] / dist, out[1] / dist, out[2] / dist};
+                }
+            }
+        }
+    }
     for (std::uint32_t it = 0; it < settings_.iterations; ++it) {
         // Distance constraints, with the square root approximated around the
         // rest length: d *= rest^2 / (|d|^2 + rest^2) - 1/2. Each end moves by
@@ -105,6 +125,16 @@ void ClothSimulation::step(std::span<const Vec3> skinned, std::span<const ClothC
                 const float scale = cap.radius / std::sqrt(dist2);
                 for (int k = 0; k < 3; ++k) {
                     p[k] = closest[k] + out[k] * scale;
+                }
+            }
+        }
+        // Keep clothing from sinking into the body.
+        for (std::size_t i = attached_; i < n; ++i) {
+            const Vec3& out = body_out_[i];
+            const float depth = dot(sub(positions_[i], skinned[i]), out) + settings_.body_margin;
+            if (depth < 0.0f) {
+                for (int k = 0; k < 3; ++k) {
+                    positions_[i][k] -= out[k] * depth;
                 }
             }
         }
