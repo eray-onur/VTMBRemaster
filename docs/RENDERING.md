@@ -88,7 +88,9 @@ The colours combine on encoded values, as in the original. Materials without `$r
 
 **Checked** on `ch_lotus_1` (station 10 in [PROXY_CAPTURE.md](PROXY_CAPTURE.md), looking down into the pool): the floor shows through and warps as much as in the original. The warp amplitude, estimated as temporal change ÷ spatial gradient over 24–60 frames, is 3.7 px against the original's 3.8 px on lightly blurred frames, and 5.6 against 6.8 px on more blurred ones. The original's warp breaks into horizontal streaks a few pixels tall, which OpenBL does not reproduce; they look like how the hardware samples the signed dudv texture. Colours over the pool are within 10% except blue (18 against 22 of 255), but the stone rim beside the pool is about 30% darker in OpenBL as well, so that difference is the room's lighting, not the water.
 
-**Not done:** the view from below the surface (`$bottommaterial`, and fog around an underwater camera), cheap water (`$envmap` blended in between `$cheapwaterstartdistance` and `$cheapwaterenddistance`, `$forcecheap`), water in the 3D skybox (drawn without targets), `WaterWarp`, and a capture comparing the reflections.
+**Reflections differ, deliberately.** From a level view across the same pool (camera 760.13 0.13 −194.94), the original's far half of the pool is almost black: the refraction fogs out along the long underwater ray, and no reflection of the red beams or lanterns shows. OpenBL reflects them clearly at that angle. Whether the original drops the reflection there (blend state, cheap water, or the shader's constants) is not settled. OpenBL keeps its reflections as an improvement rather than matching the black water.
+
+**Not done:** the view from below the surface (`$bottommaterial`, and fog around an underwater camera), cheap water (`$envmap` blended in between `$cheapwaterstartdistance` and `$cheapwaterenddistance`, `$forcecheap`), water in the 3D skybox (drawn without targets), and `WaterWarp`.
 
 ## Still to read
 
