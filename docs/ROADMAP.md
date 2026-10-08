@@ -71,7 +71,7 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Light styles: toggling switchable lights at runtime (needs entity I/O, Phase 2)
 - [x] 2D skybox
 - [x] 3D skybox (`sky_camera` area drawn at 1/scale behind the world) and distance fog from `worldspawn`; skybox fog confirmed against the original
-- [ ] Fog strength: the original's world fog looks about twice as strong on `ch_hub_1`; check a second map
+- [x] Fog strength measured on `ch_hub_1` and `sm_hub_1`: 1 − (1 − f)² of the linear fog (within 0.05 of the original)
 - [x] Water placeholder: fog colour, Fresnel blend to a dim reflection tint, animated normal-map ripples
 - [ ] Real water: reflection and refraction render targets, underwater fog, `$bottommaterial`, cheap-water distances
 - [ ] Light styles, translucent sorting, cubemap reflections, prop fade distances

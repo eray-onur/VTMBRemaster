@@ -27,6 +27,7 @@ struct WorldStats {
     std::size_t skipped_faces = 0; // Tool, sky and not-yet-supported surfaces.
     std::size_t hidden_entities = 0; // Brush entities with StartHidden, not drawn.
     std::size_t monitors = 0;        // func_monitor screens drawing a camera view.
+    std::size_t skybox_faces = 0;    // Faces in the 3D skybox's area.
     std::size_t decals = 0;        // infodecals placed on brush faces.
     std::size_t unplaced_decals = 0;
     std::size_t missing_materials = 0;

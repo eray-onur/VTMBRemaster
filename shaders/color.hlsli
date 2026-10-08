@@ -11,7 +11,10 @@ float fog_amount(float view_depth, float4 fog_color, float4 fog_range) {
     if (fog_color.a < 0.5 || fog_range.y <= fog_range.x) {
         return 0.0;
     }
-    return saturate((view_depth - fog_range.x) / (fog_range.y - fog_range.x));
+    // Linear in depth, then 1 - (1 - f)^2, as if fogged twice: measured
+    // against the original on ch_hub_1 and sm_hub_1 (docs/RENDERING.md).
+    const float f = saturate((view_depth - fog_range.x) / (fog_range.y - fog_range.x));
+    return 1.0 - (1.0 - f) * (1.0 - f);
 }
 
 float3 linear_to_srgb(float3 c);

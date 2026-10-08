@@ -52,7 +52,16 @@ Base texture × vertex colour, with no doubling.
 
 **3D skybox.** 42 maps have a `sky_camera`: a miniature scene (`scale` 16) in a sealed area of the map. In every one the camera's BSP area is an area of its own (`tests/test_bsp.cpp`), so OpenBL draws that area's faces, props and particles as the skybox and leaves them out of the main view. Each frame: the 2D sky, then the skybox seen from the sky camera's origin plus the eye position divided by the scale (same orientation) with the sky camera's own fog, then a depth clear, then the world. The skybox fog's distances are world units, so they are divided by the scale in skybox space: measured on `ch_hub_1` against the original, the distant towers are fully fogged (fraction 1.0) and the street's end gate 0.9, which the scaled distances reproduce and unscaled ones do not (the towers then stay crisp).
 
-**Open: fog strength.** On `ch_hub_1` the original's world fog is about twice as strong as `fogstart`/`fogend` predict (fog fraction 0.30 against OpenBL's 0.15 at the far end of the street, 0.70 against 0.41 on the far buildings). One map is not enough to tell whether distances are measured differently (radially, or doubled) or the curve differs; a second map with fog (e.g. `la_hub_1`) needs capturing.
+**Fog strength (measured).** The original's fog is stronger than a straight line from `fogstart` to `fogend`: it matches 1 − (1 − f)², with f that linear fraction, as if the fog were applied twice. Fog fractions (how far a pixel moves towards the fog colour) measured against the original:
+
+| Place | Original | Linear f | 1 − (1 − f)² (OpenBL) |
+|---|---|---|---|
+| `ch_hub_1`, far end of the street | 0.30 | 0.15 | 0.28 |
+| `ch_hub_1`, far buildings | 0.71 | 0.41 | 0.66 |
+| `sm_hub_1`, street lamps half way down the street | 0.37 | 0.18 | 0.32 |
+| `sm_hub_1`, far end of the street | 0.61 | 0.36 | 0.59 |
+
+Doubling the distance instead fits worse (it overshoots the far values). Whether fog uses view depth or radial distance is not settled; OpenBL uses view depth.
 
 ## Monitors (`func_monitor` + `point_camera`)
 

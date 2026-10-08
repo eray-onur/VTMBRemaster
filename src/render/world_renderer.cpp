@@ -227,6 +227,7 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
             const std::string& name = bsp.texdatas[texdata].material;
             const int screen = monitor >= 0 && materials.material(name).camera_feed ? monitor : -1;
             const bool skybox = inst.entity ? entity_in_skybox : in_skybox[f] != 0;
+            stats_.skybox_faces += skybox;
             by_material[{name, screen, skybox}].push_back({f, inst.origin});
         }
     }

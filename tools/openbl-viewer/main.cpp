@@ -48,7 +48,7 @@ namespace {
 
 constexpr const char* kUsage =
     "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--show TARGETNAME]... [--npc-sequence NAME] [--pose NAME=VALUE]... [--flex CONTROLLER=VALUE]... [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
-    "                     [--light-scale F] [--fullbright] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
+    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
     "                     [--validation] [--no-vsync]";
 
 struct Options {
@@ -66,6 +66,7 @@ struct Options {
     bool fullbright = false;
     bool props = true;
     bool light_styles = true;
+    bool fog = true; // --no-fog: ignore the map's distance fog.
     bool characters = true;
     std::optional<std::filesystem::path> screenshot;
     std::optional<std::filesystem::path> shots;     // Shot list: "name x y z pitch yaw" per line.
@@ -141,6 +142,8 @@ Options parse_args(int argc, char** argv) {
             o.light_scale = std::stof(next());
         } else if (a == "--fullbright") {
             o.fullbright = true;
+        } else if (a == "--no-fog") {
+            o.fog = false;
         } else if (a == "--no-light-styles") {
             o.light_styles = false;
         } else if (a == "--no-props") {
@@ -282,6 +285,7 @@ public:
         materials_ = std::make_unique<render::MaterialSystem>(device, *assets_);
         world_ = std::make_unique<render::WorldRenderer>(device, *materials_, bsp_, options.shown);
         world_fog_ = render::Fog::from_entity(bsp_.entities.at(0));
+        world_fog_.enabled = world_fog_.enabled && options.fog;
         if (options.props) {
             props_ = std::make_unique<render::PropRenderer>(device, *materials_, *assets_, bsp_, options.shown);
         }
@@ -306,7 +310,7 @@ public:
                   << " batches, lightmap " << s.lightmap_width << "x" << s.lightmap_height << ", "
                   << s.missing_materials << " missing materials, " << materials_->missing_textures()
                   << " missing textures, " << s.skipped_faces << " faces skipped, " << s.hidden_entities
-                  << " hidden brush entities, " << s.monitors << " monitors\n";
+                  << " hidden brush entities, " << s.monitors << " monitors, " << s.skybox_faces << " skybox faces\n";
         std::cout << "materials: " << materials_->proxy_materials() << " with proxies ("
                   << materials_->animated_materials() << " animated textures), " << materials_->params().size() - 1
                   << " with non-default colour or transform\n";
