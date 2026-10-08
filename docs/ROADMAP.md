@@ -73,10 +73,10 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] 3D skybox (`sky_camera` area drawn at 1/scale behind the world) and distance fog from `worldspawn`; skybox fog confirmed against the original
 - [x] Fog strength measured on `ch_hub_1` and `sm_hub_1`: 1 − (1 − f)² of the linear fog (within 0.05 of the original)
 - [x] Water, following the original's DX9 water shaders: reflection and refraction render targets per water plane (oblique clipping at the surface), dudv distortion projected from world units, (1 − cos)⁴ Fresnel, water fog by the view ray's length under the surface; warp amplitude checked against the `ch_lotus_1` pool capture ([RENDERING.md](RENDERING.md))
-- [ ] Water: the view from below (`$bottommaterial`, underwater fog around the camera), cheap water (`$envmap` and the cheap-water distances, `$forcecheap`), `WaterWarp`, water in the 3D skybox (reflections compared: OpenBL's are deliberately stronger than the original's at grazing angles)
+- [ ] Water: the view from below (`$bottommaterial`, underwater fog around the camera), `WaterWarp`, expensive water in the 3D skybox (reflections compared: OpenBL's are deliberately stronger than the original's at grazing angles)
 - [x] Environment maps on the world: cube maps from the map pakfile (RHI cube textures), added after lighting with tint, contrast, saturation and the three mask kinds, as the original's DX9 shader does; road brightness checked on `sm_hub_1`; viewer `--no-envmap`
 - [x] Environment maps on props and characters (`VertexLitGeneric`), nearest cubemap per model; checked on the `sm_hub_1` manhole
-- [ ] Environment maps: `$envmapmode`, `$fresnelreflection`, sphere-map envmaps (`$envmapsphere`), envmaps on water at a distance (cheap water)
+- [x] Environment maps: `$fresnelreflection` (unused; default none), `$envmapmode` (not read by the shaders), sphere maps resampled to cubes, cheap water (`$forcecheap`, distance blend; works in the 3D skybox)
 - [ ] Translucent sorting, prop fade distances
 - [x] Parity tooling: viewer shot lists (`--shots`, `--fov`, `--size`), `openbl-cli image compare` (see docs/PARITY.md)
 - [x] Lightmap brightness measured against original-game captures: base × luxel in linear terms (scale 1.0, was 2.3); capture method verified; `--fov` follows the game's 4:3-horizontal convention ([PARITY.md](PARITY.md))

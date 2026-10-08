@@ -48,16 +48,19 @@ struct PushConstants {
 static_assert(sizeof(PushConstants) == 80);
 
 struct WaterPushConstants {
-    float mvp[16];
     float refract[4]; // Tint (encoded), amount.
     float reflect[4]; // Tint (encoded; the original's DX9 shader does not apply it), amount.
     float bump_u[4];  // dudv and normal map transform, u row; w: flags.
     float bump_v[4];  // v row.
+    float cheap[4];   // Fog colour (encoded) of cheap water.
+    float cheap_range[4]; // Cheap-water start and end distances.
 };
-static_assert(sizeof(WaterPushConstants) == 128);
+static_assert(sizeof(WaterPushConstants) == 96);
 
 constexpr std::uint32_t kWaterReflect = 1;
 constexpr std::uint32_t kWaterRefract = 2;
+constexpr std::uint32_t kWaterCheap = 4;
+constexpr std::uint32_t kWaterForceCheap = 8;
 
 constexpr std::uint32_t kAlphaTest = 1;
 constexpr std::uint32_t kBlendLayers = 2;
@@ -488,7 +491,7 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
     wd.pixel.spirv = openbl_water_ps;
     wd.vertex_stride = sizeof(Vertex);
     wd.attributes = {{0, rhi::Format::RGB32_Float, 0}, {1, rhi::Format::RG32_Float, 12}};
-    wd.texture_count = 4; // dudv, normal map, reflection, refraction.
+    wd.texture_count = 5; // dudv, normal map, reflection, refraction, envmap (cheap water).
     wd.push_constant_size = sizeof(WaterPushConstants);
     wd.shader_data = true;
     wd.cull = rhi::CullMode::None;
@@ -499,6 +502,7 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
     const std::array<std::uint8_t, 4> black{0, 0, 0, 255};
     const std::span<const std::byte> black_mip = std::as_bytes(std::span(black));
     black_ = device.create_texture({1, 1, 1, rhi::Format::RGBA8_UNorm}, std::span(&black_mip, 1));
+    black_cube_ = materials.black_cube();
 
     // Materials without an environment map bind stand-ins (the shader skips them).
     auto envmap_or = [&](const RenderMaterial& m) { return m.envmap ? m.envmap : materials.black_cube(); };
@@ -553,8 +557,9 @@ void WorldRenderer::create_water_targets(std::uint32_t width, std::uint32_t heig
         const rhi::Texture* reflection = sampled ? &water_reflection_->texture() : black_.get();
         const rhi::Texture* refraction = sampled ? &water_refraction_->texture() : black_.get();
         const RenderMaterial& m = *batch.material;
+        const rhi::Texture* envmap = m.envmap ? m.envmap : black_cube_;
         auto group = [&](const rhi::Texture* dudv, const rhi::Texture* normal) {
-            const rhi::Texture* textures[] = {dudv, normal, reflection, refraction};
+            const rhi::Texture* textures[] = {dudv, normal, reflection, refraction, envmap};
             return device_.create_bind_group(*water_pipeline_, *sampler_, textures);
         };
         batch.bind_group = group(m.dudv, m.normal_map);
@@ -743,14 +748,15 @@ void WorldRenderer::draw_water(rhi::CommandList& cmd, const std::array<float, 16
         return;
     }
     cmd.set_pipeline(*water_pipeline_);
-    // Shader data: camera position and time, then the world fog.
+    // Shader data: camera position and time, the world fog, then the
+    // view-projection matrix (the same for every water batch).
     const auto fog = settings.fog.rows();
     water_data_.assign({settings.camera_position[0], settings.camera_position[1], settings.camera_position[2],
                         settings.time});
     water_data_.insert(water_data_.end(), fog.begin(), fog.end());
+    water_data_.insert(water_data_.end(), vp.begin(), vp.end());
     cmd.set_shader_data(water_data_.data(), water_data_.size() * sizeof(float));
     WaterPushConstants pc{};
-    std::memcpy(pc.mvp, vp.data(), sizeof(pc.mvp));
     for (const Batch& batch : water_) {
         if (batch.skybox != settings.skybox) {
             continue;
@@ -767,7 +773,18 @@ void WorldRenderer::draw_water(rhi::CommandList& cmd, const std::array<float, 16
         }
         pc.refract[3] = m.refract_amount;
         pc.reflect[3] = m.reflect_amount;
-        pc.bump_u[3] = static_cast<float>((targets && m.reflect ? kWaterReflect : 0) | (refract ? kWaterRefract : 0));
+        // Cheap water needs no render targets, so it works in the 3D skybox too
+        // (la_dane_1's open sea is skybox water).
+        const bool cheap = m.envmap && (m.force_cheap || m.cheap_end > m.cheap_start);
+        pc.bump_u[3] = static_cast<float>((targets && m.reflect ? kWaterReflect : 0) | (refract ? kWaterRefract : 0) |
+                                          (cheap ? kWaterCheap : 0) | (cheap && m.force_cheap ? kWaterForceCheap : 0));
+        for (std::size_t k = 0; k < 3; ++k) {
+            pc.cheap[k] = m.fog_color[k];
+        }
+        // Distances are world units; the 3D skybox is drawn at 1/scale (as for its fog).
+        const float scale = batch.skybox && sky_camera_ ? sky_camera_->scale : 1.0f;
+        pc.cheap_range[0] = m.cheap_start / scale;
+        pc.cheap_range[1] = m.cheap_end / scale;
         cmd.set_bind_group(batch.current_bind_group());
         cmd.push_constants(&pc, sizeof(pc));
         cmd.draw_indexed(batch.index_count, batch.first_index);

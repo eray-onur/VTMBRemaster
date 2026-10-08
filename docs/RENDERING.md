@@ -24,6 +24,11 @@ The original works in **gamma space**: colours from textures are used as stored,
 
   The mask is `$envmapmask` (colour), 1 − base alpha with `$basealphaenvmapmask`, or the bump map's alpha with `$normalmapalphaenvmapmask`.
 
+  Other parameters:
+  - **`$fresnelreflection`** (help text in the shader DLL: "0.0 == no fresnel, 1.0 == full fresnel") is set by no shipped material. The default is no Fresnel, and the road brightness above confirms it: full Fresnel would remove almost all of the near road's reflection.
+  - **`$envmapmode` and `$envmapcameraspace`** are registered only by `MaterialSystem.dll`, as generic material flags. No shader reads them, so OpenBL ignores them too.
+  - **`$envmapsphere`** marks a 2D sphere map (a mirrored ball seen from the camera) instead of a cube. Only three real materials use it: `dev/dev_envmap` and the two breakable-glass shard materials. OpenBL resamples sphere maps into 32 × 32 cube maps at load time, as if seen looking along +x, so the shaders keep one lookup.
+
   **Cubemaps** are in each map's pakfile as `materials/maps/<map>/c<x>_<y>_<z>` (32 × 32, 7 faces, the 7th a sphere map) plus `cubemapdefault`. The map compiler writes per-cubemap `patch` copies of the materials that use one (`<material>_<x>_<y>_<z>.vmt`, inserting `$envmap`). Materials it left with `env_cubemap` get the default cubemap. Faces are in Source's world axis order, so a world-space reflection vector samples them directly, as a cube map.
 
   **Wet streets:** street materials drive `$envmaptint` with `GlobalWetness`, so they only shine in rain. The road outside the pawn shop on `sm_hub_1` is not one of them. Measured against the original (camera −1839.87 −2179.87 −40, pitch 9.22, yaw 325.05), its mean colour is 74 65 45 near and 94 82 57 further away. OpenBL gives 69 60 37 and 93 81 55 with environment maps, and 49 38 17 and 80 67 39 without.
@@ -102,7 +107,9 @@ The colours combine on encoded values, as in the original. Materials without `$r
 
 **Reflections differ, deliberately.** From a level view across the same pool (camera 760.13 0.13 −194.94), the original's far half of the pool is almost black: the refraction fogs out along the long underwater ray, and no reflection of the red beams or lanterns shows. OpenBL reflects them clearly at that angle. Whether the original drops the reflection there (blend state, cheap water, or the shader's constants) is not settled. OpenBL keeps its reflections as an improvement rather than matching the black water.
 
-**Not done:** the view from below the surface (`$bottommaterial`, and fog around an underwater camera), cheap water (`$envmap` blended in between `$cheapwaterstartdistance` and `$cheapwaterenddistance`, `$forcecheap`), water in the 3D skybox (drawn without targets), and `WaterWarp`.
+**Cheap water.** The original's `watercheap_ps20_old` draws `$fogcolor` plus the water's `$envmap`, sampled with the eye vector reflected about the normal-mapped normal and weighted by (1 − cos)² (not the expensive shader's fourth power), with no refraction or tint. OpenBL blends from expensive to cheap water between `$cheapwaterstartdistance` and `$cheapwaterenddistance` from the eye, per pixel (the help text in the shader DLL calls this a transition). `$forcecheap` water is cheap everywhere. In the 3D skybox, the distances are divided by the skybox scale, as for its fog, and cheap water needs no render targets. So the open sea around `la_dane_1` (skybox water, `dev_waterbeneath2`, cheap from 500 to 1000 units) now shows the cubemap's waves instead of flat fog colour.
+
+**Not done:** the view from below the surface (`$bottommaterial`, and fog around an underwater camera), expensive water in the 3D skybox (no targets there; it shows its fog colour until cheap water takes over), and `WaterWarp`.
 
 ## Still to read
 

@@ -1,6 +1,7 @@
 #include "openbl/render/material_system.hpp"
 
 #include "openbl/formats/error.hpp"
+#include "openbl/formats/image_decode.hpp"
 #include "openbl/formats/path.hpp"
 #include "openbl/formats/tth.hpp"
 #include "openbl/formats/vmt.hpp"
@@ -79,6 +80,59 @@ MaterialSystem::MaterialSystem(rhi::Device& device, const AssetSource& assets)
 }
 
 MaterialSystem::~MaterialSystem() = default;
+
+// A sphere map ($envmapsphere: a 2D picture of a mirrored ball, seen from the
+// camera) resampled into a cube map, so the shaders need one lookup only. The
+// sphere map is view-dependent; the cube treats it as seen looking along +x
+// (Source's forward), with z up.
+const rhi::Texture* MaterialSystem::sphere_cubemap(const std::string& path) {
+    const std::string key = path + "#sphere";
+    if (auto it = textures_.find(key); it != textures_.end()) {
+        return it->second.get();
+    }
+    std::unique_ptr<rhi::Texture> cube;
+    try {
+        if (auto vtf = read_vtf(path)) {
+            const auto& h = vtf->header();
+            const std::uint32_t m = vtf->largest_available_mip();
+            const std::uint32_t w = vtf->mip_width(m), hgt = vtf->mip_height(m);
+            const auto rgba = formats::decode_to_rgba8(h.format, vtf->image(m, 0, 0), w, hgt);
+            constexpr std::uint32_t kSize = 32;
+            std::vector<std::uint8_t> faces(std::size_t{kSize} * kSize * 4 * 6);
+            for (std::uint32_t f = 0; f < 6; ++f) {
+                for (std::uint32_t y = 0; y < kSize; ++y) {
+                    for (std::uint32_t x = 0; x < kSize; ++x) {
+                        // Direction of this texel (Vulkan/D3D cube face conventions).
+                        const float s = 2.0f * (static_cast<float>(x) + 0.5f) / kSize - 1.0f;
+                        const float t = 2.0f * (static_cast<float>(y) + 0.5f) / kSize - 1.0f;
+                        const std::array<std::array<float, 3>, 6> dirs{{{1, -t, -s}, {-1, -t, s}, {s, 1, t},
+                                                                        {s, -1, -t}, {s, -t, 1}, {-s, -t, -1}}};
+                        const auto& d = dirs[f];
+                        // To view space looking along +x: right = -y, up = z, towards the viewer = -x.
+                        const float vx = -d[1], vy = d[2], vz = -d[0];
+                        const float len = std::sqrt(vx * vx + vy * vy + vz * vz);
+                        const float rx = vx / len, ry = vy / len, rz = vz / len;
+                        const float mm = 2.0f * std::sqrt(rx * rx + ry * ry + (rz + 1.0f) * (rz + 1.0f));
+                        const float u = mm > 0.0f ? rx / mm + 0.5f : 0.5f;
+                        const float v = mm > 0.0f ? -ry / mm + 0.5f : 0.5f;
+                        const auto px = std::min(w - 1, static_cast<std::uint32_t>(u * static_cast<float>(w)));
+                        const auto py = std::min(hgt - 1, static_cast<std::uint32_t>(v * static_cast<float>(hgt)));
+                        const std::size_t src = (std::size_t{py} * w + px) * 4;
+                        const std::size_t dst = ((std::size_t{f} * kSize + y) * kSize + x) * 4;
+                        std::copy_n(rgba.begin() + static_cast<std::ptrdiff_t>(src), 4, faces.begin() + static_cast<std::ptrdiff_t>(dst));
+                    }
+                }
+            }
+            rhi::TextureDesc desc{kSize, kSize, 1, rhi::Format::RGBA8_sRGB};
+            desc.cube = true;
+            const std::span<const std::byte> mip = std::as_bytes(std::span(faces));
+            cube = device_.create_texture(desc, std::span(&mip, 1));
+        }
+    } catch (const formats::FormatError& e) {
+        std::fprintf(stderr, "texture %s: %s\n", path.c_str(), e.what());
+    }
+    return textures_.emplace(key, std::move(cube)).first->second.get();
+}
 
 void MaterialSystem::set_map(const std::string& map_name, const std::vector<formats::BspCubemap>& cubemaps) {
     map_dir_ = "materials/maps/" + map_name + "/";
@@ -392,11 +446,11 @@ RenderMaterial MaterialSystem::load(const std::string& name, std::optional<forma
     }
     // Environment map: a cube texture; "env_cubemap" (left unpatched by the
     // map compiler, e.g. on models) means the map's default cubemap.
-    if (auto env = mat->param("$envmap"); env && !env->empty() && out.shader != "water" && out.shader != "waterwarp") {
+    if (auto env = mat->param("$envmap"); env && !env->empty()) {
         const std::string path = formats::normalize_game_path(*env) == "env_cubemap" ? default_envmap_
                                                                                      : formats::material_texture_path(*env);
         if (!path.empty()) {
-            const auto* t = texture(path);
+            const auto* t = flag(*mat, "$envmapsphere") ? sphere_cubemap(path) : texture(path);
             if (t && t->desc().cube) {
                 out.envmap = t;
                 out.envmap_nearest = formats::normalize_game_path(*env) == "env_cubemap";
@@ -454,6 +508,9 @@ RenderMaterial MaterialSystem::load(const std::string& name, std::optional<forma
         if (auto c = mat->param("$refracttint"); c && parse_vmt_color(*c)) {
             out.refract_tint = *parse_vmt_color(*c);
         }
+        out.cheap_start = number("$cheapwaterstartdistance");
+        out.cheap_end = number("$cheapwaterenddistance");
+        out.force_cheap = flag(*mat, "$forcecheap");
     }
     // Tool materials are compiled into the map but never drawn.
     for (const char* tool : {"%compilenodraw", "%compiletrigger", "%compileclip", "%compileplayerclip",

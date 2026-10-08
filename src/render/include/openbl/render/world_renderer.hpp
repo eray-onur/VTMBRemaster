@@ -161,6 +161,7 @@ private:
     std::unique_ptr<rhi::RenderTarget> water_reflection_, water_refraction_;
     std::array<std::uint32_t, 2> water_target_size_{};
     std::unique_ptr<rhi::Texture> black_;  // Stands in for water targets not drawn.
+    const rhi::Texture* black_cube_ = nullptr; // Stands in for a missing water envmap (MaterialSystem's).
     std::unique_ptr<rhi::Pipeline> water_pipeline_;
     std::vector<float> water_data_; // Water shader data: camera and time, world fog.
     std::array<std::unique_ptr<rhi::Pipeline>, 2> decal_pipelines_; // [alpha, modulate]

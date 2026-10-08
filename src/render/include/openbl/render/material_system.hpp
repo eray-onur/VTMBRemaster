@@ -65,6 +65,11 @@ struct RenderMaterial {
     float refract_amount = 0.0f;
     std::array<float, 3> fog_color{0.0f, 0.0f, 0.0f}; // Below the surface ($fogcolor, $fogstart, $fogend).
     float fog_start = 0.0f, fog_end = 0.0f;
+    // Cheap water: blends to fog colour + `envmap` between these distances
+    // from the eye ($cheapwaterstartdistance, $cheapwaterenddistance; both 0:
+    // never), or everywhere with $forcecheap.
+    float cheap_start = 0.0f, cheap_end = 0.0f;
+    bool force_cheap = false;
     // $bumptransform or $bumpoffset (scrolled by TextureScroll): u' = [0] u + [1] v + [2], v' = [3] u + [4] v + [5].
     std::array<float, 6> bump_transform{1, 0, 0, 0, 1, 0};
 
@@ -145,6 +150,7 @@ private:
     RenderMaterial load(const std::string& name, std::optional<formats::Material>& source);
     void register_dynamic(RenderMaterial& material, const formats::Material& source);
     std::optional<formats::VtfTexture> read_vtf(const std::string& path);
+    const rhi::Texture* sphere_cubemap(const std::string& path);
 
     rhi::Device& device_;
     const AssetSource& assets_;
