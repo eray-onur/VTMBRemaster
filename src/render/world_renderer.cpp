@@ -30,8 +30,9 @@ struct Vertex {
     float blend;
     std::uint8_t styles[4]; // Light styles of the face; 255 = unused.
     float style_step;       // U distance between consecutive style blocks in the atlas.
+    float normal[3];        // Smoothed over the face's triangles (displacements curve).
 };
-static_assert(sizeof(Vertex) == 40);
+static_assert(sizeof(Vertex) == 52);
 
 // Lightmap styles drawn per face (faces store up to 8; the Steam release uses at most 4).
 constexpr std::size_t kMaxFaceStyles = 4;
@@ -66,6 +67,8 @@ constexpr std::uint32_t kTranslucent = 16;
 constexpr std::uint32_t kModulate = 32;
 constexpr std::uint32_t kMultiplyLayers = 64;
 constexpr std::uint32_t kAdditive = 128;
+constexpr std::uint32_t kEnvmap = 256;
+constexpr std::uint32_t kEnvmapMaskShift = 9; // 2 bits: RenderMaterial::EnvmapMask.
 
 // Source polygons are wound clockwise seen from the front, and stay clockwise
 // in Vulkan framebuffer space with our Y-flipped projection (verified visually
@@ -87,6 +90,44 @@ bool face_has_lightmap(const BspFile& bsp, const BspFace& face) {
 
 std::size_t face_styles(const BspFace& face) {
     return std::min(face.style_count(), kMaxFaceStyles);
+}
+
+// Per-vertex normals of a face mesh: its triangles' normals summed and
+// normalised, turned to the face's front (so displacements curve smoothly).
+std::vector<std::array<float, 3>> face_normals(const BspFile& bsp, std::size_t f, const formats::BspFaceMesh& mesh) {
+    const BspFace& face = bsp.faces[f];
+    formats::Vec3 front = bsp.planes[face.plane].normal;
+    if (face.side) {
+        for (float& c : front) {
+            c = -c;
+        }
+    }
+    std::vector<std::array<float, 3>> out(mesh.positions.size(), {0, 0, 0});
+    for (std::size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        const auto& a = mesh.positions[mesh.indices[i]];
+        const auto& b = mesh.positions[mesh.indices[i + 1]];
+        const auto& c = mesh.positions[mesh.indices[i + 2]];
+        const float e1[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+        const float e2[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+        const float n[3] = {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]};
+        for (std::size_t k = 0; k < 3; ++k) {
+            for (int j = 0; j < 3; ++j) {
+                out[mesh.indices[i + k]][static_cast<std::size_t>(j)] += n[j];
+            }
+        }
+    }
+    for (auto& n : out) {
+        const float len = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+        if (len < 1e-6f) {
+            n = front;
+            continue;
+        }
+        const float sign = (n[0] * front[0] + n[1] * front[1] + n[2] * front[2]) < 0.0f ? -1.0f : 1.0f;
+        for (float& c : n) {
+            c *= sign / len;
+        }
+    }
+    return out;
 }
 
 // A brush model instance: the world (model 0) or a brush entity at its origin.
@@ -322,6 +363,7 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
         for (const FaceRef& ref : faces) {
             const auto mesh = formats::build_face_mesh(bsp, ref.face);
             const auto base = static_cast<std::uint32_t>(vertices.size());
+            const auto normals = face_normals(bsp, ref.face, mesh);
             for (std::size_t v = 0; v < mesh.positions.size(); ++v) {
                 Vertex out{};
                 for (int k = 0; k < 3; ++k) {
@@ -331,6 +373,7 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
                 out.uv[1] = mesh.uvs[v][1];
                 light_vertex(out, ref.face, mesh.lightmap_uvs[v]);
                 out.blend = mesh.alphas[v];
+                std::copy(normals[v].begin(), normals[v].end(), out.normal);
                 vertices.push_back(out);
             }
             for (std::uint32_t idx : mesh.indices) {
@@ -385,6 +428,7 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
                 out.uv[0] = piece.uvs[v][0];
                 out.uv[1] = piece.uvs[v][1];
                 light_vertex(out, piece.face, piece.lightmap_uvs[v]);
+                std::copy(piece.normal.begin(), piece.normal.end(), out.normal);
                 vertices.push_back(out);
             }
             // A convex polygon in the face's winding: a triangle fan.
@@ -416,8 +460,9 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
                      {2, rhi::Format::RG32_Float, 20},
                      {3, rhi::Format::R32_Float, 28},
                      {4, rhi::Format::RGBA8_UInt, 32},
-                     {5, rhi::Format::R32_Float, 36}};
-    pd.texture_count = 3;
+                     {5, rhi::Format::R32_Float, 36},
+                     {6, rhi::Format::RGB32_Float, 40}};
+    pd.texture_count = 5; // Base, second base, lightmap, envmap (cube), envmap mask.
     pd.push_constant_size = sizeof(PushConstants);
     pd.shader_data = true;
     pd.front_counter_clockwise = kFrontCounterClockwise;
@@ -455,19 +500,23 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
     const std::span<const std::byte> black_mip = std::as_bytes(std::span(black));
     black_ = device.create_texture({1, 1, 1, rhi::Format::RGBA8_UNorm}, std::span(&black_mip, 1));
 
+    // Materials without an environment map bind stand-ins (the shader skips them).
+    auto envmap_or = [&](const RenderMaterial& m) { return m.envmap ? m.envmap : materials.black_cube(); };
+    auto mask_or = [&](const RenderMaterial& m) { return m.envmap_mask ? m.envmap_mask : materials.white(); };
     sampler_ = device.create_sampler({});
     for (auto* list : {&opaque_, &translucent_}) {
         for (Batch& batch : *list) {
             const RenderMaterial& m = *batch.material;
             const rhi::Texture* base =
                 batch.monitor >= 0 ? &monitors_[static_cast<std::size_t>(batch.monitor)].target->texture() : m.base;
-            const rhi::Texture* textures[] = {base, m.base2, lightmap_.get()};
+            const rhi::Texture* textures[] = {base, m.base2, lightmap_.get(), envmap_or(m), mask_or(m)};
             batch.bind_group = device.create_bind_group(*pipelines_[0][0], *sampler_, textures);
             if (batch.monitor >= 0) {
                 continue; // The picture is the render target, not texture frames.
             }
             for (const rhi::Texture* frame : m.base_frames) {
-                const rhi::Texture* frame_textures[] = {frame, (m.blend_layers || m.multiply_layers) ? m.base2 : frame, lightmap_.get()};
+                const rhi::Texture* frame_textures[] = {frame, (m.blend_layers || m.multiply_layers) ? m.base2 : frame,
+                                                        lightmap_.get(), envmap_or(m), mask_or(m)};
                 batch.frame_bind_groups.push_back(device.create_bind_group(*pipelines_[0][0], *sampler_, frame_textures));
             }
         }
@@ -477,7 +526,8 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
     clamped.address = rhi::AddressMode::Clamp;
     decal_sampler_ = device.create_sampler(clamped);
     for (Batch& batch : decals_) {
-        const rhi::Texture* textures[] = {batch.material->base, batch.material->base2, lightmap_.get()};
+        const rhi::Texture* textures[] = {batch.material->base, batch.material->base2, lightmap_.get(),
+                                          envmap_or(*batch.material), mask_or(*batch.material)};
         batch.bind_group = device.create_bind_group(*decal_pipelines_[0], *decal_sampler_, textures);
     }
 }
@@ -618,7 +668,8 @@ void WorldRenderer::draw_batches(rhi::CommandList& cmd, const std::vector<Batch>
     // Light styles, the fog, then as many material params rows as fit in the shader data.
     constexpr std::size_t kStyleFloats = 4 * 16;
     constexpr std::size_t kFogFloats = 8;
-    constexpr std::size_t kHeadFloats = kStyleFloats + kFogFloats;
+    constexpr std::size_t kEyeFloats = 4;
+    constexpr std::size_t kHeadFloats = kStyleFloats + kFogFloats + kEyeFloats;
     constexpr std::size_t kRowFloats = sizeof(MaterialParams) / sizeof(float);
     const std::size_t rows = std::min<std::size_t>(settings.material_params ? settings.material_params->size() : 1,
                                                    (rhi::kMaxShaderDataSize / sizeof(float) - kHeadFloats) / kRowFloats);
@@ -626,6 +677,8 @@ void WorldRenderer::draw_batches(rhi::CommandList& cmd, const std::vector<Batch>
     std::copy(values.begin(), values.end(), shader_data_.begin());
     const auto fog = settings.fog.rows();
     std::copy(fog.begin(), fog.end(), shader_data_.begin() + kStyleFloats);
+    std::copy(settings.camera_position.begin(), settings.camera_position.end(),
+              shader_data_.begin() + kStyleFloats + kFogFloats);
     for (std::size_t r = 0; r < std::max<std::size_t>(rows, 1); ++r) {
         const MaterialParams p = settings.material_params && r < rows ? (*settings.material_params)[r] : MaterialParams{};
         std::memcpy(shader_data_.data() + kHeadFloats + r * kRowFloats, &p, sizeof(p));
@@ -645,7 +698,8 @@ void WorldRenderer::draw_batches(rhi::CommandList& cmd, const std::vector<Batch>
         pc.flags = (m.alpha_test ? kAlphaTest : 0) | (m.blend_layers ? kBlendLayers : 0) |
                    ((m.unlit || settings.fullbright) ? kUnlit : 0) | (m.self_illum ? kSelfIllum : 0) |
                    ((m.translucent || batch.decal) ? kTranslucent : 0) | ((batch.decal && m.modulate) ? kModulate : 0) |
-                   (m.multiply_layers ? kMultiplyLayers : 0) | ((m.additive && !batch.decal) ? kAdditive : 0);
+                   (m.multiply_layers ? kMultiplyLayers : 0) | ((m.additive && !batch.decal) ? kAdditive : 0) |
+                   (m.envmap && settings.envmaps ? kEnvmap | (static_cast<std::uint32_t>(m.envmap_mask_mode) << kEnvmapMaskShift) : 0);
         pc.params_index = m.params_index < std::max<std::size_t>(rows, 1) ? m.params_index : 0;
         cmd.set_bind_group(batch.current_bind_group());
         cmd.push_constants(&pc, sizeof(pc));

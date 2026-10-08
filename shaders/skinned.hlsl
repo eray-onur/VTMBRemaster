@@ -1,7 +1,7 @@
 // Skinned (animated) studio models. Per-draw shader data holds the model-space
 // ambient cube (6 float4), one 3x4 skinning matrix per bone (3 float4 rows
-// each), then a material params row per mesh (texture transform u and v rows,
-// colour and alpha, self-illumination tint).
+// each), then a material params row per mesh (8 float4: texture transform u
+// and v rows, colour and alpha, self-illumination tint, ...; MaterialParams).
 
 #include "color.hlsli"
 

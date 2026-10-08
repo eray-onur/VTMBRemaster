@@ -39,6 +39,17 @@ struct RenderMaterial {
     bool missing = false;    // The .vmt could not be found or parsed.
     bool camera_feed = false; // $basetexture is the camera render target (func_monitor screens).
 
+    // Environment map ($envmap): a cube map added after lighting, times
+    // $envmaptint and the mask (docs/RENDERING.md). Null if none.
+    const rhi::Texture* envmap = nullptr;
+    const rhi::Texture* envmap_mask = nullptr; // $envmapmask (raw values), or the bump map with normal-alpha masks; white otherwise.
+    enum class EnvmapMask : std::uint8_t {
+        None,       // Full strength.
+        Texture,    // $envmapmask's colour.
+        BaseAlpha,  // $basealphaenvmapmask: 1 - base alpha.
+        MaskAlpha,  // $normalmapalphaenvmapmask: the bump map's alpha (envmap_mask is the bump map).
+    } envmap_mask_mode = EnvmapMask::None;
+
     // Water shader parameters. Colours are as authored (gamma-encoded): the
     // original multiplies encoded render-target colour by them.
     bool water = false;
@@ -70,8 +81,8 @@ struct RenderMaterial {
 };
 
 // Per-material values the shaders read from a table, one row per material
-// that needs them (row 0: defaults). Colours are linear. Shaders index rows
-// as 6 float4 each, in this order.
+// that needs them (row 0: defaults). Colours are linear unless noted. Shaders
+// index rows as 8 float4 each, in this order.
 struct MaterialParams {
     std::array<float, 4> transform_u{1, 0, 0, 0}; // $basetexturetransform rows: u' = x u + y v + z.
     std::array<float, 4> transform_v{0, 1, 0, 0};
@@ -79,8 +90,10 @@ struct MaterialParams {
     std::array<float, 4> self_illum_tint{1, 1, 1, 0};
     std::array<float, 4> transform2_u{1, 0, 0, 0}; // $texture2transform (UnlitTwoTexture).
     std::array<float, 4> transform2_v{0, 1, 0, 0};
+    std::array<float, 4> envmap_tint{1, 1, 1, 0};   // $envmaptint (encoded, as authored); w: $envmapcontrast.
+    std::array<float, 4> envmap_tone{1, 0, 0, 0};   // x: $envmapsaturation.
 };
-static_assert(sizeof(MaterialParams) == 96);
+static_assert(sizeof(MaterialParams) == 128);
 
 // Parses a Source colour parameter: "{r g b}" in 0-255 or "[r g b]" in 0-1.
 std::optional<std::array<float, 3>> parse_vmt_color(std::string_view value);
@@ -100,6 +113,15 @@ public:
     std::vector<const rhi::Texture*> texture_frames(const std::string& path, bool srgb = true);
 
     std::size_t missing_textures() const { return missing_textures_; }
+
+    // The cube map used for "$envmap env_cubemap" (the map's default, e.g.
+    // materials/maps/sm_hub_1/cubemapdefault). Set before loading materials.
+    // World faces mostly use per-cubemap copies of their materials instead.
+    void set_default_envmap(std::string path) { default_envmap_ = std::move(path); }
+    // A black cube map and a white texture, for materials without an
+    // environment map or mask.
+    const rhi::Texture* black_cube() const { return black_cube_.get(); }
+    const rhi::Texture* white() const { return white_.get(); }
 
     // Runs the material proxies of every loaded material and refreshes their
     // frames and params() rows.
@@ -124,6 +146,9 @@ private:
     const AssetSource& assets_;
     std::unique_ptr<rhi::Texture> checker_;
     std::unique_ptr<rhi::Texture> flat_normal_;
+    std::unique_ptr<rhi::Texture> black_cube_;
+    std::unique_ptr<rhi::Texture> white_;
+    std::string default_envmap_;
     std::unordered_map<std::string, std::unique_ptr<rhi::Texture>> textures_; // Null entries cache misses.
     std::unordered_map<std::string, std::vector<const rhi::Texture*>> frames_;
     std::unordered_map<std::string, RenderMaterial> materials_;

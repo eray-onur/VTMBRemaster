@@ -59,6 +59,9 @@ struct TextureDesc {
     std::uint32_t height = 1;
     std::uint32_t mip_levels = 1;
     Format format = Format::RGBA8_UNorm;
+    // A cube map (sampled as TextureCube): each mip's data holds its six faces
+    // one after another, in the order +X, -X, +Y, -Y, +Z, -Z.
+    bool cube = false;
 };
 
 class Texture {

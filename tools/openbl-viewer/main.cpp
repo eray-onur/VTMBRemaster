@@ -49,7 +49,7 @@ namespace {
 
 constexpr const char* kUsage =
     "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--show TARGETNAME]... [--npc-sequence NAME] [--pose NAME=VALUE]... [--flex CONTROLLER=VALUE]... [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
-    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-cloth] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
+    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-envmap] [--no-cloth] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
     "                     [--validation] [--no-vsync]";
 
 struct Options {
@@ -69,6 +69,7 @@ struct Options {
     bool light_styles = true;
     bool fog = true; // --no-fog: ignore the map's distance fog.
     bool water = true; // --no-water: no reflection and refraction passes (water shows its fog colour).
+    bool envmaps = true; // --no-envmap: no environment-map reflections.
     bool characters = true;
     std::optional<std::filesystem::path> screenshot;
     std::optional<std::filesystem::path> shots;     // Shot list: "name x y z pitch yaw" per line.
@@ -148,6 +149,8 @@ Options parse_args(int argc, char** argv) {
             o.fog = false;
         } else if (a == "--no-cloth") {
             o.characters_options.cloth = false;
+        } else if (a == "--no-envmap") {
+            o.envmaps = false;
         } else if (a == "--no-water") {
             o.water = false;
         } else if (a == "--no-light-styles") {
@@ -324,10 +327,13 @@ public:
         pak_ = std::make_unique<formats::ZipArchive>(bsp_.pakfile);
         assets_ = std::make_unique<render::AssetSource>(gfs, pak_.get());
         materials_ = std::make_unique<render::MaterialSystem>(device, *assets_);
+        // "$envmap env_cubemap" on materials the compiler did not patch (models): the map's default cubemap.
+        materials_->set_default_envmap("materials/maps/" + std::filesystem::path(path).stem().string() + "/cubemapdefault");
         world_ = std::make_unique<render::WorldRenderer>(device, *materials_, bsp_, options.shown);
         world_fog_ = render::Fog::from_entity(bsp_.entities.at(0));
         world_fog_.enabled = world_fog_.enabled && options.fog;
         water_targets_ = options.water;
+        settings_.envmaps = options.envmaps;
         if (options.props) {
             props_ = std::make_unique<render::PropRenderer>(device, *materials_, *assets_, bsp_, options.shown);
         }

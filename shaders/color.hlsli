@@ -31,6 +31,16 @@ float3 fogged(float3 encoded, float4 fog_color, float amount) {
     return lerp(encoded, fog_color.rgb, amount);
 }
 
+// Environment map term, on encoded colour as in the original: the cube map's
+// colour times $envmaptint, then $envmapcontrast (towards its square) and
+// $envmapsaturation (from grey). `tint_contrast`: tint rgb, contrast.
+float3 envmap_term(float3 encoded_env, float4 tint_contrast, float saturation) {
+    float3 c = encoded_env * tint_contrast.rgb;
+    c += tint_contrast.a * (c * c - c);
+    const float grey = dot(c, float3(1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0));
+    return lerp(float3(grey, grey, grey), c, saturation);
+}
+
 float3 linear_to_srgb(float3 c) {
     c = saturate(c);
     return lerp(1.055 * pow(c, 1.0 / 2.4) - 0.055, c * 12.92, step(c, 0.0031308));

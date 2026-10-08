@@ -16,7 +16,17 @@ The original works in **gamma space**: colours from textures are used as stored,
 - **Blending in gamma space.** The original blends translucent surfaces, decals and particles on gamma-encoded values. OpenBL does the same: the window and render targets use plain 8-bit formats, every pixel shader encodes its output to sRGB itself (`shaders/color.hlsli`), and blending works on the encoded values. Opaque output is unchanged (checked pixel for pixel on `sp_tutorial_1`); glass, decals, water and particles change. `DecalModulate` is now exactly the original's 2 × texture × destination on encoded values.
 - **Self-illumination**: the result blends from the lit colour to base × self-illumination tint, by the base texture's alpha.
 - **Detail textures** (`$detail`): multiplied in at 2× (a mid-grey detail texture leaves the colour unchanged), before the lightmap doubling.
-- **Environment maps** (`$envmap`): the envmap × `$envmaptint` is added to the base before the lightmap is applied, so reflections are lit by the lightmap too.
+- **Environment maps** (`$envmap`). The DX8 `.psh` files have two orders: the older shaders add the envmap to the base before lighting, the `v2` ones after. At DX9 the game uses `lightmappedgeneric_ps20` (compiled), which adds it after lighting:
+  - lit colour + envmap(R) × `$envmaptint`, with R the eye vector reflected about the vertex normal;
+  - then `$envmapcontrast` lerps towards the colour squared, and `$envmapsaturation` lerps from its grey (mean of the channels);
+  - an optional Fresnel term (`$fresnelreflection`) scales it;
+  - everything on encoded values.
+
+  The mask is `$envmapmask` (colour), 1 − base alpha with `$basealphaenvmapmask`, or the bump map's alpha with `$normalmapalphaenvmapmask`.
+
+  **Cubemaps** are in each map's pakfile as `materials/maps/<map>/c<x>_<y>_<z>` (32 × 32, 7 faces, the 7th a sphere map) plus `cubemapdefault`. The map compiler writes per-cubemap `patch` copies of the materials that use one (`<material>_<x>_<y>_<z>.vmt`, inserting `$envmap`). Materials it left with `env_cubemap` get the default cubemap. Faces are in Source's world axis order, so a world-space reflection vector samples them directly, as a cube map.
+
+  **Wet streets:** street materials drive `$envmaptint` with `GlobalWetness`, so they only shine in rain. The road outside the pawn shop on `sm_hub_1` is not one of them. Measured against the original (camera −1839.87 −2179.87 −40, pitch 9.22, yaw 325.05), its mean colour is 74 65 45 near and 94 82 57 further away. OpenBL gives 69 60 37 and 93 81 55 with environment maps, and 49 38 17 and 80 67 39 without.
 - **Translucent lightmapped surfaces**: base × lightmap × 2, with alpha from the base texture.
 
 ## Two-texture blends (`WorldVertexTransition`)

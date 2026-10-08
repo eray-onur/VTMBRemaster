@@ -48,7 +48,7 @@ Implementation: `src/formats/bsp.cpp` (lumps, entities, face meshes) and `src/fo
 | 39 | Primitive indices | 2 | **absolute** positions in lump 38, within the primitive's vertex range |
 | 40 | Pakfile | zip | uncompressed (stored) zip of per-map files |
 | 41 | Clip portal vertices | 12 | outlines of area portals |
-| 42 | Cubemaps | 16 | `i32` origin[3], `i32` size (0 = default). The textures are in the pakfile as `maps/<map>/c<x>_<y>_<z>`, referenced by materials' `$envmap` |
+| 42 | Cubemaps | 16 | `i32` origin[3], `i32` size (0 = default). The textures are in the pakfile as `materials/maps/<map>/c<x>_<y>_<z>` (plus `cubemapdefault`), referenced by per-cubemap `patch` copies of materials; see [RENDERING.md](../RENDERING.md). `openbl-cli bsp pak <map>` lists a pakfile, `bsp pak-cat <map> <path>` prints a file |
 | 43, 44 | TexData strings | | string data and offset table |
 | 48 | | 64 | all zero bytes; count unrelated to anything else |
 

@@ -41,21 +41,37 @@ std::unique_ptr<rhi::Texture> upload_vtf(rhi::Device& device, const formats::Vtf
     desc.width = vtf.mip_width(first);
     desc.height = vtf.mip_height(first);
     desc.mip_levels = h.mip_count - first;
+    // Cube maps: the first six faces (the seventh is a sphere map). VTF faces
+    // are stored in the order +X, -X, +Y, -Y, +Z, -Z of Source's world axes,
+    // which a cube lookup with a world-space direction uses directly.
+    desc.cube = vtf.face_count() >= 6 && desc.width == desc.height;
+    const std::uint32_t faces = desc.cube ? 6 : 1;
 
     std::vector<std::span<const std::byte>> mips;
     std::vector<std::vector<std::uint8_t>> decoded;
-    if (auto native = native_format(h.format, srgb)) {
-        desc.format = *native;
-        for (std::uint32_t m = first; m < h.mip_count; ++m) {
+    const auto native = native_format(h.format, srgb);
+    desc.format = native ? *native : srgb ? rhi::Format::RGBA8_sRGB : rhi::Format::RGBA8_UNorm;
+    for (std::uint32_t m = first; m < h.mip_count; ++m) {
+        if (native && faces == 1) {
             mips.push_back(vtf.image(m, frame));
+            continue;
         }
-    } else {
-        desc.format = srgb ? rhi::Format::RGBA8_sRGB : rhi::Format::RGBA8_UNorm;
-        decoded.reserve(desc.mip_levels);
-        for (std::uint32_t m = first; m < h.mip_count; ++m) {
-            decoded.push_back(formats::decode_to_rgba8(h.format, vtf.image(m, frame), vtf.mip_width(m), vtf.mip_height(m)));
-            mips.push_back(std::as_bytes(std::span(decoded.back())));
+        // Decoded, or faces gathered into one block per mip.
+        std::vector<std::uint8_t> block;
+        for (std::uint32_t f = 0; f < faces; ++f) {
+            const auto image = vtf.image(m, frame, f);
+            if (native) {
+                const auto* p = reinterpret_cast<const std::uint8_t*>(image.data());
+                block.insert(block.end(), p, p + image.size());
+            } else {
+                const auto rgba = formats::decode_to_rgba8(h.format, image, vtf.mip_width(m), vtf.mip_height(m));
+                block.insert(block.end(), rgba.begin(), rgba.end());
+            }
         }
+        decoded.push_back(std::move(block));
+    }
+    for (const auto& block : decoded) {
+        mips.push_back(std::as_bytes(std::span(block)));
     }
     return device.create_texture(desc, mips);
 }

@@ -67,6 +67,15 @@ MaterialSystem::MaterialSystem(rhi::Device& device, const AssetSource& assets)
     const std::uint8_t flat[4] = {128, 128, 255, 255};
     const std::span<const std::byte> mip = std::as_bytes(std::span(flat));
     flat_normal_ = device.create_texture({1, 1, 1, rhi::Format::RGBA8_UNorm}, std::span(&mip, 1));
+    const std::uint8_t white[4] = {255, 255, 255, 255};
+    const std::span<const std::byte> white_mip = std::as_bytes(std::span(white));
+    white_ = device.create_texture({1, 1, 1, rhi::Format::RGBA8_UNorm}, std::span(&white_mip, 1));
+    const std::array<std::uint8_t, 24> black{0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255,
+                                             0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255};
+    const std::span<const std::byte> cube_mip = std::as_bytes(std::span(black));
+    rhi::TextureDesc cube{1, 1, 1, rhi::Format::RGBA8_UNorm};
+    cube.cube = true;
+    black_cube_ = device.create_texture(cube, std::span(&cube_mip, 1));
 }
 
 MaterialSystem::~MaterialSystem() = default;
@@ -182,6 +191,17 @@ MaterialParams params_from(const formats::MaterialProxies& vars) {
         const auto lin = to_linear(rgb(*s));
         p.self_illum_tint = {lin[0], lin[1], lin[2], 0};
     }
+    // The original multiplies the encoded envmap colour by these as authored.
+    if (const auto* t = vars.var("$envmaptint"); t && !t->is_matrix) {
+        const auto c = rgb(*t);
+        p.envmap_tint = {c[0], c[1], c[2], p.envmap_tint[3]};
+    }
+    if (const auto* c = vars.var("$envmapcontrast"); c && !c->is_matrix) {
+        p.envmap_tint[3] = c->v[0];
+    }
+    if (const auto* s = vars.var("$envmapsaturation"); s && !s->is_matrix) {
+        p.envmap_tone[0] = s->v[0];
+    }
     return p;
 }
 
@@ -205,7 +225,7 @@ bool is_default(const MaterialParams& p) {
     const MaterialParams d;
     return p.transform_u == d.transform_u && p.transform_v == d.transform_v && p.color == d.color &&
            p.self_illum_tint == d.self_illum_tint && p.transform2_u == d.transform2_u &&
-           p.transform2_v == d.transform2_v;
+           p.transform2_v == d.transform2_v && p.envmap_tint == d.envmap_tint && p.envmap_tone == d.envmap_tone;
 }
 
 } // namespace
@@ -335,6 +355,32 @@ RenderMaterial MaterialSystem::load(const std::string& name, std::optional<forma
     }
     if (auto scale = mat->param("$decalscale")) {
         out.decal_scale = static_cast<float>(std::atof(std::string(*scale).c_str()));
+    }
+    // Environment map: a cube texture; "env_cubemap" (left unpatched by the
+    // map compiler, e.g. on models) means the map's default cubemap.
+    if (auto env = mat->param("$envmap"); env && !env->empty() && out.shader != "water" && out.shader != "waterwarp") {
+        const std::string path = formats::normalize_game_path(*env) == "env_cubemap" ? default_envmap_
+                                                                                     : formats::material_texture_path(*env);
+        if (!path.empty()) {
+            const auto* t = texture(path);
+            if (t && t->desc().cube) {
+                out.envmap = t;
+            }
+        }
+    }
+    if (out.envmap) {
+        out.envmap_mask = white_.get();
+        if (flag(*mat, "$basealphaenvmapmask")) {
+            out.envmap_mask_mode = RenderMaterial::EnvmapMask::BaseAlpha;
+        } else if (flag(*mat, "$normalmapalphaenvmapmask") || flag(*mat, "$normalalphaenvmapmask")) {
+            if (auto path = mat->texture_path("$bumpmap"); path && texture(*path, false)) {
+                out.envmap_mask = texture(*path, false);
+                out.envmap_mask_mode = RenderMaterial::EnvmapMask::MaskAlpha;
+            }
+        } else if (auto path = mat->texture_path("$envmapmask"); path && texture(*path, false)) {
+            out.envmap_mask = texture(*path, false);
+            out.envmap_mask_mode = RenderMaterial::EnvmapMask::Texture;
+        }
     }
     out.water = out.shader == "water" || out.shader == "waterwarp";
     if (out.water) {

@@ -70,6 +70,8 @@ void usage() {
                  "  openbl-cli mdl sequences <model> [game-dir]\n"
                  "  openbl-cli mdl pose <model> <sequence> <frame> <out.obj> [game-dir]\n"
                  "  openbl-cli bsp info <map> [game-dir]\n"
+                 "  openbl-cli bsp pak <map> [game-dir]\n"
+                 "  openbl-cli bsp pak-cat <map> <path> [game-dir]\n"
                  "  openbl-cli bsp export <map> <out.obj> [game-dir]\n"
                  "  openbl-cli image compare <reference> <candidate> [x y w h]\n"
                  "  openbl-cli audio export <sound> <out.wav> [game-dir]\n"
@@ -923,6 +925,31 @@ bool face_is_drawn(const formats::BspFile& bsp, const formats::BspFace& face) {
 }
 
 int cmd_bsp(const std::vector<std::string_view>& args) {
+    if (args.size() >= 3 && (args[1] == "pak" || args[1] == "pak-cat")) {
+        // pak <map> [game-dir]: list the embedded files; pak-cat <map> <path> [game-dir]: print one.
+        const bool cat = args[1] == "pak-cat";
+        if (cat && args.size() < 4) {
+            usage();
+            return 2;
+        }
+        const vfs::GameFileSystem gfs(game_dir_arg(args, cat ? 4 : 3), game_mods());
+        const auto bsp = load_map(gfs, args[2]);
+        const formats::ZipArchive pak(bsp.pakfile);
+        if (cat) {
+            const auto* entry = pak.find(formats::normalize_game_path(args[3]));
+            if (!entry) {
+                std::cerr << "not in the pakfile: " << args[3] << "\n";
+                return 1;
+            }
+            const auto data = pak.read(*entry);
+            std::cout.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+            return 0;
+        }
+        for (const auto& e : pak.entries()) {
+            std::cout << e.size << "  " << e.path << "\n";
+        }
+        return 0;
+    }
     if (args.size() >= 3 && args[1] == "info") {
         const vfs::GameFileSystem gfs(game_dir_arg(args, 3), game_mods());
         const auto bsp = load_map(gfs, args[2]);

@@ -60,6 +60,7 @@ struct WorldDrawSettings {
     // The water targets hold this frame's reflection and refraction; if not,
     // water shows its fog colour.
     bool water_targets = false;
+    bool envmaps = true; // Environment-map reflections ($envmap).
 };
 
 // A horizontal water surface: the water faces at one height. As in the

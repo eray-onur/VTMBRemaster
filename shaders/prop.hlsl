@@ -23,14 +23,15 @@ static const uint kTranslucent = 16;
 static const uint kMultiplyLayers = 64;
 static const uint kAdditive = 128;
 
-// The fog (2 elements; see color.hlsli), then the material params table: 6
+// The fog (2 elements; see color.hlsli), then the material params table: 8
 // elements per row (texture transform u and v rows, colour and alpha,
-// self-illumination tint, second-texture transform u and v rows).
+// self-illumination tint, second-texture transform u and v rows, envmap
+// tint and contrast, envmap saturation).
 [[vk::binding(0, 1)]] StructuredBuffer<float4> material_params;
 static const uint kParamsStart = 2;
 
 float4 material_param(uint k) {
-    return material_params[kParamsStart + pc.params_index * 6 + k];
+    return material_params[kParamsStart + pc.params_index * 8 + k];
 }
 
 struct VSInput {

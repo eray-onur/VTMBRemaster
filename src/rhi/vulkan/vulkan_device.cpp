@@ -432,8 +432,13 @@ public:
         info.imageType = VK_IMAGE_TYPE_2D;
         info.format = to_vk(desc.format);
         info.extent = {desc.width, desc.height, 1};
+        const std::uint32_t layers = desc.cube ? 6 : 1;
+        if (desc.cube && desc.width != desc.height) {
+            throw std::invalid_argument("cube map faces must be square");
+        }
         info.mipLevels = desc.mip_levels;
-        info.arrayLayers = 1;
+        info.arrayLayers = layers;
+        info.flags = desc.cube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0;
         info.samples = VK_SAMPLE_COUNT_1_BIT;
         info.tiling = VK_IMAGE_TILING_OPTIMAL;
         info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
@@ -445,9 +450,9 @@ public:
 
         VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         view_info.image = image;
-        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view_info.viewType = desc.cube ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D;
         view_info.format = info.format;
-        view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, desc.mip_levels, 0, 1};
+        view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, desc.mip_levels, 0, layers};
         VkImageView view = VK_NULL_HANDLE;
         check(vkCreateImageView(device_, &view_info, nullptr, &view), "vkCreateImageView");
         auto result = std::make_unique<VulkanTexture>(*this, desc, image, view, allocation);
@@ -455,7 +460,7 @@ public:
         std::size_t total = 0;
         for (std::size_t m = 0; m < mips.size(); ++m) {
             const std::size_t expected =
-                format_image_size(desc.format, std::max(1u, desc.width >> m), std::max(1u, desc.height >> m));
+                format_image_size(desc.format, std::max(1u, desc.width >> m), std::max(1u, desc.height >> m)) * layers;
             if (mips[m].size() < expected) {
                 throw std::invalid_argument("texture mip data too small");
             }
@@ -467,14 +472,16 @@ public:
         for (std::size_t m = 0; m < mips.size(); ++m) {
             const std::uint32_t w = std::max(1u, desc.width >> m);
             const std::uint32_t h = std::max(1u, desc.height >> m);
-            const std::size_t size = format_image_size(desc.format, w, h);
-            std::memcpy(static_cast<std::byte*>(staging.mapped) + offset, mips[m].data(), size);
-            VkBufferImageCopy region{};
-            region.bufferOffset = offset;
-            region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, static_cast<std::uint32_t>(m), 0, 1};
-            region.imageExtent = {w, h, 1};
-            regions.push_back(region);
-            offset += (size + 15) & ~std::size_t{15};
+            const std::size_t face = format_image_size(desc.format, w, h);
+            std::memcpy(static_cast<std::byte*>(staging.mapped) + offset, mips[m].data(), face * layers);
+            for (std::uint32_t l = 0; l < layers; ++l) {
+                VkBufferImageCopy region{};
+                region.bufferOffset = offset + face * l;
+                region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, static_cast<std::uint32_t>(m), l, 1};
+                region.imageExtent = {w, h, 1};
+                regions.push_back(region);
+            }
+            offset += (face * layers + 15) & ~std::size_t{15};
         }
         submit_upload([&](VkCommandBuffer cmd) {
             image_barrier(cmd, image, VK_IMAGE_ASPECT_COLOR_BIT, desc.mip_levels, VK_IMAGE_LAYOUT_UNDEFINED,
@@ -1311,7 +1318,7 @@ private:
         barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.image = image;
-        barrier.subresourceRange = {aspect, 0, mips, 0, 1};
+        barrier.subresourceRange = {aspect, 0, mips, 0, VK_REMAINING_ARRAY_LAYERS};
         VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
         dep.imageMemoryBarrierCount = 1;
         dep.pImageMemoryBarriers = &barrier;
