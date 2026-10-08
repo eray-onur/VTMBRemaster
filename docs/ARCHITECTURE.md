@@ -55,3 +55,20 @@ All game paths are normalized: lowercase, `/` separators (`formats::normalize_ga
 ### 6. File priority
 
 From highest priority to lowest: mods (Phase 4), then loose files in `Vampire/`, then `packNNN.vpk` archives with higher numbers first. See [formats/vpk.md](formats/vpk.md) for the evidence.
+
+### 7. Threading (planned)
+
+The engine is single-threaded today. Most per-frame work splits cleanly, so threading is planned in this order:
+
+1. **Per-instance updates in parallel:** character animation and skinning, cloth, particle systems and material proxies are independent per instance.
+2. **Map loading:** texture decoding, model parsing, lightmap packing and the prop-lighting traces run as parallel jobs, with uploads on a transfer queue (this also prepares streaming).
+3. **Render passes recorded in parallel:** monitors, water reflection and refraction, the 3D skybox and the main view each record their own command buffer. The RHI then needs per-thread command pools and per-thread shader-data memory.
+4. **Simulation and rendering overlapped** (Phase 2): the local server (decision 1) ticks on its own thread while the client renders the previous state.
+
+Constraints:
+
+- Python scripts run on the simulation thread only, because of the interpreter lock.
+- Results must not depend on thread scheduling (particle seeds, update order), for parity tests and multiplayer.
+- Visibility culling and moving skinning and cloth to GPU compute remove more work than threading spreads, so they come first.
+
+Until then, keep per-instance update code free of shared mutable state, so it can run in parallel later without a rewrite.
