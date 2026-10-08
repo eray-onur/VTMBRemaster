@@ -110,7 +110,7 @@ The arrays:
 - **Constraints (16 bytes):** `u16 a`, `u16 b` (particles), `f32 weight_a`, `f32 weight_b`, `f32 rest length squared`.
   - `weight_a` is 0 exactly when *a* is attached. No constraint joins two attached particles.
   - `weight_b` is usually `weight_a − 2`.
-  - The rest length matches the squared distance between the particles in the bind pose.
+  - In the first group, the rest length matches the squared distance between the particles in the bind pose. In the second group it is that squared distance times a constant per piece (0.001, 0.05, 0.2, 0.4, 0.5, 0.7, 0.8 or 1; checked on all 113 pieces). OpenBL reads the second group as minimum distances ([ANIMATION.md](../ANIMATION.md)).
 - **Bytes:** one byte per entry, values 1 to 4; meaning unknown.
 - **Triangles (6 bytes):** three particles.
 - **Edges (4 bytes):** two particles.

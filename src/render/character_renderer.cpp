@@ -33,8 +33,11 @@ struct Vertex {
     std::uint16_t bones[4];
     std::uint8_t weights[4];
     float flex_slot; // Index of this vertex's flex offset, or -1 if no flex moves it.
+    // Cloth: ±(particle slot + 1), negative where the vertex faces against its
+    // particle's triangle normal (the back of double-sided cards); 0: skinned.
+    float cloth;
 };
-static_assert(sizeof(Vertex) == 48);
+static_assert(sizeof(Vertex) == 52);
 
 struct PushConstants {
     float mvp[16];
@@ -43,8 +46,36 @@ struct PushConstants {
     std::uint32_t params_row; // Shader-data element where this mesh's material params start.
     std::uint32_t flex_base;  // Shader-data element of flex slot 0; 0 when no flex is active.
     float model_z[4];         // World z row of the model transform (water fog).
+    std::uint32_t cloth_base;  // Shader-data element of cloth particle 0's position; 0: no cloth.
+    std::uint32_t cloth_count; // Particles; their normals follow the positions.
 };
-static_assert(sizeof(PushConstants) == 96);
+static_assert(sizeof(PushConstants) == 104);
+
+// A bind-pose vertex moved by the current skinning matrices.
+anim::Vec3 skin(const std::vector<formats::MdlMatrix>& skinning, const formats::MdlVertex& v) {
+    anim::Vec3 out{};
+    for (std::size_t k = 0; k < 3; ++k) {
+        if (v.weights[k] == 0 || v.bones[k] >= skinning.size()) {
+            continue;
+        }
+        const auto& m = skinning[v.bones[k]];
+        const float w = static_cast<float>(v.weights[k]) / 255.0f;
+        for (std::size_t r = 0; r < 3; ++r) {
+            out[r] += w * (m[r][0] * v.position[0] + m[r][1] * v.position[1] + m[r][2] * v.position[2] + m[r][3]);
+        }
+    }
+    return out;
+}
+
+anim::Vec3 transform(const formats::MdlMatrix& m, const anim::Vec3& p) {
+    return {m[0][0] * p[0] + m[0][1] * p[1] + m[0][2] * p[2] + m[0][3],
+            m[1][0] * p[0] + m[1][1] * p[1] + m[1][2] * p[2] + m[1][3],
+            m[2][0] * p[0] + m[2][1] * p[1] + m[2][2] * p[2] + m[2][3]};
+}
+
+// Simulated time a character's cloth gets on its first frame, so it starts
+// settled rather than in the bind pose.
+constexpr float kClothSettleTime = 1.0f;
 
 constexpr std::uint32_t kAlphaTest = 1;
 constexpr std::uint32_t kUnlit = 4;
@@ -94,7 +125,8 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
                      {2, rhi::Format::RGB32_Float, 20},
                      {3, rhi::Format::RGBA16_UInt, 32},
                      {4, rhi::Format::RGBA8_UNorm, 40},
-                     {5, rhi::Format::R32_Float, 44}};
+                     {5, rhi::Format::R32_Float, 44},
+                     {6, rhi::Format::R32_Float, 48}};
     pd.texture_count = 2;
     pd.push_constant_size = sizeof(PushConstants);
     pd.shader_data = true;
@@ -210,6 +242,17 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
         }
         inst.skinning = formats::mdl_skinning_matrices(
             model->mdl->bones, formats::mdl_world_transforms(model->mdl->bones, formats::mdl_bind_pose(model->mdl->bones)));
+        for (const ClothPiece& piece : model->cloth) {
+            if (!options.cloth) {
+                break;
+            }
+            std::vector<anim::Vec3> skinned;
+            for (const auto& v : piece.particles) {
+                skinned.push_back(skin(inst.skinning, v));
+            }
+            inst.cloth.emplace_back(*piece.cloth, skinned);
+        }
+        stats_.with_cloth += !inst.cloth.empty();
         instances_.push_back(std::move(inst));
     }
     stats_.instances = instances_.size();
@@ -239,6 +282,9 @@ const CharacterRenderer::Model* CharacterRenderer::load_model(const std::string&
             std::vector<MeshRange> ranges;
             std::vector<ModelFlex> flexes;
             std::uint32_t flex_slots = 0;
+            std::vector<ClothPiece> cloth;
+            std::uint32_t cloth_particles = 0;
+            std::vector<ClothCapsule> capsules;
             bool needs_normals = false;
             for (std::size_t b = 0; b < mdl->body_parts.size(); ++b) {
                 const auto& part = mdl->body_parts[b];
@@ -279,6 +325,51 @@ const CharacterRenderer::Model* CharacterRenderer::load_model(const std::string&
                         flexes.push_back(std::move(flex));
                     }
                 }
+                // Cloth: LOD 0 of piece p is table slot p. Each cloth vertex
+                // follows one particle; its normal sign is set against the
+                // particle's bind-pose triangle normal.
+                std::vector<std::size_t> piece_index(static_cast<std::size_t>(std::max(mo.cloth_pieces, 0)), SIZE_MAX);
+                std::vector<std::vector<anim::Vec3>> bind_normals;
+                for (const auto& c : mo.cloth) {
+                    if (c.slot >= piece_index.size()) {
+                        continue;
+                    }
+                    ClothPiece piece;
+                    piece.cloth = &c;
+                    piece.first_slot = cloth_particles;
+                    std::vector<anim::Vec3> bind;
+                    for (const auto p : c.particles) {
+                        piece.particles.push_back(mo.vertices[p]);
+                        bind.push_back(mo.vertices[p].position);
+                    }
+                    bind_normals.push_back(anim::ClothSimulation(c, bind).normals());
+                    cloth_particles += static_cast<std::uint32_t>(c.particles.size());
+                    piece_index[c.slot] = cloth.size();
+                    cloth.push_back(std::move(piece));
+                }
+                for (const auto& mesh : mo.meshes) {
+                    for (std::size_t v = 0; v < mesh.cloth_piece.size(); ++v) {
+                        const std::uint8_t p = mesh.cloth_piece[v];
+                        const std::size_t global = base + mesh.vertex_offset + v;
+                        if (p >= piece_index.size() || piece_index[p] == SIZE_MAX || global >= vertices.size()) {
+                            continue;
+                        }
+                        const std::size_t first = cloth.size() - bind_normals.size();
+                        const std::size_t local = piece_index[p] - first;
+                        const std::uint32_t particle = mesh.cloth_particle[v] & 0x7fffu;
+                        if (particle >= bind_normals[local].size()) {
+                            continue;
+                        }
+                        const auto& n = bind_normals[local][particle];
+                        const auto& vn = vertices[global].normal;
+                        const float facing = n[0] * vn[0] + n[1] * vn[1] + n[2] * vn[2];
+                        const float slot = static_cast<float>(cloth[piece_index[p]].first_slot + particle) + 1.0f;
+                        vertices[global].cloth = facing < 0.0f ? -slot : slot;
+                    }
+                }
+                for (const auto& c : mo.cloth_capsules) {
+                    capsules.push_back({c.bone, {c.start, c.end, c.radius}});
+                }
                 for (std::size_t me = 0; me < mo.meshes.size() && me < lod.meshes.size(); ++me) {
                     const auto tris = lod.meshes[me].triangles();
                     if (tris.empty()) {
@@ -306,6 +397,9 @@ const CharacterRenderer::Model* CharacterRenderer::load_model(const std::string&
                 model->mdl = mdl;
                 model->flexes = std::move(flexes);
                 model->flex_slots = flex_slots;
+                model->cloth = std::move(cloth);
+                model->cloth_particles = cloth_particles;
+                model->cloth_capsules = std::move(capsules);
                 model->vertices = device_.create_buffer({vertices.size() * sizeof(Vertex), rhi::BufferUsage::Vertex},
                                                         std::as_bytes(std::span(vertices)));
                 model->indices = device_.create_buffer({indices.size() * sizeof(std::uint32_t), rhi::BufferUsage::Index},
@@ -347,15 +441,54 @@ const CharacterRenderer::Model* CharacterRenderer::load_model(const std::string&
 
 void CharacterRenderer::update(float time) {
     for (Instance& inst : instances_) {
-        if (!inst.player) {
+        if (inst.player) {
+            const auto& bones = inst.model->mdl->bones;
+            try {
+                inst.skinning =
+                    formats::mdl_skinning_matrices(bones, formats::mdl_world_transforms(bones, inst.player->pose(time)));
+            } catch (const formats::FormatError& e) {
+                std::fprintf(stderr, "animation: %s\n", e.what());
+                inst.player.reset();
+            }
+        }
+        if (!inst.cloth.empty()) {
+            update_cloth(inst, inst.cloth_time ? time - *inst.cloth_time : kClothSettleTime);
+            inst.cloth_time = time;
+        }
+    }
+}
+
+void CharacterRenderer::update_cloth(Instance& inst, float dt) {
+    const Model& model = *inst.model;
+    std::vector<anim::ClothCapsule> capsules;
+    for (const ClothCapsule& c : model.cloth_capsules) {
+        if (c.bone < 0 || static_cast<std::size_t>(c.bone) >= inst.skinning.size()) {
             continue;
         }
-        const auto& bones = inst.model->mdl->bones;
-        try {
-            inst.skinning = formats::mdl_skinning_matrices(bones, formats::mdl_world_transforms(bones, inst.player->pose(time)));
-        } catch (const formats::FormatError& e) {
-            std::fprintf(stderr, "animation: %s\n", e.what());
-            inst.player.reset();
+        const auto& m = inst.skinning[static_cast<std::size_t>(c.bone)];
+        capsules.push_back({transform(m, c.bind.start), transform(m, c.bind.end), c.bind.radius});
+    }
+    const std::size_t n = model.cloth_particles;
+    inst.cloth_data.assign(n * 8, 0.0f);
+    std::vector<anim::Vec3> skinned;
+    for (std::size_t p = 0; p < model.cloth.size(); ++p) {
+        const ClothPiece& piece = model.cloth[p];
+        skinned.clear();
+        for (const auto& v : piece.particles) {
+            skinned.push_back(skin(inst.skinning, v));
+        }
+        // A long first step settles in fixed steps rather than being cut short.
+        for (float left = dt; left > 0.0f; left -= 0.1f) {
+            inst.cloth[p].update(std::min(left, 0.1f), skinned, capsules);
+        }
+        const auto& positions = inst.cloth[p].positions();
+        const auto normals = inst.cloth[p].normals();
+        for (std::size_t i = 0; i < positions.size(); ++i) {
+            const std::size_t slot = piece.first_slot + i;
+            for (std::size_t k = 0; k < 3; ++k) {
+                inst.cloth_data[slot * 4 + k] = positions[i][k];
+                inst.cloth_data[(n + slot) * 4 + k] = normals[i][k];
+            }
         }
     }
 }
@@ -403,6 +536,12 @@ void CharacterRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float,
         }
         PushConstants pc{};
         pc.flex_base = flex_base;
+        if (!inst.cloth_data.empty() &&
+            (data.size() + inst.cloth_data.size()) * sizeof(float) <= rhi::kMaxShaderDataSize) {
+            pc.cloth_base = static_cast<std::uint32_t>(data.size() / 4);
+            pc.cloth_count = inst.model->cloth_particles;
+            data.insert(data.end(), inst.cloth_data.begin(), inst.cloth_data.end());
+        }
         const glm::mat4 mvp = view_projection * glm::make_mat4(inst.transform.data());
         std::memcpy(pc.mvp, glm::value_ptr(mvp), sizeof(pc.mvp));
         for (std::size_t k = 0; k < 4; ++k) {

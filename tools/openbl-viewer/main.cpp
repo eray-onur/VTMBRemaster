@@ -49,7 +49,7 @@ namespace {
 
 constexpr const char* kUsage =
     "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--show TARGETNAME]... [--npc-sequence NAME] [--pose NAME=VALUE]... [--flex CONTROLLER=VALUE]... [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
-    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
+    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-cloth] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
     "                     [--validation] [--no-vsync]";
 
 struct Options {
@@ -146,6 +146,8 @@ Options parse_args(int argc, char** argv) {
             o.fullbright = true;
         } else if (a == "--no-fog") {
             o.fog = false;
+        } else if (a == "--no-cloth") {
+            o.characters_options.cloth = false;
         } else if (a == "--no-water") {
             o.water = false;
         } else if (a == "--no-light-styles") {
@@ -333,7 +335,8 @@ public:
             characters_ = std::make_unique<render::CharacterRenderer>(device, *materials_, *assets_, bsp_, options.characters_options);
             const auto& c = characters_->stats();
             std::cout << "characters: " << c.instances << " instances of " << c.models << " models ("
-                      << c.missing_models << " missing), " << c.without_sequence << " without an idle sequence\n";
+                      << c.missing_models << " missing), " << c.without_sequence << " without an idle sequence, "
+                      << c.with_cloth << " with cloth\n";
         }
         particles_ = std::make_unique<render::ParticleRenderer>(device, *assets_, bsp_, options.shown);
         std::cout << "particles: " << particles_->stats().systems << " active effects ("

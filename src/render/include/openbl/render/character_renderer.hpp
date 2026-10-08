@@ -5,6 +5,7 @@
 // model's include chain (e.g. models/character/shared/male/*.mdl).
 
 #include "openbl/anim/animation.hpp"
+#include "openbl/anim/cloth.hpp"
 #include "openbl/formats/bsp.hpp"
 #include "openbl/render/fog.hpp"
 #include "openbl/formats/mdl.hpp"
@@ -49,6 +50,7 @@ struct CharacterStats {
     std::size_t models = 0;
     std::size_t missing_models = 0;
     std::size_t without_sequence = 0; // Shown in their bind pose.
+    std::size_t with_cloth = 0;       // Instances simulating cloth (hair, skirts, coats).
 };
 
 struct CharacterOptions {
@@ -61,6 +63,8 @@ struct CharacterOptions {
     std::vector<std::string> shown;
     // Facial flex controller values by name, e.g. {"right_lid_raiser", 1}; others stay 0.
     std::vector<std::pair<std::string, float>> flex_controllers;
+    // Simulate cloth (hair, skirts, coats); false: cloth vertices are skinned like the rest.
+    bool cloth = true;
 };
 
 struct CharacterDrawSettings {
@@ -100,10 +104,23 @@ private:
         std::array<float, 4> targets{};
         std::vector<std::pair<std::uint32_t, std::array<float, 3>>> deltas; // Slot, position offset.
     };
+    // A cloth piece at LOD 0, with what is needed to skin its particles on the CPU.
+    struct ClothPiece {
+        const formats::MdlCloth* cloth = nullptr; // In Model::mdl.
+        std::uint32_t first_slot = 0;              // Its particles' first index in the instance's cloth data.
+        std::vector<formats::MdlVertex> particles; // Bind-pose vertex of each particle.
+    };
+    struct ClothCapsule {
+        std::int32_t bone = 0;
+        anim::ClothCapsule bind; // Bind pose, model space.
+    };
     struct Model {
         std::shared_ptr<const formats::MdlFile> mdl;
         std::vector<ModelFlex> flexes;
         std::uint32_t flex_slots = 0; // Vertices any flex moves; each has a slot.
+        std::vector<ClothPiece> cloth;
+        std::uint32_t cloth_particles = 0; // Over all pieces.
+        std::vector<ClothCapsule> cloth_capsules;
         std::unique_ptr<rhi::Buffer> vertices;
         std::unique_ptr<rhi::Buffer> indices;
         std::vector<std::vector<Mesh>> skins;
@@ -116,9 +133,13 @@ private:
         std::optional<anim::AnimationPlayer> player; // Empty: bind pose.
         std::vector<float> flex_deltas; // float4 per flex slot; empty when no flex is active.
         std::vector<formats::MdlMatrix> skinning;    // Updated by update().
+        std::vector<anim::ClothSimulation> cloth;    // One per Model::cloth piece.
+        std::vector<float> cloth_data; // Positions, then normals: float4 per particle; updated by update().
+        std::optional<float> cloth_time; // Time of the last cloth update.
     };
 
     const Model* load_model(const std::string& path);
+    void update_cloth(Instance& inst, float dt);
     void draw_pass(rhi::CommandList& cmd, const std::array<float, 16>& vp, const CharacterDrawSettings& settings,
                    bool translucent);
 

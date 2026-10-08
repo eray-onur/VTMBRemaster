@@ -1,5 +1,6 @@
 add_library(openbl_anim
     animation.cpp
+    cloth.cpp
     flex.cpp)
 add_library(openbl::anim ALIAS openbl_anim)
 

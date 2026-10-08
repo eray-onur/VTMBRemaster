@@ -35,6 +35,23 @@ On the GPU, every vertex any flex can move has a slot (a vertex attribute); a ch
 
 Nothing drives the controllers until expressions, dialogue and lip-sync exist (Phase 2). `openbl-viewer --flex NAME=VALUE` sets a controller on every NPC, e.g. `--flex smile=1 --flex jaw_drop=0.6` or `--flex blink=1`.
 
+## Cloth
+
+Hair, skirts, coats and fur on 53 models are particle cloth ([formats/models.md](formats/models.md)). `anim::ClothSimulation` (`openbl/anim/cloth.hpp`) simulates one piece in model space at fixed 1/60 s steps:
+
+1. **Attached particles** (the first ones of each piece) snap to their skinned positions.
+2. **Free particles** move by Verlet integration: their last motion, less 2% damping, plus gravity (386 units/s² down).
+3. **Constraints**, four passes per step, use the file's weights. Each pass moves the two particles by the Jakobsen approximation of the length error, d × (rest² / (|d|² + rest²) − ½), times each particle's weight. The weights' magnitudes always sum to 2, and an attached particle weighs 0, so this is exact relaxation. A pendulum built this way settles at its rest length (`tests/test_cloth.cpp`).
+   - **First group:** stored rest lengths equal the bind-pose distances, kept both ways.
+   - **Second group:** every piece stores a constant fraction s of the squared bind distance (s is 0.001, 0.05, 0.2, 0.4, 0.5, 0.7, 0.8 or 1 per piece; e.g. 0.001 on Jeanette's skirt, 1 on Beckett's coat). OpenBL treats these as minimum distances: the pair may not come closer than √s of its bind distance. Held both ways they would pull every piece with s < 1 together (Jeanette's skirt shrank into a band). As minimums, all 113 pieces in the game stay exactly at rest without gravity (largest drift 0.03 units over 2 s).
+4. **Capsules** (bone-relative, moved with their bones) push free particles out to their radius.
+5. **Shape pull (OpenBL's addition):** free particles move 2% of the way back to their skinned position each step, so the authored silhouette survives while the cloth swings. With gravity, every piece settles within 6.3 units of its authored shape.
+6. **Reset:** a piece whose particle strays more than 64 units from its skinned position (a teleport) restarts from the skinned shape.
+
+On a character's first frame the cloth simulates 1 s with the first pose, so it starts settled. The GPU draws cloth vertices at their particle's position (the skinning shader reads them from the per-draw data, like flex offsets) with normals from the piece's triangles. The two sides of double-sided cards keep opposite normals. `openbl-viewer --no-cloth` skins cloth like the rest of the model. In a release build, 15 cloth characters (`la_hub_1`) cost about 1 ms per frame.
+
+Unknown and unused: the piece parameter (0.3 to 8; 0.3 on furniture cloth), the per-piece bytes, the vertex data, and the 140-byte settings records. Props with cloth (curtains, lanterns, `temple/panel_cloth`) are still static. Not compared with the running game yet.
+
 ## Not done yet
 
 - **Layers** (`MdlSequence::layers`, e.g. `katana_bobble_layer`): how they combine with the base sequence (added or replacing) is unknown.

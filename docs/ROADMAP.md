@@ -97,7 +97,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Particles: calibrate units and colour scale on more captures (one done: barrel fire), collisions, refraction, `func_particle` rain, script-started effects, fire light
 - [x] Decals: faces just behind the decal, displacements, and props (`$modelmaterial`); 4,520 of 4,609 on the world plus a few on props
 - [ ] Decals: the remaining few dozen (graffiti 20 to 60 units off surfaces), `DecalModulate` on props; confirm orientation against the original
-- [ ] Cloth simulation for hair and clothing; confirm the cloth settings against the running game
+- [x] Cloth simulation for hair and clothing on characters: Verlet particles with the model's constraints (second group as minimum distances), capsules, shape pull; viewer `--no-cloth` ([ANIMATION.md](ANIMATION.md))
+- [ ] Cloth: props (curtains, lanterns), the unknown piece parameter and settings records, comparison with the running game
 - [ ] Animation: confirm the third fade time (+620) and the last two combo-window values in the running game
 
 ## Phase 2: simulation core

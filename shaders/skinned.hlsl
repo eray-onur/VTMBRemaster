@@ -12,6 +12,8 @@ struct PushConstants {
     uint params_row; // Element where this mesh's material params start.
     uint flex_base;  // Element of flex slot 0's offset (float4 per slot); 0 when no flex is active.
     float4 model_z;  // Model-to-world z row, for water fog.
+    uint cloth_base;  // Element of cloth particle 0's position (float4 per particle); 0: no cloth.
+    uint cloth_count; // Particles; their normals follow the positions.
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -37,6 +39,8 @@ struct VSInput {
     [[vk::location(3)]] uint4 bones : BLENDINDICES;
     [[vk::location(4)]] float4 weights : BLENDWEIGHT;
     [[vk::location(5)]] float flex_slot : TEXCOORD1; // -1: no flex moves this vertex.
+    // Cloth: ±(particle + 1), negative for the back of a double-sided card; 0: skinned.
+    [[vk::location(6)]] float cloth : TEXCOORD2;
 };
 
 struct VSOutput {
@@ -64,6 +68,15 @@ VSOutput vs_main(VSInput input) {
         if (w > 0) {
             position += w * transform(input.bones[k], float4(bind_position, 1.0));
             normal += w * transform(input.bones[k], float4(input.normal, 0.0));
+        }
+    }
+    // Simulated cloth replaces the skinned position (both in model space).
+    if (pc.cloth_base != 0 && input.cloth != 0) {
+        const uint particle = (uint)(abs(input.cloth) - 0.5);
+        position = shader_data[pc.cloth_base + particle].xyz;
+        const float3 n = shader_data[pc.cloth_base + pc.cloth_count + particle].xyz;
+        if (dot(n, n) > 1e-6) {
+            normal = n * sign(input.cloth);
         }
     }
 

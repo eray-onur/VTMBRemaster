@@ -13,6 +13,7 @@ add_executable(openbl_tests
     test_animation.cpp
     test_bik.cpp
     test_bsp.cpp
+    test_cloth.cpp
     test_dlg.cpp
     test_expressions.cpp
     test_fnt.cpp
