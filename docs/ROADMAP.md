@@ -78,6 +78,14 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Environment maps on props and characters (`VertexLitGeneric`), nearest cubemap per model; checked on the `sm_hub_1` manhole
 - [x] Environment maps: `$fresnelreflection` (unused; default none), `$envmapmode` (not read by the shaders), sphere maps resampled to cubes, cheap water (`$forcecheap`, distance blend; works in the 3D skybox)
 - [ ] Translucent sorting, prop fade distances
+- [ ] Sprites (`env_sprite`, 309 in `sm_hub_1` alone): lamp glows, halos and light beams, with their render modes and fades
+- [ ] Visibility culling: draw only what the PVS and area portals allow (every pass currently draws the whole map, plus the water passes)
+- [ ] Bump-mapped surfaces: the three directional lightmaps of `$bumpmap` world faces (OpenBL uses the flat one), normal maps on models
+- [ ] Detail textures (`$detail`, multiplied in at 2×)
+- [ ] Detail props (grass and debris sprites placed from the map's detail-prop lump)
+- [ ] Ropes and cables (`keyframe_rope`, `move_rope`; 76 in `sm_hub_1`)
+- [ ] Model shadows (the `Shadow` and `ShadowModel` proxies; projected shadow textures)
+- [ ] Cheap water: compare with the original (the open sea around `la_dane_1`)
 - [x] Parity tooling: viewer shot lists (`--shots`, `--fov`, `--size`), `openbl-cli image compare` (see docs/PARITY.md)
 - [x] Lightmap brightness measured against original-game captures: base × luxel in linear terms (scale 1.0, was 2.3); capture method verified; `--fov` follows the game's 4:3-horizontal convention ([PARITY.md](PARITY.md))
 - [ ] The ceiling fan in `sp_tutorial_1` is drawn without its ceiling rod (seen in the parity captures)
@@ -92,7 +100,7 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Free-fly viewer on Windows and Linux
 - [x] Material proxies at runtime: Sine, LinearRamp, noise, arithmetic chains, AnimatedTexture (base and water normal frames), TextureScroll, TextureTransform, driving the base texture transform, `$color`/`$alpha` and `$selfillumtint` on the world and props; `--time` for fixed-clock renders
 - [x] Material proxies: characters, `UnlitTwoTexture` second layer with `$texture2transform` (TV scanlines), `--sequence` frame captures
-- [ ] Material proxies that need missing features: sprite fades (PlayerProximity, LampBeam, LampHalo; needs sprites), GlobalWetness (needs environment maps and rain), TextConsole (needs the terminal UI); confirm the ones the captures could not show (security-camera `Sine`, sprite fades, `GlobalWetness` in rain, ticker scroll speed)
+- [ ] Material proxies that need missing features: sprite fades (PlayerProximity, LampBeam, LampHalo; needs sprites), GlobalWetness (environment maps are done; needs rain), TextConsole (needs the terminal UI); confirm the ones the captures could not show (security-camera `Sine`, sprite fades, `GlobalWetness` in rain, ticker scroll speed)
 - [x] Render-to-texture monitors (`func_monitor` + `point_camera`, aimed by `look_dest`): render targets in the RHI, one per visible monitor; checked against the hospital and haven TV captures
 - [x] `StartHidden` entities are not drawn (brush entities, props, NPCs); `--show NAME` overrides it for a brush entity
 - [ ] Monitors: confirm the camera `FOV` convention, picture brightness and render-target size; cameras parented to moving props
