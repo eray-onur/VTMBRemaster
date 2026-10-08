@@ -78,7 +78,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Environment maps on props and characters (`VertexLitGeneric`), nearest cubemap per model; checked on the `sm_hub_1` manhole
 - [x] Environment maps: `$fresnelreflection` (unused; default none), `$envmapmode` (not read by the shaders), sphere maps resampled to cubes, cheap water (`$forcecheap`, distance blend; works in the 3D skybox)
 - [ ] Translucent sorting, prop fade distances
-- [ ] Sprites (`env_sprite`, 309 in `sm_hub_1` alone): lamp glows, halos and light beams, with their render modes and fades
+- [x] Sprites (`env_sprite`): render modes, colour and amount, orientation modes, glows over geometry with world occlusion and glows inside props hidden (checked against the original beside an `sm_hub_1` lamp); viewer `--no-sprites`
+- [ ] Sprites: check additive and colour-mode brightness and the skyline light cones against the original; `renderfx` pulses and strobes, `GlowProxySize`, proxy-driven fades, scripts switching them
 - [ ] Visibility culling: draw only what the PVS and area portals allow (every pass currently draws the whole map, plus the water passes)
 - [ ] Bump-mapped surfaces: the three directional lightmaps of `$bumpmap` world faces (OpenBL uses the flat one), normal maps on models
 - [ ] Detail textures (`$detail`, multiplied in at 2×)

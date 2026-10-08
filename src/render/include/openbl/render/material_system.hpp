@@ -40,6 +40,16 @@ struct RenderMaterial {
     bool missing = false;    // The .vmt could not be found or parsed.
     bool camera_feed = false; // $basetexture is the camera render target (func_monitor screens).
 
+    // Sprite shader: how the quad faces the camera ($spriteorientation) and
+    // the point of the picture placed at the entity's origin ($spriteorigin, 0-1).
+    enum class SpriteOrientation : std::uint8_t {
+        ViewParallel,         // vp_parallel: in the view plane (the default).
+        ParallelUpright,      // parallel_upright: turns about world z to face the camera.
+        Oriented,             // oriented: fixed by the entity's angles.
+        ViewParallelOriented, // vp_parallel_oriented: in the view plane, rolled by the entity's angles.
+    } sprite_orientation = SpriteOrientation::ViewParallel;
+    std::array<float, 2> sprite_origin{0.5f, 0.5f};
+
     // Environment map ($envmap): a cube map added after lighting, times
     // $envmaptint and the mask (docs/RENDERING.md). Null if none.
     const rhi::Texture* envmap = nullptr;

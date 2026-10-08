@@ -80,6 +80,28 @@ Base texture × vertex colour, with no doubling.
 
 Doubling the distance instead fits worse (it overshoots the far values). Whether fog uses view depth or radial distance is not settled; OpenBL uses view depth.
 
+## Sprites (`env_sprite`)
+
+`sm_hub_1` has 309 sprites: street-lamp glows, signal lights, police lights and a row of light cones in the 3D skybox. Of these, 265 have the "start on" flag (spawnflags 1); the rest wait for a script (traffic-light colours, for example). Each is one quad:
+
+- **Material:** the `Sprite` shader (61 materials). `$spriteorientation` says how the quad faces the camera:
+  - `vp_parallel` (the default): in the view plane;
+  - `parallel_upright`: upright, turned about z;
+  - `oriented`: fixed by the entity's angles;
+  - `vp_parallel_oriented`: in the view plane, rolled by the entity's roll.
+
+  `$spriteorigin` is the point of the picture placed at the entity's origin.
+- **Size:** texture width and height × `scale`, in world units. The skybox's light cones (`volumelighta`, 256 pixels × 0.06 ≈ 15 skybox units, so 240 world units) fit this.
+- **Colour:** the texture × `rendercolor` × `renderamt` / 255, on encoded values.
+- **Render modes:** additive for `rendermode` 5 (`kRenderTransAdd`) and 3 (glow), alpha-blended otherwise. Animated sprites step at the entity's `framerate`. Additive sprites fade out in fog.
+- **Glows** (`rendermode` 3) are drawn over everything except what hides their centre:
+  - The world hides a glow by a line trace each frame.
+  - Without `renderfx` 14 (no dissipation) a glow fades by distance as min(1, 102400 / distance²).
+  - The original also tests glow visibility against props. 54 of the `sm_hub_1` glows sit inside lamp globes, and the original shows none of them. Measured beside a lamp on `sm_hub_1` (camera −1839.87 −2179.87 −40, pitch 9.22, yaw 59.79), the original is 40 37 24 around the lamp head and 61 58 39 above it. OpenBL drawing those glows gave 59 51 33 and 91 87 57; without them it gives 45 39 27 and 62 61 43.
+  - OpenBL therefore hides glows enclosed by a prop (at least five of six axis rays from the glow hit the same prop, tested once at load).
+
+Not yet checked against the original: additive (`rendermode` 5) and colour (`rendermode` 1) sprite brightness, the light cones, and whether glows keep a constant size on screen. Not done: `renderfx` pulses and strobes, `GlowProxySize`, sprite fades driven by proxies (`PlayerProximity`, `LampBeam`, `LampHalo`), and scripts switching sprites on and off. `openbl-viewer --no-sprites` hides them all.
+
 ## Monitors (`func_monitor` + `point_camera`)
 
 A `func_monitor` is a brush entity whose screen faces use a material with `$basetexture engine/camerarendertarget` (in the shipped maps always `dev/dev_tvmonitor1a`: the picture times rolling scanlines, additive). Its `target` names a `point_camera`. Bloodlines cameras aim with a `look_dest` point (their angles are always 0), and set the picture's angle with `FOV`. Some cameras are parented to moving props (`parentname`); OpenBL keeps them at their map position for now.

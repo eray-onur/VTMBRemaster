@@ -6,6 +6,7 @@ add_library(openbl_render
     prop_lighting.cpp
     prop_renderer.cpp
     sky_renderer.cpp
+    sprite_renderer.cpp
     texture_upload.cpp
     world_renderer.cpp)
 add_library(openbl::render ALIAS openbl_render)
@@ -25,3 +26,5 @@ openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/skinned.hlsl vert 
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/skinned.hlsl frag ps_main openbl_skinned_ps)
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/particle.hlsl vert vs_main openbl_particle_vs)
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/particle.hlsl frag ps_main openbl_particle_ps)
+openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/sprite.hlsl vert vs_main openbl_sprite_vs)
+openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/sprite.hlsl frag ps_main openbl_sprite_ps)

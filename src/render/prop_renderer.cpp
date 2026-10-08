@@ -385,6 +385,58 @@ const PropRenderer::Model* PropRenderer::load_model(const std::string& path) {
     return models_.emplace(path, std::move(model)).first->second.get();
 }
 
+bool PropRenderer::encloses(const std::array<float, 3>& point) const {
+    const glm::vec3 p(point[0], point[1], point[2]);
+    for (const Instance& inst : instances_) {
+        const Model& model = *inst.model;
+        const glm::mat4 m = glm::make_mat4(inst.transform.data());
+        const glm::vec3 c(m * glm::vec4(glm::make_vec3(model.center.data()), 1.0f));
+        if (glm::length(p - c) > model.radius) {
+            continue;
+        }
+        // In model space, inside the model's bounding box; rays along the six axis directions.
+        const glm::vec3 local(glm::inverse(m) * glm::vec4(p, 1.0f));
+        const glm::vec3 offset = glm::abs(local - glm::make_vec3(model.center.data()));
+        if (offset.x > model.half_extent[0] || offset.y > model.half_extent[1] || offset.z > model.half_extent[2]) {
+            continue;
+        }
+        int hits = 0, misses = 0;
+        for (int axis = 0; axis < 3 && misses < 2; ++axis) {
+            for (float sign : {1.0f, -1.0f}) {
+                if (misses >= 2) {
+                    break; // Five hits are no longer possible.
+                }
+                glm::vec3 dir(0.0f);
+                dir[axis] = sign;
+                bool hit = false;
+                for (std::size_t t = 0; t + 2 < model.triangle_indices.size() && !hit; t += 3) {
+                    const glm::vec3 a = glm::make_vec3(model.positions[model.triangle_indices[t]].data());
+                    const glm::vec3 b = glm::make_vec3(model.positions[model.triangle_indices[t + 1]].data());
+                    const glm::vec3 cc = glm::make_vec3(model.positions[model.triangle_indices[t + 2]].data());
+                    // Moeller-Trumbore, either facing.
+                    const glm::vec3 e1 = b - a, e2 = cc - a;
+                    const glm::vec3 pv = glm::cross(dir, e2);
+                    const float det = glm::dot(e1, pv);
+                    if (std::abs(det) < 1e-8f) {
+                        continue;
+                    }
+                    const glm::vec3 tv = local - a;
+                    const float u = glm::dot(tv, pv) / det;
+                    const glm::vec3 qv = glm::cross(tv, e1);
+                    const float v = glm::dot(dir, qv) / det;
+                    hit = u >= 0.0f && v >= 0.0f && u + v <= 1.0f && glm::dot(e2, qv) / det > 0.0f;
+                }
+                hits += hit;
+                misses += !hit;
+            }
+        }
+        if (hits >= 5) {
+            return true;
+        }
+    }
+    return false;
+}
+
 const rhi::Pipeline& PropRenderer::pipeline_for(const RenderMaterial& m) const {
     const std::size_t blend = !m.translucent ? 0 : (m.additive ? 2 : 1);
     return *pipelines_[blend][m.no_cull ? 1 : 0];

@@ -19,6 +19,7 @@
 #include "openbl/render/texture_upload.hpp"
 #include "openbl/render/prop_renderer.hpp"
 #include "openbl/render/sky_renderer.hpp"
+#include "openbl/render/sprite_renderer.hpp"
 #include "openbl/render/world_renderer.hpp"
 #include "openbl/rhi/vulkan.hpp"
 #include "openbl/vfs/game_filesystem.hpp"
@@ -49,7 +50,7 @@ namespace {
 
 constexpr const char* kUsage =
     "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--show TARGETNAME]... [--npc-sequence NAME] [--pose NAME=VALUE]... [--flex CONTROLLER=VALUE]... [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
-    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-envmap] [--no-cloth] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
+    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-envmap] [--no-sprites] [--no-cloth] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
     "                     [--validation] [--no-vsync]";
 
 struct Options {
@@ -70,6 +71,7 @@ struct Options {
     bool fog = true; // --no-fog: ignore the map's distance fog.
     bool water = true; // --no-water: no reflection and refraction passes (water shows its fog colour).
     bool envmaps = true; // --no-envmap: no environment-map reflections.
+    bool sprites = true; // --no-sprites: no env_sprite glows and cones.
     bool characters = true;
     std::optional<std::filesystem::path> screenshot;
     std::optional<std::filesystem::path> shots;     // Shot list: "name x y z pitch yaw" per line.
@@ -149,6 +151,8 @@ Options parse_args(int argc, char** argv) {
             o.fog = false;
         } else if (a == "--no-cloth") {
             o.characters_options.cloth = false;
+        } else if (a == "--no-sprites") {
+            o.sprites = false;
         } else if (a == "--no-envmap") {
             o.envmaps = false;
         } else if (a == "--no-water") {
@@ -345,6 +349,14 @@ public:
                       << c.with_cloth << " with cloth, " << c.with_envmap << " with envmaps\n";
         }
         particles_ = std::make_unique<render::ParticleRenderer>(device, *assets_, bsp_, options.shown);
+        sprites_ = std::make_unique<render::SpriteRenderer>(device, *materials_, bsp_, options.shown);
+        if (props_) {
+            sprites_->hide_enclosed_glows([this](const std::array<float, 3>& p) { return props_->encloses(p); });
+        }
+        draw_sprites_ = options.sprites;
+        std::cout << "sprites: " << sprites_->stats().sprites << " on, " << sprites_->stats().off << " off, "
+                  << sprites_->stats().missing_materials << " with a missing material, " << sprites_->stats().hidden_glows
+                  << " glows inside props\n";
         std::cout << "particles: " << particles_->stats().systems << " active effects ("
                   << particles_->stats().missing_definitions << " with a missing definition)\n";
         if (auto sky = bsp_.entities.at(0).find("skyname"); sky != bsp_.entities.at(0).end()) {
@@ -541,6 +553,9 @@ private:
                 props_->draw_translucent(cmd, sm, prop_settings);
             }
             particles_->draw(cmd, sm, right, up, {sky_eye.x, sky_eye.y, sky_eye.z}, sky_fog, true);
+            if (draw_sprites_) {
+                sprites_->draw(cmd, sm, to_array(view), {sky_eye.x, sky_eye.y, sky_eye.z}, settings_.time, sky_fog, true);
+            }
             cmd.clear_depth();
             settings_.skybox = false;
             prop_settings.skybox = false;
@@ -571,6 +586,9 @@ private:
         if (characters_) {
             characters_->draw_translucent(cmd, m, character_settings);
         }
+        if (draw_sprites_) {
+            sprites_->draw(cmd, m, to_array(view), {eye.x, eye.y, eye.z}, settings_.time, fog, false);
+        }
         particles_->draw(cmd, m, right, up, {eye.x, eye.y, eye.z}, fog, false);
     }
 
@@ -587,6 +605,8 @@ private:
     std::unique_ptr<render::SkyRenderer> sky_;
     std::unique_ptr<render::CharacterRenderer> characters_;
     std::unique_ptr<render::ParticleRenderer> particles_;
+    std::unique_ptr<render::SpriteRenderer> sprites_;
+    bool draw_sprites_ = true; // false: --no-sprites.
 };
 
 int run(const Options& options) {

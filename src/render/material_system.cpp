@@ -444,6 +444,20 @@ RenderMaterial MaterialSystem::load(const std::string& name, std::optional<forma
     if (auto scale = mat->param("$decalscale")) {
         out.decal_scale = static_cast<float>(std::atof(std::string(*scale).c_str()));
     }
+    if (out.shader == "sprite") {
+        if (auto o = mat->param("$spriteorientation")) {
+            const std::string v = formats::normalize_game_path(*o);
+            out.sprite_orientation = v == "parallel_upright"       ? RenderMaterial::SpriteOrientation::ParallelUpright
+                                     : v == "oriented"             ? RenderMaterial::SpriteOrientation::Oriented
+                                     : v == "vp_parallel_oriented" ? RenderMaterial::SpriteOrientation::ViewParallelOriented
+                                                                   : RenderMaterial::SpriteOrientation::ViewParallel;
+        }
+        if (auto o = mat->param("$spriteorigin")) {
+            std::istringstream in{std::string(*o)};
+            char bracket = 0;
+            in >> bracket >> out.sprite_origin[0] >> out.sprite_origin[1];
+        }
+    }
     // Environment map: a cube texture; "env_cubemap" (left unpatched by the
     // map compiler, e.g. on models) means the map's default cubemap.
     if (auto env = mat->param("$envmap"); env && !env->empty()) {
