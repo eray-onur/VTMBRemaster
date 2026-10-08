@@ -130,20 +130,9 @@ float4 ps_main(VSOutput input) : SV_Target {
     // The environment map is added after lighting (so dark rooms still shine),
     // reflected about the surface normal.
     if (pc.flags & kEnvmap) {
-        const float3 n = normalize(input.normal);
-        const float3 to_eye = style_values[kEye].xyz - input.world;
-        const float3 r = 2.0 * dot(n, to_eye) * n - to_eye;
-        const float3 env = linear_to_srgb(envmap.Sample(texture_sampler, r).rgb);
-        float3 mask = float3(1, 1, 1);
-        const uint mode = (pc.flags >> kEnvmapMaskShift) & 3;
-        if (mode == 1) {
-            mask = envmap_mask.Sample(texture_sampler, input.uv).rgb;
-        } else if (mode == 2) {
-            mask = (1.0 - base.a).xxx;
-        } else if (mode == 3) {
-            mask = envmap_mask.Sample(texture_sampler, input.uv).aaa;
-        }
-        encoded = saturate(encoded + envmap_term(env, material_param(6), material_param(7).x) * mask);
+        encoded = add_envmap(encoded, input.normal, style_values[kEye].xyz - input.world, envmap, envmap_mask,
+                             texture_sampler, input.uv, base.a, (pc.flags >> kEnvmapMaskShift) & 3, material_param(6),
+                             material_param(7).x);
     }
     // Additive surfaces fade out in fog; the rest blend towards its colour.
     const float3 result = (pc.flags & kAdditive) ? encoded * (1.0 - fog) : fogged(encoded, fog_color, fog);

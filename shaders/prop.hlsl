@@ -11,7 +11,7 @@ struct PushConstants {
     uint cube_c;
     float alpha_ref;
     uint flags;
-    uint params_index; // Row of the material params table.
+    uint params_index; // Row of the material params table; bits 16-31: the instance's envmap block.
     float4 model_z;    // Model-to-world z row (world z = dot(model_z, (position, 1))), for water fog.
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
@@ -22,16 +22,19 @@ static const uint kSelfIllum = 8;
 static const uint kTranslucent = 16;
 static const uint kMultiplyLayers = 64;
 static const uint kAdditive = 128;
+static const uint kEnvmap = 256;
+static const uint kEnvmapMaskShift = 9; // 2 bits, as for the world.
 
-// The fog (2 elements; see color.hlsli), then the material params table: 8
-// elements per row (texture transform u and v rows, colour and alpha,
-// self-illumination tint, second-texture transform u and v rows, envmap
-// tint and contrast, envmap saturation).
+// The fog (2 elements; see color.hlsli), the eye (xyz; w: element where the
+// envmap blocks start), then the material params table: 8 elements per row
+// (MaterialParams), then one envmap block per instance that needs one: its
+// model-to-world rows (3 elements).
 [[vk::binding(0, 1)]] StructuredBuffer<float4> material_params;
-static const uint kParamsStart = 2;
+static const uint kEye = 2;
+static const uint kParamsStart = 3;
 
 float4 material_param(uint k) {
-    return material_params[kParamsStart + pc.params_index * 8 + k];
+    return material_params[kParamsStart + (pc.params_index & 0xFFFF) * 8 + k];
 }
 
 struct VSInput {
@@ -46,6 +49,8 @@ struct VSOutput {
     [[vk::location(1)]] float3 light : COLOR0;
     [[vk::location(2)]] float2 uv2 : TEXCOORD1;
     [[vk::location(3)]] float2 depth_z : TEXCOORD2; // View depth, world z (for fog).
+    [[vk::location(4)]] float3 world : TEXCOORD3;      // World position and normal (envmaps only).
+    [[vk::location(5)]] float3 world_normal : NORMAL;
 };
 
 float cube_half(uint i) {
@@ -63,6 +68,15 @@ VSOutput vs_main(VSInput input) {
     VSOutput output;
     output.position = mul(pc.mvp, float4(input.position, 1.0));
     output.depth_z = float2(output.position.w, dot(pc.model_z, float4(input.position, 1.0)));
+    output.world = float3(0, 0, 0);
+    output.world_normal = float3(0, 0, 1);
+    if (pc.flags & kEnvmap) {
+        const uint block = (uint)material_params[kEye].w + (pc.params_index >> 16) * 3;
+        const float4 r0 = material_params[block], r1 = material_params[block + 1], r2 = material_params[block + 2];
+        const float4 p = float4(input.position, 1.0);
+        output.world = float3(dot(r0, p), dot(r1, p), dot(r2, p));
+        output.world_normal = float3(dot(r0.xyz, input.normal), dot(r1.xyz, input.normal), dot(r2.xyz, input.normal));
+    }
     const float4 tu = material_param(0);
     const float4 tv = material_param(1);
     output.uv = float2(dot(tu.xyz, float3(input.uv, 1.0)), dot(tv.xyz, float3(input.uv, 1.0)));
@@ -78,6 +92,8 @@ VSOutput vs_main(VSInput input) {
 [[vk::binding(0, 0)]] SamplerState texture_sampler;
 [[vk::binding(1, 0)]] Texture2D base_texture;
 [[vk::binding(2, 0)]] Texture2D base_texture2; // UnlitTwoTexture's second layer; the base otherwise.
+[[vk::binding(3, 0)]] TextureCube envmap;
+[[vk::binding(4, 0)]] Texture2D envmap_mask; // Raw values.
 
 float4 ps_main(VSOutput input) : SV_Target {
     float4 base = base_texture.Sample(texture_sampler, input.uv);
@@ -93,7 +109,12 @@ float4 ps_main(VSOutput input) : SV_Target {
         color = lerp(color, base.rgb * material_param(3).rgb, base.a);
     }
     const float fog = fog_amount(input.depth_z.x, input.depth_z.y, material_params[0], material_params[1]);
-    const float3 encoded = linear_to_srgb(color);
+    float3 encoded = linear_to_srgb(color);
+    if (pc.flags & kEnvmap) {
+        encoded = add_envmap(encoded, input.world_normal, material_params[kEye].xyz - input.world, envmap, envmap_mask,
+                             texture_sampler, input.uv, base.a, (pc.flags >> kEnvmapMaskShift) & 3, material_param(6),
+                             material_param(7).x);
+    }
     const float3 result = (pc.flags & kAdditive) ? encoded * (1.0 - fog) : fogged(encoded, material_params[0], fog);
     return float4(result, (pc.flags & kTranslucent) ? base.a * tint.a : 1.0);
 }

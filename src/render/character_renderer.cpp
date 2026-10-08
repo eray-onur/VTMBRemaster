@@ -48,8 +48,9 @@ struct PushConstants {
     float model_z[4];         // World z row of the model transform (water fog).
     std::uint32_t cloth_base;  // Shader-data element of cloth particle 0's position; 0: no cloth.
     std::uint32_t cloth_count; // Particles; their normals follow the positions.
+    std::uint32_t envmap_block; // Shader-data element of the eye, then the model-to-world rows; 0: none.
 };
-static_assert(sizeof(PushConstants) == 104);
+static_assert(sizeof(PushConstants) == 108);
 
 // A bind-pose vertex moved by the current skinning matrices.
 anim::Vec3 skin(const std::vector<formats::MdlMatrix>& skinning, const formats::MdlVertex& v) {
@@ -83,6 +84,8 @@ constexpr std::uint32_t kSelfIllum = 8;
 constexpr std::uint32_t kTranslucent = 16;
 constexpr std::uint32_t kEyes = 32;
 constexpr std::uint32_t kAdditive = 128;
+constexpr std::uint32_t kEnvmap = 256;
+constexpr std::uint32_t kEnvmapMaskShift = 9;
 
 // Height above an NPC's origin at which its lighting is sampled (roughly chest height).
 constexpr float kLightingHeight = 40.0f;
@@ -127,7 +130,7 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
                      {4, rhi::Format::RGBA8_UNorm, 40},
                      {5, rhi::Format::R32_Float, 44},
                      {6, rhi::Format::R32_Float, 48}};
-    pd.texture_count = 2;
+    pd.texture_count = 4; // Base, iris, envmap (cube), envmap mask.
     pd.push_constant_size = sizeof(PushConstants);
     pd.shader_data = true;
     const rhi::BlendMode blends[] = {rhi::BlendMode::Opaque, rhi::BlendMode::Alpha, rhi::BlendMode::Additive};
@@ -253,6 +256,13 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
             inst.cloth.emplace_back(*piece.cloth, skinned);
         }
         stats_.with_cloth += !inst.cloth.empty();
+        for (const Mesh& mesh : model->skins[inst.skin]) {
+            inst.envmapped = inst.envmapped || mesh.material->envmap;
+        }
+        stats_.with_envmap += inst.envmapped;
+        if (inst.envmapped) {
+            inst.cubemap = materials.nearest_cubemap({origin[0], origin[1], origin[2] + kLightingHeight});
+        }
         instances_.push_back(std::move(inst));
     }
     stats_.instances = instances_.size();
@@ -416,10 +426,13 @@ const CharacterRenderer::Model* CharacterRenderer::load_model(const std::string&
                         if (mesh.material->skip) {
                             continue;
                         }
-                        const rhi::Texture* textures[] = {mesh.material->base, mesh.material->base2};
+                        const RenderMaterial& mm = *mesh.material;
+                        const rhi::Texture* envmap = mm.envmap ? mm.envmap : materials_.black_cube();
+                        const rhi::Texture* mask = mm.envmap_mask ? mm.envmap_mask : materials_.white();
+                        const rhi::Texture* textures[] = {mm.base, mm.base2, envmap, mask};
                         mesh.bind_group = device_.create_bind_group(*pipelines_[0][0], *sampler_, textures);
-                        for (const rhi::Texture* frame : mesh.material->base_frames) {
-                            const rhi::Texture* frame_textures[] = {frame, mesh.material->eyes ? mesh.material->base2 : frame};
+                        for (const rhi::Texture* frame : mm.base_frames) {
+                            const rhi::Texture* frame_textures[] = {frame, mm.eyes ? mm.base2 : frame, envmap, mask};
                             mesh.frame_bind_groups.push_back(
                                 device_.create_bind_group(*pipelines_[0][0], *sampler_, frame_textures));
                         }
@@ -542,6 +555,15 @@ void CharacterRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float,
             pc.cloth_count = inst.model->cloth_particles;
             data.insert(data.end(), inst.cloth_data.begin(), inst.cloth_data.end());
         }
+        if (settings.envmaps && inst.envmapped && (data.size() + 16) * sizeof(float) <= rhi::kMaxShaderDataSize) {
+            pc.envmap_block = static_cast<std::uint32_t>(data.size() / 4);
+            data.insert(data.end(), {settings.eye[0], settings.eye[1], settings.eye[2], 0.0f});
+            for (std::size_t r = 0; r < 3; ++r) {
+                for (std::size_t c = 0; c < 4; ++c) {
+                    data.push_back(inst.transform[c * 4 + r]); // Column-major.
+                }
+            }
+        }
         const glm::mat4 mvp = view_projection * glm::make_mat4(inst.transform.data());
         std::memcpy(pc.mvp, glm::value_ptr(mvp), sizeof(pc.mvp));
         for (std::size_t k = 0; k < 4; ++k) {
@@ -569,9 +591,21 @@ void CharacterRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float,
             pc.flags = (m.alpha_test ? kAlphaTest : 0) | ((m.unlit || settings.fullbright) ? kUnlit : 0) |
                        (m.self_illum ? kSelfIllum : 0) | (m.translucent ? kTranslucent : 0) | (m.eyes ? kEyes : 0) |
                        (m.additive ? kAdditive : 0);
-            cmd.set_bind_group(mesh.frame_bind_groups.empty()
-                                   ? *mesh.bind_group
-                                   : *mesh.frame_bind_groups[m.base_frame % mesh.frame_bind_groups.size()]);
+            const rhi::BindGroup* group = mesh.frame_bind_groups.empty()
+                                              ? mesh.bind_group.get()
+                                              : mesh.frame_bind_groups[m.base_frame % mesh.frame_bind_groups.size()].get();
+            if (m.envmap && pc.envmap_block != 0) {
+                pc.flags |= kEnvmap | (static_cast<std::uint32_t>(m.envmap_mask_mode) << kEnvmapMaskShift);
+                if (m.envmap_nearest && inst.cubemap && inst.cubemap != m.envmap) {
+                    auto& g = mesh.cubemap_groups[inst.cubemap];
+                    if (!g) {
+                        const rhi::Texture* textures[] = {m.base, m.base2, inst.cubemap, m.envmap_mask};
+                        g = device_.create_bind_group(*pipelines_[0][0], *sampler_, textures);
+                    }
+                    group = g.get();
+                }
+            }
+            cmd.set_bind_group(*group);
             cmd.push_constants(&pc, sizeof(pc));
             cmd.draw_indexed(mesh.index_count, mesh.first_index);
         }

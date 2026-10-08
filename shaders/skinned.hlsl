@@ -14,6 +14,7 @@ struct PushConstants {
     float4 model_z;  // Model-to-world z row, for water fog.
     uint cloth_base;  // Element of cloth particle 0's position (float4 per particle); 0: no cloth.
     uint cloth_count; // Particles; their normals follow the positions.
+    uint envmap_block; // Element of the eye (xyz), then the model-to-world rows (3); 0: none.
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -25,6 +26,8 @@ static const uint kSelfIllum = 8;
 static const uint kTranslucent = 16;
 static const uint kEyes = 32;
 static const uint kAdditive = 128;
+static const uint kEnvmap = 256;
+static const uint kEnvmapMaskShift = 9; // 2 bits, as for the world.
 
 // Iris size as a fraction of the eye mesh's UV square, measured on the
 // original (the iris spans about 0.58 of the eye opening; docs/RENDERING.md).
@@ -48,6 +51,8 @@ struct VSOutput {
     [[vk::location(0)]] float2 uv : TEXCOORD0;
     [[vk::location(1)]] float3 light : COLOR0;
     [[vk::location(2)]] float2 depth_z : TEXCOORD1; // View depth, world z (for fog).
+    [[vk::location(3)]] float3 world : TEXCOORD2;      // World position and normal (envmaps only).
+    [[vk::location(4)]] float3 world_normal : NORMAL;
 };
 
 float3 transform(uint bone, float4 v) {
@@ -83,6 +88,15 @@ VSOutput vs_main(VSInput input) {
     VSOutput output;
     output.position = mul(pc.mvp, float4(position, 1.0));
     output.depth_z = float2(output.position.w, dot(pc.model_z, float4(position, 1.0)));
+    output.world = float3(0, 0, 0);
+    output.world_normal = float3(0, 0, 1);
+    if (pc.envmap_block != 0) {
+        const float4 r0 = shader_data[pc.envmap_block + 1], r1 = shader_data[pc.envmap_block + 2],
+                     r2 = shader_data[pc.envmap_block + 3];
+        const float4 p = float4(position, 1.0);
+        output.world = float3(dot(r0, p), dot(r1, p), dot(r2, p));
+        output.world_normal = float3(dot(r0.xyz, normal), dot(r1.xyz, normal), dot(r2.xyz, normal));
+    }
     const float4 tu = shader_data[pc.params_row];
     const float4 tv = shader_data[pc.params_row + 1];
     output.uv = float2(dot(tu.xyz, float3(input.uv, 1.0)), dot(tv.xyz, float3(input.uv, 1.0)));
@@ -97,6 +111,8 @@ VSOutput vs_main(VSInput input) {
 [[vk::binding(0, 0)]] SamplerState texture_sampler;
 [[vk::binding(1, 0)]] Texture2D base_texture;
 [[vk::binding(2, 0)]] Texture2D iris_texture; // Eyes only; the base texture otherwise.
+[[vk::binding(3, 0)]] TextureCube envmap;
+[[vk::binding(4, 0)]] Texture2D envmap_mask; // Raw values.
 
 float4 ps_main(VSOutput input) : SV_Target {
     float4 base = base_texture.Sample(texture_sampler, input.uv);
@@ -118,7 +134,12 @@ float4 ps_main(VSOutput input) : SV_Target {
     }
     const float4 fog_color = shader_data[kFogStart];
     const float fog = fog_amount(input.depth_z.x, input.depth_z.y, fog_color, shader_data[kFogStart + 1]);
-    const float3 encoded = linear_to_srgb(color);
+    float3 encoded = linear_to_srgb(color);
+    if ((pc.flags & kEnvmap) && pc.envmap_block != 0) {
+        encoded = add_envmap(encoded, input.world_normal, shader_data[pc.envmap_block].xyz - input.world, envmap,
+                             envmap_mask, texture_sampler, input.uv, base.a, (pc.flags >> kEnvmapMaskShift) & 3,
+                             shader_data[pc.params_row + 6], shader_data[pc.params_row + 7].x);
+    }
     const float3 result = (pc.flags & kAdditive) ? encoded * (1.0 - fog) : fogged(encoded, fog_color, fog);
     return float4(result, (pc.flags & kTranslucent) ? base.a * tint.a : 1.0);
 }

@@ -53,6 +53,8 @@ constexpr std::uint32_t kSelfIllum = 8;
 constexpr std::uint32_t kTranslucent = 16;
 constexpr std::uint32_t kMultiplyLayers = 64;
 constexpr std::uint32_t kAdditive = 128;
+constexpr std::uint32_t kEnvmap = 256;
+constexpr std::uint32_t kEnvmapMaskShift = 9;
 
 // Source angles: pitch (down positive) about Y, yaw about Z, roll about X;
 // applied roll, then pitch, then yaw.
@@ -82,7 +84,7 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
     pd.pixel.spirv = openbl_prop_ps;
     pd.vertex_stride = sizeof(Vertex);
     pd.attributes = {{0, rhi::Format::RGB32_Float, 0}, {1, rhi::Format::RG32_Float, 12}, {2, rhi::Format::RGB32_Float, 20}};
-    pd.texture_count = 2;
+    pd.texture_count = 4; // Base, second layer, envmap (cube), envmap mask.
     pd.push_constant_size = sizeof(PushConstants);
     pd.shader_data = true; // Material params table.
     pd.front_counter_clockwise = false;
@@ -147,6 +149,12 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
                     inst.lighting.color[face] = lighting.sample({p.x, p.y, p.z}, rotation).color[face];
                 }
             }
+        }
+        for (const Mesh& mesh : model->skins[inst.skin]) {
+            inst.envmapped = inst.envmapped || mesh.material->envmap;
+        }
+        if (inst.envmapped) {
+            inst.cubemap = materials_.nearest_cubemap({c.x, c.y, c.z});
         }
         instances_.push_back(std::move(inst));
     };
@@ -245,7 +253,7 @@ void PropRenderer::place_decals(const formats::BspFile& bsp) {
                                               std::as_bytes(std::span(best_decal->indices)));
         decal.index_count = static_cast<std::uint32_t>(best_decal->indices.size());
         decal.material = &draw_mat;
-        const rhi::Texture* textures[] = {draw_mat.base, draw_mat.base2};
+        const rhi::Texture* textures[] = {draw_mat.base, draw_mat.base2, materials_.black_cube(), materials_.white()};
         decal.bind_group = device_.create_bind_group(*pipelines_[0][0], *sampler_, textures);
         best->decals.push_back(std::move(decal));
         ++stats_.decals;
@@ -351,11 +359,13 @@ const PropRenderer::Model* PropRenderer::load_model(const std::string& path) {
                         if (mesh.material->skip) {
                             continue;
                         }
-                        const rhi::Texture* textures[] = {mesh.material->base, mesh.material->base2};
+                        const RenderMaterial& mm = *mesh.material;
+                        const rhi::Texture* envmap = mm.envmap ? mm.envmap : materials_.black_cube();
+                        const rhi::Texture* mask = mm.envmap_mask ? mm.envmap_mask : materials_.white();
+                        const rhi::Texture* textures[] = {mm.base, mm.base2, envmap, mask};
                         mesh.bind_group = device_.create_bind_group(*pipelines_[0][0], *sampler_, textures);
-                        for (const rhi::Texture* frame : mesh.material->base_frames) {
-                            const rhi::Texture* frame_textures[] = {
-                                frame, mesh.material->multiply_layers ? mesh.material->base2 : frame};
+                        for (const rhi::Texture* frame : mm.base_frames) {
+                            const rhi::Texture* frame_textures[] = {frame, mm.multiply_layers ? mm.base2 : frame, envmap, mask};
                             mesh.frame_bind_groups.push_back(
                                 device_.create_bind_group(*pipelines_[0][0], *sampler_, frame_textures));
                         }
@@ -388,14 +398,38 @@ void PropRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float, 16>&
     PushConstants pc{};
     static const std::vector<MaterialParams> kDefaults{MaterialParams{}};
     const std::vector<MaterialParams>& params = settings.material_params ? *settings.material_params : kDefaults;
-    // Shader data: the fog (2 float4), then the material params table.
+    // Shader data: the fog (2 float4), the eye (w: where the envmap blocks
+    // start), the material params table, then each envmapped instance's
+    // model-to-world rows (3 float4).
     const auto fog = settings.fog.rows();
+    envmap_blocks_.assign(instances_.size(), UINT32_MAX);
+    std::vector<float> blocks;
+    for (std::size_t i = 0; i < instances_.size(); ++i) {
+        const Instance& inst = instances_[i];
+        if (!settings.envmaps || !inst.envmapped || inst.skybox != settings.skybox || blocks.size() / 12 >= 0xFFFF) {
+            continue;
+        }
+        envmap_blocks_[i] = static_cast<std::uint32_t>(blocks.size() / 12);
+        for (std::size_t r = 0; r < 3; ++r) {
+            for (std::size_t c = 0; c < 4; ++c) {
+                blocks.push_back(inst.transform[c * 4 + r]); // Column-major.
+            }
+        }
+    }
+    constexpr std::size_t kHeadFloats = 12;
+    const std::size_t room = rhi::kMaxShaderDataSize / sizeof(float) - kHeadFloats - blocks.size();
     const std::size_t rows =
-        std::min(params.size(), (rhi::kMaxShaderDataSize - sizeof(fog)) / sizeof(MaterialParams));
+        std::min({params.size(), room / (sizeof(MaterialParams) / sizeof(float)), std::size_t{0xFFFF}});
     shader_data_.assign(fog.begin(), fog.end());
+    const std::size_t blocks_start = kHeadFloats / 4 + rows * sizeof(MaterialParams) / 16;
+    shader_data_.insert(shader_data_.end(),
+                        {settings.eye[0], settings.eye[1], settings.eye[2], static_cast<float>(blocks_start)});
     const auto* first = reinterpret_cast<const float*>(params.data());
     shader_data_.insert(shader_data_.end(), first, first + rows * sizeof(MaterialParams) / sizeof(float));
+    shader_data_.insert(shader_data_.end(), blocks.begin(), blocks.end());
+    std::size_t instance_index = 0;
     for (const Instance& inst : instances_) {
+        const std::uint32_t block = envmap_blocks_[instance_index++];
         if (inst.skybox != settings.skybox) {
             continue;
         }
@@ -429,9 +463,22 @@ void PropRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float, 16>&
                        (m.self_illum ? kSelfIllum : 0) | (m.translucent ? kTranslucent : 0) |
                        (m.multiply_layers ? kMultiplyLayers : 0) | (m.additive ? kAdditive : 0);
             pc.params_index = m.params_index < rows ? m.params_index : 0;
-            cmd.set_bind_group(mesh.frame_bind_groups.empty()
-                                   ? *mesh.bind_group
-                                   : *mesh.frame_bind_groups[m.base_frame % mesh.frame_bind_groups.size()]);
+            const rhi::BindGroup* group = mesh.frame_bind_groups.empty()
+                                              ? mesh.bind_group.get()
+                                              : mesh.frame_bind_groups[m.base_frame % mesh.frame_bind_groups.size()].get();
+            if (m.envmap && block != UINT32_MAX) {
+                pc.flags |= kEnvmap | (static_cast<std::uint32_t>(m.envmap_mask_mode) << kEnvmapMaskShift);
+                pc.params_index |= block << 16;
+                if (m.envmap_nearest && inst.cubemap && inst.cubemap != m.envmap) {
+                    auto& g = mesh.cubemap_groups[inst.cubemap];
+                    if (!g) {
+                        const rhi::Texture* textures[] = {m.base, m.base2, inst.cubemap, m.envmap_mask};
+                        g = device_.create_bind_group(*pipelines_[0][0], *sampler_, textures);
+                    }
+                    group = g.get();
+                }
+            }
+            cmd.set_bind_group(*group);
             cmd.push_constants(&pc, sizeof(pc));
             cmd.draw_indexed(mesh.index_count, mesh.first_index);
         }

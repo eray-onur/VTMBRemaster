@@ -327,8 +327,8 @@ public:
         pak_ = std::make_unique<formats::ZipArchive>(bsp_.pakfile);
         assets_ = std::make_unique<render::AssetSource>(gfs, pak_.get());
         materials_ = std::make_unique<render::MaterialSystem>(device, *assets_);
-        // "$envmap env_cubemap" on materials the compiler did not patch (models): the map's default cubemap.
-        materials_->set_default_envmap("materials/maps/" + std::filesystem::path(path).stem().string() + "/cubemapdefault");
+        // Cubemaps for environment maps (docs/RENDERING.md).
+        materials_->set_map(std::filesystem::path(path).stem().string(), bsp_.cubemaps);
         world_ = std::make_unique<render::WorldRenderer>(device, *materials_, bsp_, options.shown);
         world_fog_ = render::Fog::from_entity(bsp_.entities.at(0));
         world_fog_.enabled = world_fog_.enabled && options.fog;
@@ -342,7 +342,7 @@ public:
             const auto& c = characters_->stats();
             std::cout << "characters: " << c.instances << " instances of " << c.models << " models ("
                       << c.missing_models << " missing), " << c.without_sequence << " without an idle sequence, "
-                      << c.with_cloth << " with cloth\n";
+                      << c.with_cloth << " with cloth, " << c.with_envmap << " with envmaps\n";
         }
         particles_ = std::make_unique<render::ParticleRenderer>(device, *assets_, bsp_, options.shown);
         std::cout << "particles: " << particles_->stats().systems << " active effects ("
@@ -530,6 +530,8 @@ private:
             settings_.fog = sky_fog;
             prop_settings.skybox = true;
             prop_settings.fog = sky_fog;
+            prop_settings.eye = {sky_eye.x, sky_eye.y, sky_eye.z};
+            prop_settings.envmaps = settings_.envmaps;
             world_->draw_opaque(cmd, sm, settings_);
             if (props_) {
                 props_->draw_opaque(cmd, sm, prop_settings);
@@ -547,10 +549,14 @@ private:
         settings_.camera_position = {eye.x, eye.y, eye.z};
         settings_.fog = fog;
         prop_settings.fog = fog;
+        prop_settings.eye = {eye.x, eye.y, eye.z};
+        prop_settings.envmaps = settings_.envmaps;
         const auto m = to_array(v.clip_projection * view);
         render::CharacterDrawSettings character_settings{settings_.light_scale, settings_.fullbright,
                                                          &materials_->params()};
         character_settings.fog = fog;
+        character_settings.eye = {eye.x, eye.y, eye.z};
+        character_settings.envmaps = settings_.envmaps;
         world_->draw_opaque(cmd, m, settings_);
         if (props_) {
             props_->draw_opaque(cmd, m, prop_settings);

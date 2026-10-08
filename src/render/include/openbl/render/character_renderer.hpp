@@ -51,6 +51,7 @@ struct CharacterStats {
     std::size_t missing_models = 0;
     std::size_t without_sequence = 0; // Shown in their bind pose.
     std::size_t with_cloth = 0;       // Instances simulating cloth (hair, skirts, coats).
+    std::size_t with_envmap = 0;      // Instances with an environment-mapped material.
 };
 
 struct CharacterOptions {
@@ -73,6 +74,8 @@ struct CharacterDrawSettings {
     // Material params table (MaterialSystem::params()); null: defaults only.
     const std::vector<MaterialParams>* material_params = nullptr;
     Fog fog;
+    std::array<float, 3> eye{}; // Camera position, for environment maps.
+    bool envmaps = true;
 };
 
 class CharacterRenderer {
@@ -97,6 +100,8 @@ private:
         const RenderMaterial* material = nullptr;
         std::unique_ptr<rhi::BindGroup> bind_group;
         std::vector<std::unique_ptr<rhi::BindGroup>> frame_bind_groups; // Animated base texture.
+        // For "env_cubemap" materials: one bind group per cubemap an instance uses.
+        mutable std::unordered_map<const rhi::Texture*, std::unique_ptr<rhi::BindGroup>> cubemap_groups;
     };
     // One mesh flex: a morph of some vertices, by flex slot.
     struct ModelFlex {
@@ -136,6 +141,8 @@ private:
         std::vector<anim::ClothSimulation> cloth;    // One per Model::cloth piece.
         std::vector<float> cloth_data; // Positions, then normals: float4 per particle; updated by update().
         std::optional<float> cloth_time; // Time of the last cloth update.
+        bool envmapped = false;                // Some mesh of its skin has an environment map.
+        const rhi::Texture* cubemap = nullptr; // Nearest cubemap, for "env_cubemap" materials.
     };
 
     const Model* load_model(const std::string& path);

@@ -36,6 +36,8 @@ struct PropDrawSettings {
     const std::vector<MaterialParams>* material_params = nullptr;
     Fog fog;
     bool skybox = false; // true: only props in the 3D skybox's area; false: the rest.
+    std::array<float, 3> eye{}; // Camera position, for environment maps.
+    bool envmaps = true;
 };
 
 class PropRenderer {
@@ -63,6 +65,8 @@ private:
         const RenderMaterial* material = nullptr;
         std::unique_ptr<rhi::BindGroup> bind_group;
         std::vector<std::unique_ptr<rhi::BindGroup>> frame_bind_groups; // Animated base texture.
+        // For "env_cubemap" materials: one bind group per cubemap an instance uses.
+        mutable std::unordered_map<const rhi::Texture*, std::unique_ptr<rhi::BindGroup>> cubemap_groups;
     };
     struct Model {
         std::unique_ptr<rhi::Buffer> vertices;
@@ -89,6 +93,8 @@ private:
         AmbientCube lighting;              // Model space.
         std::vector<Decal> decals;
         bool skybox = false;               // In the 3D skybox's area.
+        bool envmapped = false;            // Some mesh of its skin has an environment map.
+        const rhi::Texture* cubemap = nullptr; // Nearest cubemap, for "env_cubemap" materials.
     };
 
     const Model* load_model(const std::string& path);
@@ -105,7 +111,8 @@ private:
     std::array<std::array<std::unique_ptr<rhi::Pipeline>, 2>, 3> pipelines_; // [blend][cull]
     std::unordered_map<std::string, std::unique_ptr<Model>> models_; // Null caches failures.
     std::vector<Instance> instances_;
-    std::vector<float> shader_data_; // Fog rows, then the material params table.
+    std::vector<float> shader_data_; // Fog rows, eye, material params table, envmap blocks.
+    std::vector<std::uint32_t> envmap_blocks_; // Per instance, this pass: its block, or UINT32_MAX.
 };
 
 } // namespace openbl::render

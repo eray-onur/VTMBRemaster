@@ -41,6 +41,26 @@ float3 envmap_term(float3 encoded_env, float4 tint_contrast, float saturation) {
     return lerp(float3(grey, grey, grey), c, saturation);
 }
 
+// Adds the environment map to encoded colour: the eye vector reflected about
+// `normal` (both world space) samples the cube map; the mask comes from
+// `mask_mode` (0 none, 1 mask texture colour, 2 1 - base alpha, 3 mask
+// texture alpha). `tone`: $envmaptint rgb and contrast; `saturation`.
+float3 add_envmap(float3 encoded, float3 normal, float3 to_eye, TextureCube cube, Texture2D mask_texture,
+                  SamplerState s, float2 uv, float base_alpha, uint mask_mode, float4 tone, float saturation) {
+    const float3 n = normalize(normal);
+    const float3 r = 2.0 * dot(n, to_eye) * n - to_eye;
+    const float3 env = linear_to_srgb(cube.Sample(s, r).rgb);
+    float3 mask = float3(1, 1, 1);
+    if (mask_mode == 1) {
+        mask = mask_texture.Sample(s, uv).rgb;
+    } else if (mask_mode == 2) {
+        mask = (1.0 - base_alpha).xxx;
+    } else if (mask_mode == 3) {
+        mask = mask_texture.Sample(s, uv).aaa;
+    }
+    return saturate(encoded + envmap_term(env, tone, saturation) * mask);
+}
+
 float3 linear_to_srgb(float3 c) {
     c = saturate(c);
     return lerp(1.055 * pow(c, 1.0 / 2.4) - 0.055, c * 12.92, step(c, 0.0031308));

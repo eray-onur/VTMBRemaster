@@ -80,6 +80,40 @@ MaterialSystem::MaterialSystem(rhi::Device& device, const AssetSource& assets)
 
 MaterialSystem::~MaterialSystem() = default;
 
+void MaterialSystem::set_map(const std::string& map_name, const std::vector<formats::BspCubemap>& cubemaps) {
+    map_dir_ = "materials/maps/" + map_name + "/";
+    default_envmap_ = map_dir_ + "cubemapdefault";
+    cubemaps_ = cubemaps;
+}
+
+const rhi::Texture* MaterialSystem::nearest_cubemap(const std::array<float, 3>& position) {
+    const formats::BspCubemap* best = nullptr;
+    float best_d2 = 0.0f;
+    for (const auto& c : cubemaps_) {
+        float d2 = 0.0f;
+        for (std::size_t k = 0; k < 3; ++k) {
+            const float d = static_cast<float>(c.origin[k]) - position[k];
+            d2 += d * d;
+        }
+        if (!best || d2 < best_d2) {
+            best = &c;
+            best_d2 = d2;
+        }
+    }
+    if (best) {
+        const std::string path = map_dir_ + "c" + std::to_string(best->origin[0]) + "_" + std::to_string(best->origin[1]) +
+                                 "_" + std::to_string(best->origin[2]);
+        if (const auto* t = texture(path); t && t->desc().cube) {
+            return t;
+        }
+    }
+    if (default_envmap_.empty()) {
+        return nullptr;
+    }
+    const auto* t = texture(default_envmap_);
+    return t && t->desc().cube ? t : nullptr;
+}
+
 std::optional<formats::VtfTexture> MaterialSystem::read_vtf(const std::string& path) {
     try {
         if (auto tth = assets_.read(path + ".tth")) {
@@ -365,6 +399,7 @@ RenderMaterial MaterialSystem::load(const std::string& name, std::optional<forma
             const auto* t = texture(path);
             if (t && t->desc().cube) {
                 out.envmap = t;
+                out.envmap_nearest = formats::normalize_game_path(*env) == "env_cubemap";
             }
         }
     }

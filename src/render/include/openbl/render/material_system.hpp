@@ -1,5 +1,6 @@
 #pragma once
 
+#include "openbl/formats/bsp.hpp"
 #include "openbl/formats/vmt.hpp"
 #include "openbl/formats/vmt_proxies.hpp"
 #include "openbl/formats/vtf.hpp"
@@ -42,6 +43,7 @@ struct RenderMaterial {
     // Environment map ($envmap): a cube map added after lighting, times
     // $envmaptint and the mask (docs/RENDERING.md). Null if none.
     const rhi::Texture* envmap = nullptr;
+    bool envmap_nearest = false; // "env_cubemap": models use the cubemap nearest to them instead of `envmap`.
     const rhi::Texture* envmap_mask = nullptr; // $envmapmask (raw values), or the bump map with normal-alpha masks; white otherwise.
     enum class EnvmapMask : std::uint8_t {
         None,       // Full strength.
@@ -114,10 +116,12 @@ public:
 
     std::size_t missing_textures() const { return missing_textures_; }
 
-    // The cube map used for "$envmap env_cubemap" (the map's default, e.g.
-    // materials/maps/sm_hub_1/cubemapdefault). Set before loading materials.
-    // World faces mostly use per-cubemap copies of their materials instead.
-    void set_default_envmap(std::string path) { default_envmap_ = std::move(path); }
+    // The map's cubemaps (materials/maps/<map>/c<x>_<y>_<z>, and cubemapdefault
+    // for "$envmap env_cubemap"). Set before loading materials. World faces
+    // use per-cubemap copies of their materials; models take the nearest.
+    void set_map(const std::string& map_name, const std::vector<formats::BspCubemap>& cubemaps);
+    // The cube map nearest to `position` (the default one if the map has none); null without a map.
+    const rhi::Texture* nearest_cubemap(const std::array<float, 3>& position);
     // A black cube map and a white texture, for materials without an
     // environment map or mask.
     const rhi::Texture* black_cube() const { return black_cube_.get(); }
@@ -149,6 +153,8 @@ private:
     std::unique_ptr<rhi::Texture> black_cube_;
     std::unique_ptr<rhi::Texture> white_;
     std::string default_envmap_;
+    std::string map_dir_; // materials/maps/<map>/
+    std::vector<formats::BspCubemap> cubemaps_;
     std::unordered_map<std::string, std::unique_ptr<rhi::Texture>> textures_; // Null entries cache misses.
     std::unordered_map<std::string, std::vector<const rhi::Texture*>> frames_;
     std::unordered_map<std::string, RenderMaterial> materials_;
