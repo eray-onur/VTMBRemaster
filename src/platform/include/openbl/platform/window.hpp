@@ -14,7 +14,7 @@ struct SDL_Window;
 namespace openbl::platform {
 
 enum class Key : std::uint8_t {
-    W, A, S, D, Q, E, Space, Ctrl, Shift, Escape, Tab, F1, F2, F3, F4,
+    W, A, S, D, Q, E, C, P, Space, Ctrl, Shift, Escape, Tab, F1, F2, F3, F4,
     Count
 };
 
@@ -63,6 +63,8 @@ public:
     void set_title(const std::string& title);
     // Hides the cursor and reports unbounded relative motion while enabled.
     void set_relative_mouse(bool enabled);
+    // Puts UTF-8 text on the system clipboard. Returns false on failure.
+    bool set_clipboard_text(const std::string& text);
 
     // Vulkan integration.
     std::vector<const char*> vulkan_instance_extensions() const;

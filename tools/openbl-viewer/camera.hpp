@@ -19,7 +19,8 @@ struct Camera {
     glm::mat4 view() const;
     glm::mat4 projection(float aspect) const;
 
-    // Right mouse: look. WASD: move. E/Q or Space/Ctrl: up/down. Shift: fast. Wheel: speed.
+    // Right mouse: look (the caller captures the cursor). WASD: move. E/Q or Space/Ctrl: up/down. Shift: fast.
+    // Wheel: speed.
     void update(const platform::Input& input, float dt);
 };
 

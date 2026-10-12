@@ -17,6 +17,8 @@ int key_index(SDL_Scancode code) {
     case SDL_SCANCODE_D: return static_cast<int>(Key::D);
     case SDL_SCANCODE_Q: return static_cast<int>(Key::Q);
     case SDL_SCANCODE_E: return static_cast<int>(Key::E);
+    case SDL_SCANCODE_C: return static_cast<int>(Key::C);
+    case SDL_SCANCODE_P: return static_cast<int>(Key::P);
     case SDL_SCANCODE_SPACE: return static_cast<int>(Key::Space);
     case SDL_SCANCODE_LCTRL: return static_cast<int>(Key::Ctrl);
     case SDL_SCANCODE_LSHIFT: return static_cast<int>(Key::Shift);
@@ -127,6 +129,10 @@ void Window::set_title(const std::string& title) {
 
 void Window::set_relative_mouse(bool enabled) {
     SDL_SetWindowRelativeMouseMode(window_, enabled);
+}
+
+bool Window::set_clipboard_text(const std::string& text) {
+    return SDL_SetClipboardText(text.c_str());
 }
 
 std::vector<const char*> Window::vulkan_instance_extensions() const {

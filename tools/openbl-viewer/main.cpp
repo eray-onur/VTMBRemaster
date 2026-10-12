@@ -858,16 +858,60 @@ int run(const Options& options) {
         int shot_frame = 0;
         constexpr int kShotSettleFrames = 3;
 
+        const bool interactive = !options.screenshot && shots.empty();
+        if (interactive) {
+            std::cout << "controls: right mouse look, WASD move, E/Q or Space/Ctrl up and down, Shift fast, wheel speed,\n"
+                         "          C copy the view as --pos/--angles, P pause the scene clock, Esc quit\n";
+        }
+        const std::string title = options.map ? "OpenBL Viewer - " + *options.map : "OpenBL Viewer";
         auto last = start_time;
+        auto title_time = start_time;
+        int title_frames = 0;
+        float scene_clock = 0.0f; // Wall-clock seconds, stopped while paused.
+        bool paused = false;
+        bool looking = false;
         int frame = 0;
         while (window.poll_events()) {
             const auto now = std::chrono::steady_clock::now();
             const float dt = std::chrono::duration<float>(now - last).count();
             last = now;
-            if (window.input().pressed(platform::Key::Escape)) {
+            const platform::Input& input = window.input();
+            if (input.pressed(platform::Key::Escape)) {
                 break;
             }
-            camera.update(window.input(), dt);
+            // Hold the cursor while looking, so turning does not stop at the screen's edge.
+            if (input.down(platform::MouseButton::Right) != looking) {
+                looking = !looking;
+                window.set_relative_mouse(looking);
+            }
+            if (input.pressed(platform::Key::P)) {
+                paused = !paused;
+            }
+            if (!paused) {
+                scene_clock += dt;
+            }
+            // A long frame (loading, dragging the window) must not throw the camera across the map.
+            camera.update(input, std::min(dt, 0.1f));
+            if (input.pressed(platform::Key::C)) {
+                char args[128];
+                std::snprintf(args, sizeof(args), "--pos %.2f %.2f %.2f --angles %.2f %.2f", camera.position.x,
+                              camera.position.y, camera.position.z, camera.pitch, camera.yaw);
+                window.set_clipboard_text(args);
+                std::printf("%s\nshot %.2f %.2f %.2f %.2f %.2f\n", args, camera.position.x, camera.position.y,
+                            camera.position.z, camera.pitch, camera.yaw);
+                std::fflush(stdout);
+            }
+            ++title_frames;
+            if (interactive && now - title_time >= std::chrono::milliseconds(250)) {
+                const float fps = static_cast<float>(title_frames) / std::chrono::duration<float>(now - title_time).count();
+                char status[160];
+                std::snprintf(status, sizeof(status), " - pos %.0f %.0f %.0f  angles %.0f %.0f - %.0f fps - speed %.0f%s",
+                              camera.position.x, camera.position.y, camera.position.z, camera.pitch, camera.yaw, fps,
+                              camera.speed, paused ? " - paused" : "");
+                window.set_title(title + status);
+                title_time = now;
+                title_frames = 0;
+            }
             bool shot_capture = false;
             if (shot_index < shots.size()) {
                 const Shot& s = shots[shot_index];
@@ -890,7 +934,7 @@ int run(const Options& options) {
             const float aspect = static_cast<float>(device->frame_width()) / static_cast<float>(device->frame_height());
             const float time =
                 in_sequence ? options.time.value_or(0.0f) + static_cast<float>(frame - options.frames) / options.sequence_fps
-                            : options.time.value_or(std::chrono::duration<float>(now - start_time).count());
+                            : options.time.value_or(scene_clock);
             scene->draw(*cmd, camera.projection(aspect), camera.view(), camera, time);
             device->end_frame();
 

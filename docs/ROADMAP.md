@@ -116,7 +116,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Facial flexes: controllers through the flex rules and mesh-flex ramps to GPU vertex offsets; viewer `--flex`
 - [x] Animation: flex normal offsets (creases shade as faces move)
 - [ ] Animation: sequence layers (all weapon overlays; need weapons and a look at combat in the original), root motion, flex drivers (expressions, lip-sync; Phase 2); eyes looking at a target, eye glints
-- [ ] Free-fly viewer on Windows and Linux
+- [x] Free-fly map viewer on Windows: the cursor held while looking, position, angles and frame rate in the title, **C** copies the view as `--pos`/`--angles` (and a `--shots` line), **P** pauses the scene clock
+- [ ] Free-fly viewer on Linux (SDL3 and Vulkan, untried)
 - [x] Material proxies at runtime: Sine, LinearRamp, noise, arithmetic chains, AnimatedTexture (base and water normal frames), TextureScroll, TextureTransform, driving the base texture transform, `$color`/`$alpha` and `$selfillumtint` on the world and props; `--time` for fixed-clock renders
 - [x] Material proxies: characters, `UnlitTwoTexture` second layer with `$texture2transform` (TV scanlines), `--sequence` frame captures
 - [ ] Material proxies that need missing features: GlobalWetness (environment maps are done; needs rain), TextConsole (needs the terminal UI); confirm the ones the captures could not show (security-camera `Sine`, sprite fades, `GlobalWetness` in rain, ticker scroll speed)
