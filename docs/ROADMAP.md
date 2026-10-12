@@ -94,7 +94,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Normal maps on models: the ambient cube per pixel about the bumped normal, bumped envmap reflections; MDL tangents ([RENDERING.md](RENDERING.md#normal-maps-on-models))
 - [ ] Bump maps: compare with the original (Warrens, temple, `sp_soc_3` tunnels, the temple's gold Buddha)
 - [ ] Detail textures (`$detail`, multiplied in at 2×)
-- [ ] Detail props (grass and debris sprites placed from the map's detail-prop lump)
+- [x] Detail props: the `dprp` models baked into world-space buffers per material with their stored light, culled by cluster ([RENDERING.md](RENDERING.md#detail-props)); viewer `--no-detail-props`
+- [ ] Detail props: compare with the running game (unlit grass modulated by its stored light; draw distance and fade)
 - [x] Ropes and cables (`keyframe_rope`, `move_rope`): chains at rest drawn as camera-facing strips with the `Cable` shader's lighting and normal-map shading; sag fitted against an `sm_hub_1` capture ([RENDERING.md](RENDERING.md#ropes-and-cables)); viewer `--no-ropes`
 - [ ] Ropes: compare a single-span rope with the running game (whole-chain slack or a fixed fraction); `Type`, ropes moving between keyframes
 - [ ] Model shadows (the `Shadow` and `ShadowModel` proxies; projected shadow textures)

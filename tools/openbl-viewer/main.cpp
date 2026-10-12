@@ -20,6 +20,7 @@
 #include "openbl/render/texture_upload.hpp"
 #include "openbl/render/prop_renderer.hpp"
 #include "openbl/render/sky_renderer.hpp"
+#include "openbl/render/detail_prop_renderer.hpp"
 #include "openbl/render/rope_renderer.hpp"
 #include "openbl/render/sprite_renderer.hpp"
 #include "openbl/render/world_renderer.hpp"
@@ -52,7 +53,7 @@ namespace {
 
 constexpr const char* kUsage =
     "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--show TARGETNAME]... [--npc-sequence NAME] [--pose NAME=VALUE]... [--flex CONTROLLER=VALUE]... [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
-    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-envmap] [--no-bump] [--no-sprites] [--no-ropes] [--no-cull] [--no-prop-fade] [--no-cloth] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
+    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-envmap] [--no-bump] [--no-sprites] [--no-ropes] [--no-detail-props] [--no-cull] [--no-prop-fade] [--no-cloth] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
     "                     [--validation] [--no-vsync]";
 
 struct Options {
@@ -76,6 +77,7 @@ struct Options {
     bool bumpmaps = true; // --no-bump: normal maps ignored (world: flat lightmap; models: vertex lighting).
     bool sprites = true; // --no-sprites: no env_sprite glows and cones.
     bool ropes = true;   // --no-ropes: no keyframe_rope / move_rope cables.
+    bool detail_props = true; // --no-detail-props: no grass and debris from the detail-prop lump.
     bool cull = true;    // --no-cull: draw the whole map in every view.
     bool prop_fade = true; // --no-prop-fade: static props never fade with distance.
     bool characters = true;
@@ -161,6 +163,8 @@ Options parse_args(int argc, char** argv) {
             o.sprites = false;
         } else if (a == "--no-ropes") {
             o.ropes = false;
+        } else if (a == "--no-detail-props") {
+            o.detail_props = false;
         } else if (a == "--no-cull") {
             o.cull = false;
         } else if (a == "--no-prop-fade") {
@@ -366,6 +370,12 @@ public:
         particles_ = std::make_unique<render::ParticleRenderer>(device, *assets_, bsp_, options.shown);
         sprites_ = std::make_unique<render::SpriteRenderer>(device, *materials_, bsp_, options.shown);
         draw_sprites_ = options.sprites;
+        if (options.detail_props) {
+            detail_props_ = std::make_unique<render::DetailPropRenderer>(device, *materials_, *assets_, bsp_);
+            const auto& d = detail_props_->stats();
+            std::cout << "detail props: " << d.props << " (" << d.triangles << " triangles, " << d.missing_models
+                      << " missing models)\n";
+        }
         if (options.ropes) {
             ropes_ = std::make_unique<render::RopeRenderer>(device, *materials_, bsp_);
             std::cout << "ropes: " << ropes_->stats().ropes << " (" << ropes_->stats().missing_materials
@@ -616,6 +626,9 @@ private:
         if (ropes_) {
             ropes_->draw_opaque(cmd, m, {eye.x, eye.y, eye.z}, fog, false);
         }
+        if (detail_props_) {
+            detail_props_->draw(cmd, m, {eye.x, eye.y, eye.z}, fog, settings_.visibility);
+        }
         draw_translucent(cmd, m, to_array(view), eye, fog, false, 1.0f, prop_settings, &character_settings);
     }
 
@@ -706,6 +719,7 @@ private:
     std::unique_ptr<render::ParticleRenderer> particles_;
     std::unique_ptr<render::SpriteRenderer> sprites_;
     std::unique_ptr<render::RopeRenderer> ropes_;
+    std::unique_ptr<render::DetailPropRenderer> detail_props_;
     bool draw_sprites_ = true; // false: --no-sprites.
     bool prop_fade_ = true;    // false: --no-prop-fade.
     formats::BspDrawOrder draw_order_{bsp_};

@@ -1,5 +1,6 @@
 add_library(openbl_render
     character_renderer.cpp
+    detail_prop_renderer.cpp
     light_styles.cpp
     material_system.cpp
     particle_renderer.cpp
@@ -17,6 +18,8 @@ target_link_libraries(openbl_render PUBLIC openbl::formats openbl::vfs openbl::a
 
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/world.hlsl vert vs_main openbl_world_vs)
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/world.hlsl frag ps_main openbl_world_ps)
+openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/detail.hlsl vert vs_main openbl_detail_vs)
+openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/detail.hlsl frag ps_main openbl_detail_ps)
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/prop.hlsl vert vs_main openbl_prop_vs)
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/prop.hlsl frag ps_main openbl_prop_ps)
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/textured.hlsl vert vs_main openbl_textured_vs)

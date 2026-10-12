@@ -54,7 +54,7 @@ Implementation: `src/formats/bsp.cpp` (lumps, entities, face meshes) and `src/fo
 
 Lumps 9 (occlusion), 11, 28 and 45 (overlays) are empty in every map. Decals are `infodecal` entities (4,609 in all), applied when the map loads.
 
-Also decoded: world lights (15), nodes (5) and leafs (10); see below. Not yet decoded: visibility (4), leaf faces and brushes (16, 17), brushes (18, 19), areas and portals (20–25), physics collision (29), vertex normals (30, 31), cubemaps (42), detail props.
+Also decoded: world lights (15), nodes (5), leafs (10), visibility (4), leaf faces and brushes (16, 17), brushes (18, 19), areas and portals (20–25), physics collision (29), vertex normals (30, 31), cubemaps (42) and the detail props; see below.
 
 ## Faces (104 bytes)
 

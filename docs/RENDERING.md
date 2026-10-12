@@ -194,6 +194,16 @@ The original draws translucent things in BSP order, back to front from the eye, 
 
 OpenBL follows this with one queue per view (`render/translucent.hpp`, `formats/draw_order.hpp`): each renderer lists its translucent items with their BSP slot and distance, and the queue draws them in order. Water comes first. A particle effect is one item, placed by the bounds of its current particles. Sprite bounds are half the picture's larger side around the origin; props use their model bounds, characters a 32 × 32 × 72 box. With the skyline light cones of `sm_hub_1`, placing sprites by their origin alone put the skybox's translucent building facades over them (0.60 of the original's cone light); with their bounds the cones measure 0.87 as before.
 
+## Detail props
+
+The `dprp` game lump ([formats/maps.md](formats/maps.md#detail-props-dprp-v2-dplt)) places small models across the outdoor maps: 134,490 in all, up to 25,434 on one map (`sp_observatory_1`). This version has no detail sprites: every entry is a model, mostly `grassa`/`grassb` (12 triangles each), weeds and pebbles. Each stores one light colour (`ColorRGBExp32`), plus optional extra light styles in `dplt`.
+
+**Materials.** Every detail model's material is `UnlitGeneric`, even the pebbles (`rocksmall`), and the grass and weeds are `$translucent`. Their textures are mid-bright (`grassa`'s opaque texels average 110 / 120 / 78), so unmodulated they would glow at night. The engine must therefore multiply them by the stored colour. OpenBL treats that colour like a luxel: lit colour = base × light in linear terms, as for the world. The extra styles are added at their default brightness. On night maps much of the grass has no light at all (more than half of `sp_observatory_1`'s, a map without sky ambient light), and it draws black.
+
+**OpenBL.** When the map loads, every prop's mesh is transformed into world space with its light per vertex, merged per material, and grouped by the cluster of its leaf (`DetailPropRenderer`). The groups are culled like the world ([Visibility](#visibility)). Opaque materials draw first. Translucent ones are blended without depth writes, after the opaque world, props and characters, their cluster groups from far to near. Unlike the original's per-item translucent queue, nothing is sorted within a group.
+
+Not known: the original's draw distance and fade for detail props. OpenBL draws them at any distance. The cost is within measurement noise (about 2 ms per frame with or without them on `sp_observatory_1` and `hw_cemetery_1` at 1600 × 900). `openbl-viewer --no-detail-props` hides them.
+
 ## Visibility
 
 Each view draws only what it can see (`formats::ViewVisibility`). That takes two tests:
