@@ -87,7 +87,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Sprites: world glows (`rendermode` 9), the fast pulse (`renderfx` 2), and the `PlayerProximity`, `LampBeam` and `LampHalo` fades (formulas read from `client.dll`); glows keep their world size (confirmed in the client code)
 - [x] Sprites checked against the original on `sm_hub_1` with `r_drawsprites` on/off captures: colour mode, additive, lamp-globe glows and the skyline light cones, within about 7% except a faint glow excess close to a lamp and cones at 0.87 ([RENDERING.md](RENDERING.md#sprites-env_sprite))
 - [ ] Sprites: scripts switching sprites on and off (traffic lights; needs entity I/O, Phase 2); scale animations
-- [ ] Visibility culling: draw only what the PVS and area portals allow (every pass currently draws the whole map, plus the water passes)
+- [x] Visibility culling: PVS and frustum per view for world batches (faces grouped by cluster), props, characters, sprites and particles; characters out of the main PVS not animated; 4–5× faster frames on `sm_hub_1` ([RENDERING.md](RENDERING.md#visibility)); viewer `--no-cull`
+- [ ] Visibility: area portals (doors closing off areas), culling translucent world faces and decals
 - [x] Bump-mapped world surfaces: `$bumpmap` faces lit from their three directional lightmaps with the original's basis and weighted average ([RENDERING.md](RENDERING.md#bump-mapped-lightmaps)); viewer `--no-bump`
 - [x] Bump-mapped envmap reflections (tangent frame from the texture axes, normal-map alpha mask) and bump-mapped `WorldVertexTransition` blends ([RENDERING.md](RENDERING.md#bump-mapped-lightmaps))
 - [x] Normal maps on models: the ambient cube per pixel about the bumped normal, bumped envmap reflections; MDL tangents ([RENDERING.md](RENDERING.md#normal-maps-on-models))

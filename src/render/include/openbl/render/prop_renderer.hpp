@@ -5,6 +5,7 @@
 // with its own transform, skin and light tint.
 
 #include "openbl/formats/bsp.hpp"
+#include "openbl/formats/visibility.hpp"
 #include "openbl/formats/draw_order.hpp"
 #include "openbl/render/fog.hpp"
 #include "openbl/render/asset_source.hpp"
@@ -43,6 +44,8 @@ struct PropDrawSettings {
     std::array<float, 3> eye{}; // Camera position, for environment maps.
     bool envmaps = true;
     bool bumpmaps = true; // Light and reflect $bumpmap materials about the bumped normal.
+    // What this view can see (docs/RENDERING.md#visibility); null: everything.
+    const formats::ViewVisibility* visibility = nullptr;
 };
 
 class PropRenderer {
@@ -113,6 +116,7 @@ private:
         const rhi::Texture* cubemap = nullptr; // Nearest cubemap, for "env_cubemap" materials.
         std::optional<formats::BspStaticProp> fade; // Static props with a distance fade.
         std::vector<std::uint32_t> leaves;  // World leaves its bounds touch.
+        formats::Vec3 mins{}, maxs{};       // Its world-space box.
         float alpha = 1.0f;                 // This frame's fade: 0 hidden, 1 solid.
     };
 

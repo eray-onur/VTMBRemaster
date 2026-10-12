@@ -6,6 +6,7 @@
 #include "camera.hpp"
 
 #include "openbl/formats/bsp.hpp"
+#include "openbl/formats/visibility.hpp"
 #include "openbl/formats/image_write.hpp"
 #include "openbl/formats/path.hpp"
 #include "openbl/formats/tth.hpp"
@@ -51,7 +52,7 @@ namespace {
 
 constexpr const char* kUsage =
     "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--show TARGETNAME]... [--npc-sequence NAME] [--pose NAME=VALUE]... [--flex CONTROLLER=VALUE]... [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
-    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-envmap] [--no-bump] [--no-sprites] [--no-ropes] [--no-prop-fade] [--no-cloth] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
+    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-envmap] [--no-bump] [--no-sprites] [--no-ropes] [--no-cull] [--no-prop-fade] [--no-cloth] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
     "                     [--validation] [--no-vsync]";
 
 struct Options {
@@ -75,6 +76,7 @@ struct Options {
     bool bumpmaps = true; // --no-bump: normal maps ignored (world: flat lightmap; models: vertex lighting).
     bool sprites = true; // --no-sprites: no env_sprite glows and cones.
     bool ropes = true;   // --no-ropes: no keyframe_rope / move_rope cables.
+    bool cull = true;    // --no-cull: draw the whole map in every view.
     bool prop_fade = true; // --no-prop-fade: static props never fade with distance.
     bool characters = true;
     std::optional<std::filesystem::path> screenshot;
@@ -159,6 +161,8 @@ Options parse_args(int argc, char** argv) {
             o.sprites = false;
         } else if (a == "--no-ropes") {
             o.ropes = false;
+        } else if (a == "--no-cull") {
+            o.cull = false;
         } else if (a == "--no-prop-fade") {
             o.prop_fade = false;
         } else if (a == "--no-envmap") {
@@ -368,6 +372,10 @@ public:
                       << " with a missing material)\n";
         }
         prop_fade_ = options.prop_fade;
+        if (options.cull) {
+            visibility_ = std::make_unique<formats::ViewVisibility>(bsp_);
+            main_visibility_ = std::make_unique<formats::ViewVisibility>(bsp_);
+        }
         std::cout << "sprites: " << sprites_->stats().sprites << " on, " << sprites_->stats().off << " off, "
                   << sprites_->stats().missing_materials << " with a missing material\n";
         std::cout << "particles: " << particles_->stats().systems << " active effects ("
@@ -428,8 +436,12 @@ public:
         settings_.time = time;
         materials_->update({.time = time});
         settings_.material_params = &materials_->params();
+        if (main_visibility_) {
+            main_visibility_->update({camera.position.x, camera.position.y, camera.position.z},
+                                     to_array(projection * view));
+        }
         if (characters_) {
-            characters_->update(time);
+            characters_->update(time, main_visibility_.get());
         }
         particles_->update(time);
         // The static props' fade follows the main camera in every view, as in the original.
@@ -464,6 +476,7 @@ private:
         bool water = true;
         bool sky = true;
         std::optional<render::Fog> fog; // Instead of the world's.
+        std::optional<glm::vec3> pvs_eye; // Whose PVS limits what is drawn, if not the eye's.
     };
 
     // The water's reflection (the scene mirrored about the surface, only what
@@ -512,6 +525,7 @@ private:
             View v{flipped, oblique_projection(flipped, plane_in_view(mirrored_view, glm::vec4(0, 0, 1, -plane.z))),
                    mirrored_view, glm::vec3(eye.x, eye.y, 2.0f * plane.z - eye.z)};
             v.monitors = v.water = false;
+            v.pvs_eye = eye; // The mirrored eye is often inside solid; the reflection shows what the eye sees.
             draw_view(cmd, v);
         }
         cmd.end_render_target();
@@ -550,6 +564,8 @@ private:
             const auto sm = to_array(projection * glm::mat4(glm::mat3(view)) * glm::translate(glm::mat4(1.0f), -sky_eye));
             settings_.camera_position = {sky_eye.x, sky_eye.y, sky_eye.z};
             settings_.skybox = true;
+            settings_.visibility = view_visibility({sky_eye.x, sky_eye.y, sky_eye.z}, sm);
+            prop_settings.visibility = settings_.visibility;
             // Fog distances are world units: the skybox is 1/scale size.
             render::Fog sky_fog = sky->fog;
             sky_fog.start /= sky->scale;
@@ -580,8 +596,12 @@ private:
         prop_settings.envmaps = settings_.envmaps;
         prop_settings.bumpmaps = settings_.bumpmaps;
         const auto m = to_array(v.clip_projection * view);
+        const glm::vec3 pvs_eye = v.pvs_eye.value_or(eye);
+        settings_.visibility = view_visibility({pvs_eye.x, pvs_eye.y, pvs_eye.z}, m);
+        prop_settings.visibility = settings_.visibility;
         render::CharacterDrawSettings character_settings{settings_.light_scale, settings_.fullbright,
                                                          &materials_->params()};
+        character_settings.visibility = settings_.visibility;
         character_settings.fog = fog;
         character_settings.eye = {eye.x, eye.y, eye.z};
         character_settings.envmaps = settings_.envmaps;
@@ -618,9 +638,11 @@ private:
             characters_->collect_translucent(draw_order_, *character_settings, kCharacters, translucent_);
         }
         if (draw_sprites_) {
-            sprites_->collect_translucent(draw_order_, {eye.x, eye.y, eye.z}, skybox, kSprites, translucent_);
+            sprites_->collect_translucent(draw_order_, {eye.x, eye.y, eye.z}, skybox, kSprites, translucent_,
+                                          settings_.visibility);
         }
-        particles_->collect_translucent(draw_order_, {eye.x, eye.y, eye.z}, skybox, kParticles, translucent_);
+        particles_->collect_translucent(draw_order_, {eye.x, eye.y, eye.z}, skybox, kParticles, translucent_,
+                                        settings_.visibility);
         render::sort_back_to_front(translucent_);
         world_->begin_translucent(cmd, m, settings_);
         if (props_) {
@@ -660,6 +682,16 @@ private:
     }
 
     render::WorldDrawSettings settings_;
+    // What the view being drawn can see (null with --no-cull), and what the
+    // main camera sees (for animating characters).
+    std::unique_ptr<formats::ViewVisibility> visibility_, main_visibility_;
+    const formats::ViewVisibility* view_visibility(const formats::Vec3& eye, const std::array<float, 16>& m) {
+        if (!visibility_) {
+            return nullptr;
+        }
+        visibility_->update(eye, m);
+        return visibility_.get();
+    }
     rhi::Device& device_;
     bool water_targets_ = true; // false: water without reflection and refraction (--no-water).
     render::Fog world_fog_; // From worldspawn.

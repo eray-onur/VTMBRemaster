@@ -158,10 +158,11 @@ const rhi::BindGroup& SpriteRenderer::bind_group(const rhi::Texture* texture) {
 }
 
 void SpriteRenderer::collect_translucent(const formats::BspDrawOrder& order, const std::array<float, 3>& eye,
-                                         bool skybox, std::uint32_t source, std::vector<TranslucentItem>& out) const {
+                                         bool skybox, std::uint32_t source, std::vector<TranslucentItem>& out,
+                                         const formats::ViewVisibility* visibility) const {
     for (std::size_t i = 0; i < sprites_.size(); ++i) {
         const Sprite& s = sprites_[i];
-        if (s.skybox != skybox) {
+        if (s.skybox != skybox || (visibility && !visibility->any_leaf(s.leaves))) {
             continue;
         }
         TranslucentItem item;

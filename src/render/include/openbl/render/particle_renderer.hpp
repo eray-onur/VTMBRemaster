@@ -6,6 +6,7 @@
 
 #include "openbl/formats/bsp.hpp"
 #include "openbl/formats/draw_order.hpp"
+#include "openbl/formats/visibility.hpp"
 #include "openbl/particles/particle_system.hpp"
 #include "openbl/render/fog.hpp"
 #include "openbl/render/asset_source.hpp"
@@ -37,9 +38,11 @@ public:
     void update(float time);
     // One item per effect in the translucent queue (render/translucent.hpp),
     // placed by the leaves its particles reach; its particles are drawn back
-    // to front. `skybox`: only effects in the 3D skybox's area, or only the rest.
+    // to front. `skybox`: only effects in the 3D skybox's area, or only the
+    // rest; `visibility`: skips effects this view cannot see (null: none).
     void collect_translucent(const formats::BspDrawOrder& order, const std::array<float, 3>& eye, bool skybox,
-                             std::uint32_t source, std::vector<TranslucentItem>& out);
+                             std::uint32_t source, std::vector<TranslucentItem>& out,
+                             const formats::ViewVisibility* visibility = nullptr);
     // `right`/`up`: camera axes in world space; `eye`: camera position.
     void begin_translucent(const std::array<float, 16>& view_projection, const std::array<float, 3>& right,
                            const std::array<float, 3>& up, const std::array<float, 3>& eye, const Fog& fog = {});

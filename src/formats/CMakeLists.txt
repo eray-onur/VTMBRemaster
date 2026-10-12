@@ -28,6 +28,7 @@ add_library(openbl_formats
     tth.cpp
     vcd.cpp
     vdata.cpp
+    visibility.cpp
     vmt.cpp
     vmt_proxies.cpp
     vpk.cpp

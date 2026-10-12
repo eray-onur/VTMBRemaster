@@ -7,6 +7,7 @@
 
 #include "openbl/formats/bsp.hpp"
 #include "openbl/formats/draw_order.hpp"
+#include "openbl/formats/visibility.hpp"
 #include "openbl/render/fog.hpp"
 #include "openbl/render/light_styles.hpp"
 #include "openbl/render/material_system.hpp"
@@ -64,6 +65,8 @@ struct WorldDrawSettings {
     bool water_targets = false;
     bool envmaps = true; // Environment-map reflections ($envmap).
     bool bumpmaps = true; // Normal maps lit by the directional lightmaps ($bumpmap).
+    // What this view can see (docs/RENDERING.md#visibility); null: everything.
+    const formats::ViewVisibility* visibility = nullptr;
 };
 
 // A horizontal water surface: the water faces at one height. As in the
@@ -152,6 +155,16 @@ private:
         std::vector<std::uint32_t> leaves;
         bool entity = false;
         std::array<float, 3> center{};
+        // Opaque batches: their faces grouped by the clusters they lie in,
+        // each group with its bounds, so a view draws only the groups in its
+        // PVS and frustum (docs/RENDERING.md#visibility).
+        struct Run {
+            std::uint32_t first_index = 0;
+            std::uint32_t index_count = 0;
+            std::vector<std::int32_t> clusters;
+            formats::Vec3 mins{}, maxs{};
+        };
+        std::vector<Run> runs;
 
         const rhi::BindGroup& current_bind_group() const;
     };

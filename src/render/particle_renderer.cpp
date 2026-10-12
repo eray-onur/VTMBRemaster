@@ -163,7 +163,8 @@ void ParticleRenderer::update(float time) {
 }
 
 void ParticleRenderer::collect_translucent(const formats::BspDrawOrder& order, const std::array<float, 3>& eye,
-                                           bool skybox, std::uint32_t source, std::vector<TranslucentItem>& out) {
+                                           bool skybox, std::uint32_t source, std::vector<TranslucentItem>& out,
+                                           const formats::ViewVisibility* visibility) {
     for (std::size_t i = 0; i < emitters_.size(); ++i) {
         Emitter& em = emitters_[i];
         em.quads.clear();
@@ -182,8 +183,13 @@ void ParticleRenderer::collect_translucent(const formats::BspDrawOrder& order, c
                 hi[k] = std::max(hi[k], q.position[k] + r);
             }
         }
+        const auto leaves = formats::leaves_in_box(bsp_, lo, hi);
+        if (visibility && !visibility->object(leaves, lo, hi)) {
+            em.quads.clear();
+            continue;
+        }
         TranslucentItem item;
-        item.slot = order.nearest_slot(formats::leaves_in_box(bsp_, lo, hi));
+        item.slot = order.nearest_slot(leaves);
         const float dx = em.origin[0] - eye[0], dy = em.origin[1] - eye[1], dz = em.origin[2] - eye[2];
         item.distance = std::sqrt(dx * dx + dy * dy + dz * dz);
         item.source = source;

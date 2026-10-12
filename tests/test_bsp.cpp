@@ -1,6 +1,7 @@
 #include "openbl/formats/bsp.hpp"
 #include "openbl/formats/draw_order.hpp"
 #include "openbl/formats/mesh_decal.hpp"
+#include "openbl/formats/visibility.hpp"
 #include "openbl/formats/error.hpp"
 #include "openbl/formats/zip.hpp"
 #include "openbl/vfs/game_filesystem.hpp"
@@ -717,6 +718,51 @@ TEST_CASE("BSP draw order: back to front from the eye") {
     CHECK(order.nearest_slot(across) == order.leaf_slot(0)); // The eye is in leaf 0 now.
     order.update({10, 10, 0});
     CHECK(order.nearest_slot(across) == order.leaf_slot(1));
+}
+
+TEST_CASE("View visibility: the eye's PVS and the frustum's sides") {
+    // One node splits at x = 0: leaf 0 (x >= 0) is cluster 0, leaf 1 (x < 0)
+    // cluster 1. Cluster 0 sees only itself; cluster 1 sees both.
+    BspFile bsp;
+    bsp.planes.push_back({{1, 0, 0}, 0});
+    BspNode node;
+    node.children = {-1, -2};
+    bsp.nodes.push_back(node);
+    bsp.leafs.resize(2);
+    bsp.leafs[0].cluster = 0;
+    bsp.leafs[1].cluster = 1;
+    bsp.models.push_back({});
+    bsp.visibility.clusters = 2;
+    bsp.visibility.offsets = {{{20, 20}}, {{21, 21}}};
+    bsp.visibility.data.assign(20, std::byte{0});
+    bsp.visibility.data.push_back(std::byte{0x01});
+    bsp.visibility.data.push_back(std::byte{0x03});
+
+    // The identity matrix: clip space is world space, the frustum's sides x and y = +/-1.
+    const std::array<float, 16> identity{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    ViewVisibility vis(bsp);
+    vis.update({5, 0, 0}, identity); // Cluster 0.
+    CHECK_FALSE(vis.sees_all_clusters());
+    CHECK(vis.leaf(0));
+    CHECK_FALSE(vis.leaf(1));
+    CHECK(vis.cluster(-1)); // Outside the visibility data.
+    const std::vector<std::uint32_t> both{1, 0};
+    CHECK(vis.any_leaf(both));
+    const std::vector<std::uint32_t> far_side{1};
+    CHECK_FALSE(vis.any_leaf(far_side));
+    vis.update({-5, 0, 0}, identity); // Cluster 1.
+    CHECK(vis.leaf(0));
+    CHECK(vis.leaf(1));
+
+    CHECK(vis.box({-0.5f, -0.5f, 0}, {0.5f, 0.5f, 0}));
+    CHECK(vis.box({0.9f, 0, 0}, {3, 1, 0}));       // Partly inside.
+    CHECK_FALSE(vis.box({2, -1, 0}, {3, 1, 0}));   // Right of x = 1.
+    CHECK_FALSE(vis.box({0, -3, 0}, {1, -1.5f, 0})); // Below y = -1.
+
+    bsp.leafs[0].contents = contents::Solid;
+    vis.update({5, 0, 0}, identity); // In solid: everything.
+    CHECK(vis.sees_all_clusters());
+    CHECK(vis.leaf(1));
 }
 
 TEST_CASE("Static prop fade: linear in the squared distance") {

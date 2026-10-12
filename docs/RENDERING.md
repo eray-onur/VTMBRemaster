@@ -194,6 +194,22 @@ The original draws translucent things in BSP order, back to front from the eye, 
 
 OpenBL follows this with one queue per view (`render/translucent.hpp`, `formats/draw_order.hpp`): each renderer lists its translucent items with their BSP slot and distance, and the queue draws them in order. Water comes first. A particle effect is one item, placed by the bounds of its current particles. Sprite bounds are half the picture's larger side around the origin; props use their model bounds, characters a 32 × 32 × 72 box. With the skyline light cones of `sm_hub_1`, placing sprites by their origin alone put the skybox's translucent building facades over them (0.60 of the original's cone light); with their bounds the cones measure 0.87 as before.
 
+## Visibility
+
+Each view draws only what it can see (`formats::ViewVisibility`). That takes two tests:
+
+- **The PVS**: the clusters in the potentially visible set of the eye's cluster (the map's visibility lump).
+- **The frustum**: the view's left, right, bottom and top planes, from its view-projection matrix.
+
+An eye in solid or outside the visibility data sees everything. Area portals are not applied: every portal counts as open.
+
+- **World**: each opaque material batch keeps its faces grouped by the clusters they lie in: those of the leaves listing the face, or, for brush entities and displacements, those of the leaves the face's bounds touch. Each group keeps its bounds. A view draws the groups with a cluster in its PVS and bounds in its frustum, and adjacent groups merge into one draw. Translucent faces, water and decals are not culled.
+- **Props, characters, particle effects**: drawn if one of the leaves their box touches is in the PVS and the box is in the frustum. **Sprites**: their leaves only.
+- **Views**: the 3D skybox uses the sky camera's eye, and monitors their camera's. The water reflection uses the real eye's PVS, since the mirrored eye is often inside solid.
+- **Characters** outside the main camera's PVS are not animated. Their cloth settles again when they come back, as on the first frame.
+
+Culled and unculled renders are pixel-identical at a fixed time (`--time`) on five views of `sm_hub_1`, `sp_tutorial_1` and `ch_hub_1`. Frame times at 1600 × 900 on an RTX 4060 laptop, measured as the slope between 300 and 1,200 frames: `sm_hub_1` 1.8–2.8 ms against 7.2–11.4 ms without culling, `sp_tutorial_1` 0.2 ms against 2.2 ms. `openbl-viewer --no-cull` draws everything.
+
 ## Static prop fades
 
 7,920 of the 24,409 static props fade out with distance: those with flag bit 0, which every prop with a fade distance has. Read from the original's `engine.dll`: when the map loads, it keeps min², max² and 255 / (max² − min²) per fading prop. Each frame, from the main camera's position (client.dll passes it once per frame, with a factor of 1 unless the player zooms), it takes the squared distance d² to the prop's origin:

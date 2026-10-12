@@ -7,6 +7,7 @@
 #include "openbl/anim/animation.hpp"
 #include "openbl/anim/cloth.hpp"
 #include "openbl/formats/bsp.hpp"
+#include "openbl/formats/visibility.hpp"
 #include "openbl/render/fog.hpp"
 #include "openbl/formats/mdl.hpp"
 #include "openbl/render/asset_source.hpp"
@@ -79,6 +80,8 @@ struct CharacterDrawSettings {
     std::array<float, 3> eye{}; // Camera position, for environment maps.
     bool envmaps = true;
     bool bumpmaps = true; // Light and reflect $bumpmap materials about the bumped normal.
+    // What this view can see (docs/RENDERING.md#visibility); null: everything.
+    const formats::ViewVisibility* visibility = nullptr;
 };
 
 class CharacterRenderer {
@@ -88,7 +91,9 @@ public:
     ~CharacterRenderer();
 
     // Advances every character's animation to `time` (seconds) and computes its skinning matrices.
-    void update(float time);
+    // `visible`: the main view's visibility; characters outside its PVS are
+    // not animated (their cloth catches up when they come back). Null: all.
+    void update(float time, const formats::ViewVisibility* visible = nullptr);
     void draw_opaque(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
                      const CharacterDrawSettings& settings);
     // The translucent pass in the original's order (render/translucent.hpp):
@@ -152,6 +157,7 @@ private:
         bool has_translucent = false;          // Some mesh of its skin is translucent.
         const rhi::Texture* cubemap = nullptr; // Nearest cubemap, for "env_cubemap" materials.
         std::vector<std::uint32_t> leaves;     // World leaves around it.
+        formats::Vec3 mins{}, maxs{};          // A box around it, for culling.
     };
 
     const Model* load_model(const std::string& path);

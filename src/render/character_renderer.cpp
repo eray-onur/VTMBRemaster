@@ -272,6 +272,9 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
         // A person-sized box at the origin, for the leaves it stands in.
         inst.leaves = formats::leaves_in_box(bsp, {origin[0] - 16, origin[1] - 16, origin[2]},
                                              {origin[0] + 16, origin[1] + 16, origin[2] + 72});
+        // Generous, for animation and cloth reaching out of the standing box.
+        inst.mins = {origin[0] - 48, origin[1] - 48, origin[2] - 16};
+        inst.maxs = {origin[0] + 48, origin[1] + 48, origin[2] + 96};
         if (inst.envmapped) {
             inst.cubemap = materials.nearest_cubemap({origin[0], origin[1], origin[2] + kLightingHeight});
         }
@@ -468,8 +471,11 @@ const CharacterRenderer::Model* CharacterRenderer::load_model(const std::string&
     return models_.emplace(path, std::move(model)).first->second.get();
 }
 
-void CharacterRenderer::update(float time) {
+void CharacterRenderer::update(float time, const formats::ViewVisibility* visible) {
     for (Instance& inst : instances_) {
+        if (visible && !visible->any_leaf(inst.leaves)) {
+            continue;
+        }
         if (inst.player) {
             const auto& bones = inst.model->mdl->bones;
             try {
@@ -481,7 +487,8 @@ void CharacterRenderer::update(float time) {
             }
         }
         if (!inst.cloth.empty()) {
-            update_cloth(inst, inst.cloth_time ? time - *inst.cloth_time : kClothSettleTime);
+            // After a gap (unseen, or the first frame), settle as on the first frame.
+            update_cloth(inst, inst.cloth_time ? std::min(time - *inst.cloth_time, kClothSettleTime) : kClothSettleTime);
             inst.cloth_time = time;
         }
     }
@@ -525,7 +532,9 @@ void CharacterRenderer::update_cloth(Instance& inst, float dt) {
 void CharacterRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float, 16>& vp,
                                   const CharacterDrawSettings& settings, bool translucent) {
     for (const Instance& inst : instances_) {
-        draw_instance(cmd, vp, settings, inst, translucent);
+        if (!settings.visibility || settings.visibility->object(inst.leaves, inst.mins, inst.maxs)) {
+            draw_instance(cmd, vp, settings, inst, translucent);
+        }
     }
 }
 
@@ -656,7 +665,8 @@ void CharacterRenderer::collect_translucent(const formats::BspDrawOrder& order, 
                                             std::uint32_t source, std::vector<TranslucentItem>& out) const {
     for (std::size_t i = 0; i < instances_.size(); ++i) {
         const Instance& inst = instances_[i];
-        if (!inst.has_translucent) {
+        if (!inst.has_translucent ||
+            (settings.visibility && !settings.visibility->object(inst.leaves, inst.mins, inst.maxs))) {
             continue;
         }
         TranslucentItem item;

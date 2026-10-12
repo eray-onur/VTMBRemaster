@@ -180,6 +180,8 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
             ++stats_.fading;
         }
         inst.leaves = formats::leaves_in_box(bsp, {lo.x, lo.y, lo.z}, {hi.x, hi.y, hi.z});
+        inst.mins = {lo.x, lo.y, lo.z};
+        inst.maxs = {hi.x, hi.y, hi.z};
         if (inst.envmapped) {
             inst.cubemap = materials_.nearest_cubemap({c.x, c.y, c.z});
         }
@@ -466,7 +468,8 @@ void PropRenderer::draw_instance(rhi::CommandList& cmd, const std::array<float, 
                                  const PropDrawSettings& settings, std::size_t rows, std::size_t index,
                                  bool translucent, Bound& bound, const rhi::ShaderDataRef* data) {
     const Instance& inst = instances_[index];
-    if (inst.skybox != settings.skybox || inst.alpha <= 0.0f) {
+    if (inst.skybox != settings.skybox || inst.alpha <= 0.0f ||
+        (settings.visibility && !settings.visibility->object(inst.leaves, inst.mins, inst.maxs))) {
         return;
     }
     const bool fading = inst.alpha < 1.0f;
@@ -584,7 +587,8 @@ void PropRenderer::collect_translucent(const formats::BspDrawOrder& order, const
     for (std::size_t i = 0; i < instances_.size(); ++i) {
         const Instance& inst = instances_[i];
         if (inst.skybox != settings.skybox || inst.alpha <= 0.0f ||
-            !(inst.has_translucent || !inst.decals.empty() || inst.alpha < 1.0f)) {
+            !(inst.has_translucent || !inst.decals.empty() || inst.alpha < 1.0f) ||
+            (settings.visibility && !settings.visibility->object(inst.leaves, inst.mins, inst.maxs))) {
             continue;
         }
         TranslucentItem item;

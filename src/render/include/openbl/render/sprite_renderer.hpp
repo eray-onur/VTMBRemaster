@@ -6,6 +6,7 @@
 
 #include "openbl/formats/bsp.hpp"
 #include "openbl/formats/draw_order.hpp"
+#include "openbl/formats/visibility.hpp"
 #include "openbl/render/fog.hpp"
 #include "openbl/render/material_system.hpp"
 #include "openbl/render/translucent.hpp"
@@ -38,8 +39,10 @@ public:
     // are not drawn. `skybox`: only sprites in the 3D skybox's area, or only
     // the rest; `world_scale`: world units per unit of distance (the skybox's
     // scale), for distance-driven material proxies.
+    // `visibility`: skips sprites outside this view's PVS (null: none).
     void collect_translucent(const formats::BspDrawOrder& order, const std::array<float, 3>& eye, bool skybox,
-                             std::uint32_t source, std::vector<TranslucentItem>& out) const;
+                             std::uint32_t source, std::vector<TranslucentItem>& out,
+                             const formats::ViewVisibility* visibility = nullptr) const;
     void begin_translucent(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
                            const std::array<float, 16>& view, const std::array<float, 3>& eye, float time,
                            const Fog& fog = {}, bool skybox = false, float world_scale = 1.0f);

@@ -383,6 +383,20 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
         }
     }
 
+    // The clusters of the world leaves listing each face.
+    std::vector<std::vector<std::int32_t>> face_clusters(bsp.faces.size());
+    for (const auto& leaf : bsp.leafs) {
+        for (std::uint16_t i = 0; i < leaf.num_leaf_faces; ++i) {
+            const std::size_t lf = std::size_t{leaf.first_leaf_face} + i;
+            if (lf < bsp.leaf_faces.size() && bsp.leaf_faces[lf] < face_clusters.size()) {
+                auto& clusters = face_clusters[bsp.leaf_faces[lf]];
+                if (std::find(clusters.begin(), clusters.end(), leaf.cluster) == clusters.end()) {
+                    clusters.push_back(leaf.cluster);
+                }
+            }
+        }
+    }
+
     std::vector<Vertex> vertices;
     std::vector<std::uint32_t> indices;
     // Lightmap coordinates and styles of a point on face `f`, from its
@@ -432,8 +446,61 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
         batch.entity = owner == kEntity;
         batch.first_index = static_cast<std::uint32_t>(indices.size());
         const std::size_t first_vertex = vertices.size();
+        // Each face's mesh and clusters: those of the leaves listing it, or
+        // (brush entities, displacements) of the leaves its bounds touch.
+        struct Prepared {
+            const FaceRef* ref;
+            formats::BspFaceMesh mesh;
+            std::vector<std::int32_t> clusters;
+            formats::Vec3 mins, maxs;
+        };
+        std::vector<Prepared> prepared;
+        const bool opaque = !mat.water && !mat.translucent;
         for (const FaceRef& ref : faces) {
-            const auto mesh = formats::build_face_mesh(bsp, ref.face);
+            Prepared p{&ref, formats::build_face_mesh(bsp, ref.face), {}, {1e30f, 1e30f, 1e30f}, {-1e30f, -1e30f, -1e30f}};
+            for (const auto& v : p.mesh.positions) {
+                for (int k = 0; k < 3; ++k) {
+                    p.mins[k] = std::min(p.mins[k], v[k] + ref.origin[k]);
+                    p.maxs[k] = std::max(p.maxs[k], v[k] + ref.origin[k]);
+                }
+            }
+            if (opaque) {
+                const bool moved = ref.origin[0] != 0 || ref.origin[1] != 0 || ref.origin[2] != 0;
+                if (!moved) {
+                    p.clusters = face_clusters[ref.face];
+                }
+                if (p.clusters.empty() && !p.mesh.positions.empty()) {
+                    for (std::uint32_t l : formats::leaves_in_box(bsp, p.mins, p.maxs)) {
+                        const std::int32_t c = bsp.leafs[l].cluster;
+                        if (std::find(p.clusters.begin(), p.clusters.end(), c) == p.clusters.end()) {
+                            p.clusters.push_back(c);
+                        }
+                    }
+                }
+                std::sort(p.clusters.begin(), p.clusters.end());
+            }
+            prepared.push_back(std::move(p));
+        }
+        std::stable_sort(prepared.begin(), prepared.end(),
+                         [](const Prepared& a, const Prepared& b) { return a.clusters < b.clusters; });
+        for (const Prepared& p : prepared) {
+            const FaceRef& ref = *p.ref;
+            const auto& mesh = p.mesh;
+            if (opaque && (batch.runs.empty() || batch.runs.back().clusters != p.clusters)) {
+                Batch::Run run;
+                run.first_index = static_cast<std::uint32_t>(indices.size());
+                run.clusters = p.clusters;
+                run.mins = p.mins;
+                run.maxs = p.maxs;
+                batch.runs.push_back(std::move(run));
+            }
+            if (opaque) {
+                Batch::Run& run = batch.runs.back();
+                for (int k = 0; k < 3; ++k) {
+                    run.mins[k] = std::min(run.mins[k], p.mins[k]);
+                    run.maxs[k] = std::max(run.maxs[k], p.maxs[k]);
+                }
+            }
             const auto base = static_cast<std::uint32_t>(vertices.size());
             const auto normals = face_normals(bsp, ref.face, mesh);
             for (std::size_t v = 0; v < mesh.positions.size(); ++v) {
@@ -453,6 +520,9 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
             }
             for (std::uint32_t idx : mesh.indices) {
                 indices.push_back(base + idx);
+            }
+            if (opaque) {
+                batch.runs.back().index_count = static_cast<std::uint32_t>(indices.size()) - batch.runs.back().first_index;
             }
             ++stats_.faces;
         }
@@ -815,7 +885,35 @@ void WorldRenderer::draw_batch(rhi::CommandList& cmd, const Batch& batch, const 
     pc.params_index = m.params_index < rows ? m.params_index : 0;
     cmd.set_bind_group(batch.current_bind_group());
     cmd.push_constants(&pc, sizeof(pc));
-    cmd.draw_indexed(batch.index_count, batch.first_index);
+    const formats::ViewVisibility* vis = settings.visibility;
+    if (!vis || batch.runs.empty()) {
+        cmd.draw_indexed(batch.index_count, batch.first_index);
+        return;
+    }
+    // The visible runs, adjacent ones merged into one draw.
+    std::uint32_t first = 0, count = 0;
+    for (const Batch::Run& run : batch.runs) {
+        bool visible = vis->box(run.mins, run.maxs);
+        if (visible && !vis->sees_all_clusters()) {
+            visible = run.clusters.empty() || std::any_of(run.clusters.begin(), run.clusters.end(),
+                                                         [&](std::int32_t c) { return vis->cluster(c); });
+        }
+        if (!visible) {
+            continue;
+        }
+        if (count > 0 && first + count == run.first_index) {
+            count += run.index_count;
+            continue;
+        }
+        if (count > 0) {
+            cmd.draw_indexed(count, first);
+        }
+        first = run.first_index;
+        count = run.index_count;
+    }
+    if (count > 0) {
+        cmd.draw_indexed(count, first);
+    }
 }
 
 void WorldRenderer::draw_batches(rhi::CommandList& cmd, const std::vector<Batch>& batches,
