@@ -65,7 +65,7 @@ struct RenderMaterial {
     // Water shader parameters. Colours are as authored (gamma-encoded): the
     // original multiplies encoded render-target colour by them.
     bool water = false;
-    const rhi::Texture* bumpmap = nullptr;    // LightmappedGeneric's $bumpmap (linear); null otherwise.
+    const rhi::Texture* bumpmap = nullptr;    // $bumpmap of LightmappedGeneric, WorldVertexTransition, VertexLitGeneric (linear).
     const rhi::Texture* normal_map = nullptr; // $normalmap, linear; a flat normal if missing.
     const rhi::Texture* dudv = nullptr;       // $bumpmap: signed offsets, biased (0.5 = none).
     bool reflect = false;                     // Has $reflecttexture.

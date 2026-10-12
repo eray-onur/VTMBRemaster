@@ -36,8 +36,9 @@ struct Vertex {
     // Cloth: ±(particle slot + 1), negative where the vertex faces against its
     // particle's triangle normal (the back of double-sided cards); 0: skinned.
     float cloth;
+    float tangent[4]; // Texture u axis, handedness (for $bumpmap); zero if the model has none.
 };
-static_assert(sizeof(Vertex) == 52);
+static_assert(sizeof(Vertex) == 68);
 
 struct PushConstants {
     float mvp[16];
@@ -86,6 +87,7 @@ constexpr std::uint32_t kEyes = 32;
 constexpr std::uint32_t kAdditive = 128;
 constexpr std::uint32_t kEnvmap = 256;
 constexpr std::uint32_t kEnvmapMaskShift = 9;
+constexpr std::uint32_t kBump = 2048;
 
 // Height above an NPC's origin at which its lighting is sampled (roughly chest height).
 constexpr float kLightingHeight = 40.0f;
@@ -129,8 +131,9 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
                      {3, rhi::Format::RGBA16_UInt, 32},
                      {4, rhi::Format::RGBA8_UNorm, 40},
                      {5, rhi::Format::R32_Float, 44},
-                     {6, rhi::Format::R32_Float, 48}};
-    pd.texture_count = 4; // Base, iris, envmap (cube), envmap mask.
+                     {6, rhi::Format::R32_Float, 48},
+                     {7, rhi::Format::RGBA32_Float, 52}};
+    pd.texture_count = 5; // Base, iris, envmap (cube), envmap mask, bump map.
     pd.push_constant_size = sizeof(PushConstants);
     pd.shader_data = true;
     const rhi::BlendMode blends[] = {rhi::BlendMode::Opaque, rhi::BlendMode::Alpha, rhi::BlendMode::Additive};
@@ -316,6 +319,9 @@ const CharacterRenderer::Model* CharacterRenderer::load_model(const std::string&
                     std::memcpy(out.position, v.position.data(), sizeof(out.position));
                     std::memcpy(out.uv, v.uv.data(), sizeof(out.uv));
                     std::memcpy(out.normal, v.normal.data(), sizeof(out.normal));
+                    if (mo.has_tangents) {
+                        std::memcpy(out.tangent, v.tangent.data(), sizeof(out.tangent));
+                    }
                     for (std::size_t k = 0; k < 3; ++k) {
                         out.bones[k] = v.bones[k] < mdl->bones.size() ? v.bones[k] : 0;
                         out.weights[k] = v.weights[k];
@@ -433,10 +439,11 @@ const CharacterRenderer::Model* CharacterRenderer::load_model(const std::string&
                         const RenderMaterial& mm = *mesh.material;
                         const rhi::Texture* envmap = mm.envmap ? mm.envmap : materials_.black_cube();
                         const rhi::Texture* mask = mm.envmap_mask ? mm.envmap_mask : materials_.white();
-                        const rhi::Texture* textures[] = {mm.base, mm.base2, envmap, mask};
+                        const rhi::Texture* bump = mm.bumpmap ? mm.bumpmap : materials_.white();
+                        const rhi::Texture* textures[] = {mm.base, mm.base2, envmap, mask, bump};
                         mesh.bind_group = device_.create_bind_group(*pipelines_[0][0], *sampler_, textures);
                         for (const rhi::Texture* frame : mm.base_frames) {
-                            const rhi::Texture* frame_textures[] = {frame, mm.eyes ? mm.base2 : frame, envmap, mask};
+                            const rhi::Texture* frame_textures[] = {frame, mm.eyes ? mm.base2 : frame, envmap, mask, bump};
                             mesh.frame_bind_groups.push_back(
                                 device_.create_bind_group(*pipelines_[0][0], *sampler_, frame_textures));
                         }
@@ -601,7 +608,7 @@ void CharacterRenderer::draw_instance(rhi::CommandList& cmd, const std::array<fl
             pc.alpha_ref = m.alpha_ref;
             pc.flags = (m.alpha_test ? kAlphaTest : 0) | ((m.unlit || settings.fullbright) ? kUnlit : 0) |
                        (m.self_illum ? kSelfIllum : 0) | (m.translucent ? kTranslucent : 0) | (m.eyes ? kEyes : 0) |
-                       (m.additive ? kAdditive : 0);
+                       (m.additive ? kAdditive : 0) | (m.bumpmap && settings.bumpmaps ? kBump : 0);
             const rhi::BindGroup* group = mesh.frame_bind_groups.empty()
                                               ? mesh.bind_group.get()
                                               : mesh.frame_bind_groups[m.base_frame % mesh.frame_bind_groups.size()].get();
@@ -610,7 +617,8 @@ void CharacterRenderer::draw_instance(rhi::CommandList& cmd, const std::array<fl
                 if (m.envmap_nearest && inst.cubemap && inst.cubemap != m.envmap) {
                     auto& g = mesh.cubemap_groups[inst.cubemap];
                     if (!g) {
-                        const rhi::Texture* textures[] = {m.base, m.base2, inst.cubemap, m.envmap_mask};
+                        const rhi::Texture* textures[] = {m.base, m.base2, inst.cubemap, m.envmap_mask,
+                                                          m.bumpmap ? m.bumpmap : materials_.white()};
                         g = device_.create_bind_group(*pipelines_[0][0], *sampler_, textures);
                     }
                     group = g.get();

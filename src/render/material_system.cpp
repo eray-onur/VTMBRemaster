@@ -499,8 +499,10 @@ RenderMaterial MaterialSystem::load(const std::string& name, std::optional<forma
     // World normal maps: lit from the face's three directional lightmaps
     // where it has them, and bending envmap reflections
     // (docs/RENDERING.md#bump-mapped-lightmaps). A WorldVertexTransition's
-    // one normal map serves both layers.
-    if (out.shader == "lightmappedgeneric" || out.shader == "worldvertextransition") {
+    // one normal map serves both layers. Models light their ambient cube per
+    // pixel with it.
+    if (out.shader == "lightmappedgeneric" || out.shader == "worldvertextransition" ||
+        out.shader == "vertexlitgeneric") {
         if (auto path = mat->texture_path("$bumpmap")) {
             out.bumpmap = texture(*path, false);
         }

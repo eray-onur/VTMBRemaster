@@ -142,6 +142,9 @@ struct MdlVertex {
     std::array<float, 3> position{};
     std::array<float, 3> normal{}; // Valid only if has_normal.
     std::array<float, 2> uv{};
+    // Texture u direction, w = handedness: binormal = cross(normal, tangent) * w.
+    // Valid only if the model has_tangents.
+    std::array<float, 4> tangent{};
     std::array<std::uint8_t, 3> weights{255, 0, 0}; // Sum to 255.
     std::array<std::uint16_t, 3> bones{};
     bool has_normal = false; // False only if a quantized code is out of range.
@@ -289,6 +292,7 @@ struct MdlModel {
     std::string name;
     MdlVertexFormat vertex_format = MdlVertexFormat::Float;
     std::vector<MdlVertex> vertices;
+    bool has_tangents = false; // The model stores a tangent per vertex (offset 0x98 non-zero).
     std::vector<MdlMesh> meshes;
     std::int32_t cloth_pieces = 0;
     std::vector<MdlCloth> cloth;              // Non-empty table slots.

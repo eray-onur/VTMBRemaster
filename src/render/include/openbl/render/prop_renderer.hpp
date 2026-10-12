@@ -42,6 +42,7 @@ struct PropDrawSettings {
     bool skybox = false; // true: only props in the 3D skybox's area; false: the rest.
     std::array<float, 3> eye{}; // Camera position, for environment maps.
     bool envmaps = true;
+    bool bumpmaps = true; // Light and reflect $bumpmap materials about the bumped normal.
 };
 
 class PropRenderer {

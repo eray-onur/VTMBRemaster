@@ -88,7 +88,9 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Visibility culling: draw only what the PVS and area portals allow (every pass currently draws the whole map, plus the water passes)
 - [x] Bump-mapped world surfaces: `$bumpmap` faces lit from their three directional lightmaps with the original's basis and weighted average ([RENDERING.md](RENDERING.md#bump-mapped-lightmaps)); viewer `--no-bump`
 - [x] Bump-mapped envmap reflections (tangent frame from the texture axes, normal-map alpha mask) and bump-mapped `WorldVertexTransition` blends ([RENDERING.md](RENDERING.md#bump-mapped-lightmaps))
-- [ ] Bump maps: compare with the original (Warrens, temple, `sp_soc_3` tunnels); normal maps on models
+- [x] Normal maps on models: the ambient cube per pixel about the bumped normal, bumped envmap reflections; MDL tangents ([RENDERING.md](RENDERING.md#normal-maps-on-models))
+- [ ] Bump maps: compare with the original (Warrens, temple, `sp_soc_3` tunnels, the temple's gold Buddha)
+- [ ] Model lighting from the original's shaders: `vertexlit_and_unlit_generic_bump` shows an ambient cube plus two squared half-Lambert lights and a hue-preserving clamp; read the non-bump vertex shaders and compare with the fitted model
 - [ ] Detail textures (`$detail`, multiplied in at 2×)
 - [ ] Detail props (grass and debris sprites placed from the map's detail-prop lump)
 - [ ] Ropes and cables (`keyframe_rope`, `move_rope`; 76 in `sm_hub_1`)

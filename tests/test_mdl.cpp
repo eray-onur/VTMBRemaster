@@ -641,6 +641,7 @@ TEST_CASE("MDL integration: every model in the real install loads") {
     std::size_t blended = 0, events = 0, bad_events = 0, bad_blend_params = 0, movements = 0, bad_movements = 0,
                 melee_hits = 0;
     std::size_t missing_normals = 0;
+    std::size_t tangent_models = 0, tangent_vertices = 0, degenerate_tangents = 0, bad_handedness = 0;
     std::size_t hitboxes = 0, attachments = 0, flex_rules = 0, ik_chains = 0, mesh_flexes = 0, bad_flex_targets = 0;
     std::size_t flex_vertices = 0, off_unit_flex_normals = 0;
     std::size_t cloth_models = 0, cloth_bodies = 0, cloth_capsules = 0, bad_cloth_vertices = 0, bad_cloth_counts = 0;
@@ -783,12 +784,23 @@ TEST_CASE("MDL integration: every model in the real install loads") {
                 for (const auto& v : m.vertices) {
                     missing_normals += !v.has_normal;
                 }
+                // Tangents are stored as compiled: not always unit length or
+                // perpendicular to the normal, and zero where the UVs collapse.
+                // Count those with no usable part perpendicular to the normal.
+                tangent_models += m.has_tangents;
                 for (const auto& v : m.vertices) {
-                    bool inside = true;
-                    for (int k = 0; k < 3; ++k) {
-                        inside = inside && v.position[k] >= mdl.hull_min[k] - 0.5f && v.position[k] <= mdl.hull_max[k] + 0.5f;
+                    if (!m.has_tangents || !v.has_normal) {
+                        continue;
                     }
-                    outside_hull += !inside;
+                    const auto& t = v.tangent;
+                    const float along = t[0] * v.normal[0] + t[1] * v.normal[1] + t[2] * v.normal[2];
+                    float perp2 = 0.0f;
+                    for (std::size_t k = 0; k < 3; ++k) {
+                        perp2 += (t[k] - along * v.normal[k]) * (t[k] - along * v.normal[k]);
+                    }
+                    ++tangent_vertices;
+                    degenerate_tangents += perp2 < 1e-4f;
+                    bad_handedness += std::abs(std::abs(t[3]) - 1.0f) > 1e-3f;
                 }
             }
         }
@@ -830,6 +842,9 @@ TEST_CASE("MDL integration: every model in the real install loads") {
                    << " dx80 triangles (all LODs); formats float/q16/q8 = " << formats[MdlVertexFormat::Float] << "/"
                    << formats[MdlVertexFormat::Quantized16] << "/" << formats[MdlVertexFormat::Quantized8] << "; "
                    << outside_hull << " vertices outside the header hull");
+    MESSAGE(tangent_models << " body-part models with tangents, " << tangent_vertices << " vertices, " << degenerate_tangents
+                           << " degenerate, " << bad_handedness << " with handedness other than +-1");
+    CHECK(bad_handedness == 0);
     MESSAGE(animations << " animations, " << sequences << " sequences, " << samples << " bone samples ("
                        << non_unit << " non-unit rotations), " << missing_includes << " missing include models, "
                        << broken_sequences << " sequences with broken animation references");

@@ -28,6 +28,7 @@ static const uint kEyes = 32;
 static const uint kAdditive = 128;
 static const uint kEnvmap = 256;
 static const uint kEnvmapMaskShift = 9; // 2 bits, as for the world.
+static const uint kBump = 2048;         // $bumpmap: light and reflect about the bumped normal.
 
 // Iris size as a fraction of the eye mesh's UV square, measured on the
 // original (the iris spans about 0.58 of the eye opening; docs/RENDERING.md).
@@ -44,6 +45,7 @@ struct VSInput {
     [[vk::location(5)]] float flex_slot : TEXCOORD1; // -1: no flex moves this vertex.
     // Cloth: ±(particle + 1), negative for the back of a double-sided card; 0: skinned.
     [[vk::location(6)]] float cloth : TEXCOORD2;
+    [[vk::location(7)]] float4 tangent : TANGENT; // Texture u axis; w: binormal = cross(normal, tangent) * w.
 };
 
 struct VSOutput {
@@ -53,7 +55,22 @@ struct VSOutput {
     [[vk::location(2)]] float2 depth_z : TEXCOORD1; // View depth, world z (for fog).
     [[vk::location(3)]] float3 world : TEXCOORD2;      // World position and normal (envmaps only).
     [[vk::location(4)]] float3 world_normal : NORMAL;
+    [[vk::location(5)]] float3 model_normal : TEXCOORD3; // Skinned; for bump-mapped materials.
+    [[vk::location(6)]] float4 model_tangent : TANGENT;
 };
+
+// The model-space ambient cube's light for a unit normal.
+float3 cube_light(float3 n) {
+    const float3 n2 = n * n;
+    return n2.x * shader_data[n.x >= 0 ? 0 : 1].rgb + n2.y * shader_data[n.y >= 0 ? 2 : 3].rgb +
+           n2.z * shader_data[n.z >= 0 ? 4 : 5].rgb;
+}
+
+// Model-space direction to world space (envmapped instances only).
+float3 direction_to_world(float3 d) {
+    return float3(dot(shader_data[pc.envmap_block + 1].xyz, d), dot(shader_data[pc.envmap_block + 2].xyz, d),
+                  dot(shader_data[pc.envmap_block + 3].xyz, d));
+}
 
 float3 transform(uint bone, float4 v) {
     const uint row = kBoneBase + bone * 3;
@@ -68,11 +85,13 @@ VSOutput vs_main(VSInput input) {
     }
     float3 position = float3(0, 0, 0);
     float3 normal = float3(0, 0, 0);
+    float3 tangent = float3(0, 0, 0);
     [unroll] for (uint k = 0; k < 3; ++k) {
         const float w = input.weights[k];
         if (w > 0) {
             position += w * transform(input.bones[k], float4(bind_position, 1.0));
             normal += w * transform(input.bones[k], float4(input.normal, 0.0));
+            tangent += w * transform(input.bones[k], float4(input.tangent.xyz, 0.0));
         }
     }
     // Simulated cloth replaces the skinned position (both in model space).
@@ -97,14 +116,12 @@ VSOutput vs_main(VSInput input) {
         output.world = float3(dot(r0, p), dot(r1, p), dot(r2, p));
         output.world_normal = float3(dot(r0.xyz, normal), dot(r1.xyz, normal), dot(r2.xyz, normal));
     }
+    output.model_normal = normal;
+    output.model_tangent = float4(tangent, input.tangent.w);
     const float4 tu = shader_data[pc.params_row];
     const float4 tv = shader_data[pc.params_row + 1];
     output.uv = float2(dot(tu.xyz, float3(input.uv, 1.0)), dot(tv.xyz, float3(input.uv, 1.0)));
-    const float3 n = normalize(normal);
-    const float3 n2 = n * n;
-    output.light = n2.x * shader_data[n.x >= 0 ? 0 : 1].rgb +
-                   n2.y * shader_data[n.y >= 0 ? 2 : 3].rgb +
-                   n2.z * shader_data[n.z >= 0 ? 4 : 5].rgb;
+    output.light = cube_light(normalize(normal));
     return output;
 }
 
@@ -113,6 +130,7 @@ VSOutput vs_main(VSInput input) {
 [[vk::binding(2, 0)]] Texture2D iris_texture; // Eyes only; the base texture otherwise.
 [[vk::binding(3, 0)]] TextureCube envmap;
 [[vk::binding(4, 0)]] Texture2D envmap_mask; // Raw values.
+[[vk::binding(5, 0)]] Texture2D bumpmap;     // Tangent-space normal map, raw values.
 
 float4 ps_main(VSOutput input) : SV_Target {
     float4 base = base_texture.Sample(texture_sampler, input.uv);
@@ -127,15 +145,30 @@ float4 ps_main(VSOutput input) : SV_Target {
     if (pc.flags & kAlphaTest) {
         clip(base.a - pc.alpha_ref);
     }
+    float3 light = input.light;
+    float4 bump = float4(0.0, 0.0, 1.0, 1.0);
+    float3 bumped = float3(0.0, 0.0, 1.0);
+    if (pc.flags & kBump) {
+        bump = bumpmap.Sample(texture_sampler, input.uv);
+        bumped = bumped_normal(bump.xyz * 2.0 - 1.0, input.model_normal, input.model_tangent);
+        light = cube_light(bumped);
+    }
     const float4 tint = shader_data[pc.params_row + 2]; // $color, $alpha.
-    float3 color = base.rgb * tint.rgb * ((pc.flags & kUnlit) ? float3(1, 1, 1) : input.light);
+    float3 color = base.rgb * tint.rgb * ((pc.flags & kUnlit) ? float3(1, 1, 1) : light);
     if (pc.flags & kSelfIllum) {
         color = lerp(color, base.rgb * shader_data[pc.params_row + 3].rgb, base.a);
     }
     const float4 fog_color = shader_data[kFogStart];
     const float fog = fog_amount(input.depth_z.x, input.depth_z.y, fog_color, shader_data[kFogStart + 1]);
     float3 encoded = linear_to_srgb(color);
-    if ((pc.flags & kEnvmap) && pc.envmap_block != 0) {
+    if ((pc.flags & kEnvmap) && pc.envmap_block != 0 && (pc.flags & kBump)) {
+        // About the bumped normal, masked by the normal map's alpha before the
+        // tint and contrast, as for bump-mapped world surfaces.
+        const float3 env = envmap_reflection(direction_to_world(bumped), shader_data[pc.envmap_block].xyz - input.world,
+                                             envmap, texture_sampler);
+        encoded = saturate(encoded + envmap_term(env * bump.a, shader_data[pc.params_row + 6],
+                                                 shader_data[pc.params_row + 7].x));
+    } else if ((pc.flags & kEnvmap) && pc.envmap_block != 0) {
         encoded = add_envmap(encoded, input.world_normal, shader_data[pc.envmap_block].xyz - input.world, envmap,
                              envmap_mask, texture_sampler, input.uv, base.a, (pc.flags >> kEnvmapMaskShift) & 3,
                              shader_data[pc.params_row + 6], shader_data[pc.params_row + 7].x);

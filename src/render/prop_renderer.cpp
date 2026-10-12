@@ -35,6 +35,7 @@ struct Vertex {
     float position[3];
     float uv[2];
     float normal[3];
+    float tangent[4]; // Texture u axis, handedness (for $bumpmap); zero if the model has none.
 };
 
 struct PushConstants {
@@ -55,6 +56,7 @@ constexpr std::uint32_t kMultiplyLayers = 64;
 constexpr std::uint32_t kAdditive = 128;
 constexpr std::uint32_t kEnvmap = 256;
 constexpr std::uint32_t kEnvmapMaskShift = 9;
+constexpr std::uint32_t kBump = 2048;
 constexpr std::uint32_t kFadeShift = 24; // 8 bits: 255 - the fade's opacity.
 
 // Source angles: pitch (down positive) about Y, yaw about Z, roll about X;
@@ -84,8 +86,11 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
     pd.vertex.spirv = openbl_prop_vs;
     pd.pixel.spirv = openbl_prop_ps;
     pd.vertex_stride = sizeof(Vertex);
-    pd.attributes = {{0, rhi::Format::RGB32_Float, 0}, {1, rhi::Format::RG32_Float, 12}, {2, rhi::Format::RGB32_Float, 20}};
-    pd.texture_count = 4; // Base, second layer, envmap (cube), envmap mask.
+    pd.attributes = {{0, rhi::Format::RGB32_Float, 0},
+                     {1, rhi::Format::RG32_Float, 12},
+                     {2, rhi::Format::RGB32_Float, 20},
+                     {3, rhi::Format::RGBA32_Float, 32}};
+    pd.texture_count = 5; // Base, second layer, envmap (cube), envmap mask, bump map.
     pd.push_constant_size = sizeof(PushConstants);
     pd.shader_data = true; // Material params table.
     pd.front_counter_clockwise = false;
@@ -272,7 +277,8 @@ void PropRenderer::place_decals(const formats::BspFile& bsp) {
                                               std::as_bytes(std::span(best_decal->indices)));
         decal.index_count = static_cast<std::uint32_t>(best_decal->indices.size());
         decal.material = &draw_mat;
-        const rhi::Texture* textures[] = {draw_mat.base, draw_mat.base2, materials_.black_cube(), materials_.white()};
+        const rhi::Texture* textures[] = {draw_mat.base, draw_mat.base2, materials_.black_cube(), materials_.white(),
+                                          materials_.white()};
         decal.bind_group = device_.create_bind_group(*pipelines_[0][0], *sampler_, textures);
         best->decals.push_back(std::move(decal));
         ++stats_.decals;
@@ -315,9 +321,11 @@ const PropRenderer::Model* PropRenderer::load_model(const std::string& path) {
                 needs_normals = needs_normals || std::any_of(mo.vertices.begin(), mo.vertices.end(),
                                                               [](const formats::MdlVertex& v) { return !v.has_normal; });
                 for (const auto& v : mo.vertices) {
+                    const auto t = mo.has_tangents ? v.tangent : std::array<float, 4>{};
                     vertices.push_back({{v.position[0], v.position[1], v.position[2]},
                                         {v.uv[0], v.uv[1]},
-                                        {v.normal[0], v.normal[1], v.normal[2]}});
+                                        {v.normal[0], v.normal[1], v.normal[2]},
+                                        {t[0], t[1], t[2], t[3]}});
                 }
                 for (std::size_t me = 0; me < mo.meshes.size() && me < lod.meshes.size(); ++me) {
                     const auto tris = lod.meshes[me].triangles();
@@ -381,10 +389,12 @@ const PropRenderer::Model* PropRenderer::load_model(const std::string& path) {
                         const RenderMaterial& mm = *mesh.material;
                         const rhi::Texture* envmap = mm.envmap ? mm.envmap : materials_.black_cube();
                         const rhi::Texture* mask = mm.envmap_mask ? mm.envmap_mask : materials_.white();
-                        const rhi::Texture* textures[] = {mm.base, mm.base2, envmap, mask};
+                        const rhi::Texture* bump = mm.bumpmap ? mm.bumpmap : materials_.white();
+                        const rhi::Texture* textures[] = {mm.base, mm.base2, envmap, mask, bump};
                         mesh.bind_group = device_.create_bind_group(*pipelines_[0][0], *sampler_, textures);
                         for (const rhi::Texture* frame : mm.base_frames) {
-                            const rhi::Texture* frame_textures[] = {frame, mm.multiply_layers ? mm.base2 : frame, envmap, mask};
+                            const rhi::Texture* frame_textures[] = {frame, mm.multiply_layers ? mm.base2 : frame, envmap, mask,
+                                                                    bump};
                             mesh.frame_bind_groups.push_back(
                                 device_.create_bind_group(*pipelines_[0][0], *sampler_, frame_textures));
                         }
@@ -494,7 +504,8 @@ void PropRenderer::draw_instance(rhi::CommandList& cmd, const std::array<float, 
         pc.alpha_ref = m.alpha_ref;
         pc.flags = (m.alpha_test ? kAlphaTest : 0) | ((m.unlit || settings.fullbright) ? kUnlit : 0) |
                    (m.self_illum ? kSelfIllum : 0) | (m.translucent ? kTranslucent : 0) |
-                   (m.multiply_layers ? kMultiplyLayers : 0) | (m.additive ? kAdditive : 0) | fade_bits;
+                   (m.multiply_layers ? kMultiplyLayers : 0) | (m.additive ? kAdditive : 0) |
+                   (m.bumpmap && settings.bumpmaps ? kBump : 0) | fade_bits;
         pc.params_index = m.params_index < rows ? m.params_index : 0;
         const rhi::BindGroup* group = mesh.frame_bind_groups.empty()
                                           ? mesh.bind_group.get()
@@ -505,7 +516,8 @@ void PropRenderer::draw_instance(rhi::CommandList& cmd, const std::array<float, 
             if (m.envmap_nearest && inst.cubemap && inst.cubemap != m.envmap) {
                 auto& g = mesh.cubemap_groups[inst.cubemap];
                 if (!g) {
-                    const rhi::Texture* textures[] = {m.base, m.base2, inst.cubemap, m.envmap_mask};
+                    const rhi::Texture* textures[] = {m.base, m.base2, inst.cubemap, m.envmap_mask,
+                                                      m.bumpmap ? m.bumpmap : materials_.white()};
                     g = device_.create_bind_group(*pipelines_[0][0], *sampler_, textures);
                 }
                 group = g.get();

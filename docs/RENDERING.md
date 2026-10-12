@@ -63,7 +63,7 @@ This applies to the faces without directional lightmaps too: they are lit from t
 
 **Two-texture blends.** `worldvertextransition_ps20` has no bump-mapped combinations, but `lightmappedgeneric_ps20` has combinations with a second base texture and a normal map. Only `WorldVertexTransition` materials have a second base texture, so its bump-mapped blends use these. The normal map then serves both layers, and the envmap mask is its alpha too. Combinations with a `$bumpmap2` blend the two normal maps by the same factor as the two base textures, but no shipped material has one. Five blends have a `$bumpmap` (`blends/warrtunnela`, `warrtrash`, `seablend`, `searock_tunnel`, `veslavarock`, on 8 maps). Their `$bumpbasetexture2withbumpmap` is 0 on two of them, yet no ps20 combination leaves the second layer unbumped, so OpenBL bumps both. On `sp_soc_3`'s tunnel walls, the result keeps more of the warm lantern light and less of the blue fill than the flat lightmap, as the three directions separate them.
 
-Not done: normal maps on models. Bump-mapped materials on faces without the flag use the flat lightmap, as there is nothing else. `openbl-viewer --no-bump` uses the flat lightmap and unbumped reflections (with the material's own envmap mask) everywhere.
+Bump-mapped materials on faces without the flag use the flat lightmap, as there is nothing else. `openbl-viewer --no-bump` uses the flat lightmap and unbumped reflections (with the material's own envmap mask) everywhere, and vertex lighting on models.
 
 ## Models (`VertexLitGeneric`)
 
@@ -75,6 +75,19 @@ Lit colour = base texture × colour modulation (`$color`, alpha) × per-vertex l
 **Environment maps on models** (1,071 `VertexLitGeneric` materials) are added the same way as on the world (the `v2` model shaders add envmap × mask × tint after lighting). A model with `$envmap env_cubemap` uses the map cubemap nearest to it: its lighting origin for props, its chest height for NPCs. Checked on `sm_hub_1`'s alley manhole (a prop, station 4 in [PROXY_CAPTURE.md](PROXY_CAPTURE.md)): mean colour 14.8 13.5 9.6 in the original, 13.9 12.4 9.6 in OpenBL, and 4.3 1.8 0.2 without the envmap. On characters it is mostly small parts, such as the police officers' sunglasses.
 
 Against two captures of `sp_tutorial_1`, props in the original are 1.04–1.08 / 0.99–1.06 / 1.08–1.15 as bright as in OpenBL (red / green / blue, geometric mean over props). The props differ from each other by about 18%. Weighting the surfaces by their reflectivity fitted worse. The previous model (direct light plus 30% of the floor lightmap below, at scale 2.297) differed by up to 84% between props and was too blue. Still open: whether the original lights per vertex (its console has `r_staticlighting 1`), sky ambient light for outdoor props, and captures from more rooms to confirm the 0.5. Self-illumination blends to base × tint by base alpha, as for the world. Alpha-tested models discard pixels with a texture-kill instruction driven by a separate coordinate.
+
+### Normal maps on models
+
+94 `VertexLitGeneric` materials have a `$bumpmap`, 57 of them with an `$envmap`. They are mostly structural scenery props, monsters, furniture and weapons, plus a few characters (VV's body, the Chang brothers). The original draws them with `vertexlit_and_unlit_generic_bump`, which lights per pixel:
+
+- the vertex shader passes the tangent, binormal = cross(normal, tangent) × w, and normal, all in world space. Every model stores a tangent per vertex ([formats/models.md](formats/models.md));
+- the pixel shader takes the normal map's texel × 2 − 1 in that frame, normalised (through a normalisation cube map);
+- it evaluates the ambient cube with that normal: the squared components weight the +/− face of each axis;
+- it adds up to two local lights, each (n·l × 0.5 + 0.5)², a squared half-Lambert, times a colour from the vertex shader;
+- if the sum's largest channel exceeds 2^2.2 (4.59479), it scales the whole colour down to it, which keeps the hue;
+- the result times `$color` and the base texture; the envmap is reflected about the bumped normal and masked by the normal map's alpha, before tint and contrast, as for the world.
+
+OpenBL folds all lights into one ambient cube per model (above), so it evaluates that cube per pixel with the bumped normal, and reflects the envmap as the original does. The squared half-Lambert lights and the hue-preserving clamp are not modelled: they belong to the original's model lighting as a whole, which these shaders now let us read. The compiled tangents are not always unit length or perpendicular to the normal, and 9.5% of all vertices have none usable (zero, where the texture coordinates collapse). OpenBL makes them perpendicular and keeps the plain normal where nothing is left. Characters skin the tangent like the normal.
 
 ## Eyes (`Eyes`)
 

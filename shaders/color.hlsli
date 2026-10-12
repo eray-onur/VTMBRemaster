@@ -67,6 +67,23 @@ float3 add_envmap(float3 encoded, float3 normal, float3 to_eye, TextureCube cube
     return saturate(encoded + envmap_term(env, tone, saturation) * mask);
 }
 
+// A model's bumped normal (unit) from the normal map's texel x 2 - 1 in the
+// vertex's tangent frame, as vertexlit_and_unlit_generic_bump does:
+// binormal = cross(normal, tangent) x handedness. Compiled tangents are not
+// always unit or perpendicular to the normal, and are zero where the texture
+// coordinates collapse; those keep the normal.
+float3 bumped_normal(float3 texel, float3 normal, float4 tangent) {
+    const float3 n = normalize(normal);
+    float3 t = tangent.xyz - n * dot(n, tangent.xyz);
+    if (dot(t, t) < 1e-8) {
+        return n;
+    }
+    t = normalize(t);
+    const float3 b = cross(n, t) * tangent.w;
+    const float3 bumped = texel.x * t + texel.y * b + texel.z * n;
+    return dot(bumped, bumped) > 1e-8 ? normalize(bumped) : n;
+}
+
 float3 linear_to_srgb(float3 c) {
     c = saturate(c);
     return lerp(1.055 * pow(c, 1.0 / 2.4) - 0.055, c * 12.92, step(c, 0.0031308));

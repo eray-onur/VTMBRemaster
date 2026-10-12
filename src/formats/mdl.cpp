@@ -805,6 +805,15 @@ private:
                 break;
             }
         }
+        if (const std::int32_t tangents = i32(at + 0x98); tangents != 0) {
+            const std::size_t tangent_base = rel(at, tangents);
+            need(tangent_base, std::uint64_t{vertex_count} * 16);
+            for (std::uint32_t i = 0; i < vertex_count; ++i) {
+                const std::size_t t = tangent_base + std::size_t{i} * 16;
+                model.vertices[i].tangent = {f32(t), f32(t + 4), f32(t + 8), f32(t + 12)};
+            }
+            model.has_tangents = true;
+        }
         return model;
     }
 

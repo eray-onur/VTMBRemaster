@@ -64,7 +64,7 @@ All integers are little-endian. "rel" means an offset relative to the start of t
 | 0x00 | `char[128]` | name (source `.smd`) |
 | 0x88 | `i32, i32` | mesh count, mesh offset (rel) |
 | 0x90 | `i32, i32` | vertex count, vertex offset (rel) |
-| 0x98 | `i32` | tangent offset (rel; `f32[4]` per vertex) |
+| 0x98 | `i32` | tangent offset (rel; `f32[4]` per vertex: the texture u direction, then the handedness ±1, binormal = cross(normal, tangent) × w) |
 | 0x9c | `i32` | **vertex format**: 0, 1 or 2 (see below) |
 | 0xa0 | `f32[3]` | quantization origin |
 | 0xac | `f32[3]` | quantization scale |

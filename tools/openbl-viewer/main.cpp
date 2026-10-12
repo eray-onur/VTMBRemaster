@@ -71,7 +71,7 @@ struct Options {
     bool fog = true; // --no-fog: ignore the map's distance fog.
     bool water = true; // --no-water: no reflection and refraction passes (water shows its fog colour).
     bool envmaps = true; // --no-envmap: no environment-map reflections.
-    bool bumpmaps = true; // --no-bump: world normal maps not lit by the directional lightmaps.
+    bool bumpmaps = true; // --no-bump: normal maps ignored (world: flat lightmap; models: vertex lighting).
     bool sprites = true; // --no-sprites: no env_sprite glows and cones.
     bool prop_fade = true; // --no-prop-fade: static props never fade with distance.
     bool characters = true;
@@ -550,6 +550,7 @@ private:
             prop_settings.fog = sky_fog;
             prop_settings.eye = {sky_eye.x, sky_eye.y, sky_eye.z};
             prop_settings.envmaps = settings_.envmaps;
+            prop_settings.bumpmaps = settings_.bumpmaps;
             world_->draw_opaque(cmd, sm, settings_);
             if (props_) {
                 props_->draw_opaque(cmd, sm, prop_settings);
@@ -565,12 +566,14 @@ private:
         prop_settings.fog = fog;
         prop_settings.eye = {eye.x, eye.y, eye.z};
         prop_settings.envmaps = settings_.envmaps;
+        prop_settings.bumpmaps = settings_.bumpmaps;
         const auto m = to_array(v.clip_projection * view);
         render::CharacterDrawSettings character_settings{settings_.light_scale, settings_.fullbright,
                                                          &materials_->params()};
         character_settings.fog = fog;
         character_settings.eye = {eye.x, eye.y, eye.z};
         character_settings.envmaps = settings_.envmaps;
+        character_settings.bumpmaps = settings_.bumpmaps;
         world_->draw_opaque(cmd, m, settings_);
         if (props_) {
             props_->draw_opaque(cmd, m, prop_settings);
