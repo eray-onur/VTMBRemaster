@@ -164,3 +164,33 @@ TEST_CASE("Proxy integration: every proxy material in the real install runs") {
     CHECK(ops_materials > 180);
     CHECK(non_finite == 0);
 }
+
+TEST_CASE("Proxy LampBeam and LampHalo fade by how vertically the lamp is seen") {
+    MaterialProxies beam(parse_vmt(R"("Sprite" { "$basetexture" "x" "Proxies" { "lampbeam" { } } })"));
+    MaterialProxies halo(parse_vmt(R"("Sprite" { "$basetexture" "x" "Proxies" { "lamphalo" { } } })"));
+    beam.evaluate({.view_direction_z = 0.0f}); // Seen side-on.
+    halo.evaluate({.view_direction_z = 0.0f});
+    CHECK(beam.var("$alpha")->v[0] == doctest::Approx(1.0f));
+    CHECK(halo.var("$alpha")->v[0] == doctest::Approx(0.0f));
+    beam.evaluate({.view_direction_z = 0.6f}); // Looking up at it.
+    halo.evaluate({.view_direction_z = 0.6f});
+    CHECK(beam.var("$alpha")->v[0] == doctest::Approx(0.4f));
+    CHECK(halo.var("$alpha")->v[0] == doctest::Approx((0.6f - 0.25f) * 1.35f));
+    halo.evaluate({.view_direction_z = -1.0f}); // Straight down at it: clamped.
+    CHECK(halo.var("$alpha")->v[0] == doctest::Approx(1.0f));
+}
+
+TEST_CASE("Proxy PlayerProximity fades the shipped light cones in with distance") {
+    // volumelighta_proxyfade: $alpha = distance * 0.001 - 0.2.
+    MaterialProxies p(parse_vmt(R"("Sprite" {
+        "$temp" 0 "$curve" 0.2 "$alpha" 0.5
+        "Proxies" {
+            "PlayerProximity" { "resultVar" "$temp" "scale" 0.001 }
+            "Subtract" { "srcVar1" "$temp" "srcVar2" "$curve" "resultVar" "$alpha" }
+        }
+    })"));
+    p.evaluate({.player_distance = 100.0f});
+    CHECK(p.var("$alpha")->v[0] == doctest::Approx(-0.1f));
+    p.evaluate({.player_distance = 700.0f});
+    CHECK(p.var("$alpha")->v[0] == doctest::Approx(0.5f));
+}

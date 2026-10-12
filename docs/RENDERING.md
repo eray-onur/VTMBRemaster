@@ -93,14 +93,20 @@ Doubling the distance instead fits worse (it overshoots the far values). Whether
   `$spriteorigin` is the point of the picture placed at the entity's origin.
 - **Size:** texture width and height × `scale`, in world units. The skybox's light cones (`volumelighta`, 256 pixels × 0.06 ≈ 15 skybox units, so 240 world units) fit this.
 - **Colour:** the texture × `rendercolor` × `renderamt` / 255, on encoded values.
-- **Render modes:** additive for `rendermode` 5 (`kRenderTransAdd`) and 3 (glow), alpha-blended otherwise. Animated sprites step at the entity's `framerate`. Additive sprites fade out in fog.
-- **Glows** (`rendermode` 3) are drawn over everything except what hides their centre:
-  - The world hides a glow by a line trace each frame.
-  - Without `renderfx` 14 (no dissipation) a glow fades by distance as min(1, 102400 / distance²).
+- **Render modes:** additive for `rendermode` 5 (`kRenderTransAdd`), 3 (`kRenderGlow`) and 9 (`kRenderWorldGlow`, 66 sprites over all maps), alpha-blended otherwise. Animated sprites step at the entity's `framerate`. Additive sprites fade out in fog.
+- **Effects:** only `renderfx` 0, 2 and 14 occur. 2 (`kRenderFxPulseFast`, 12 sprites) pulses the amount by 16 / 255 × sin(8 t + entity index × 363), as in Source. 14 ("no dissipation") changes nothing in Bloodlines, because its client code has no distance fade for glows. No sprite sets `GlowProxySize`.
+- **Glows** (`rendermode` 3 and 9) are drawn over everything except what hides their centre. In the client DLL (`client.dll`, read from its code), the glow brightness is multiplied by the visible fraction of an octagonal occlusion proxy drawn at the glow's centre: 3 units in radius, or distance × 3/128 for mode 3, so that proxy keeps one size on screen. The sprite itself always has its world size: the scale function only animates the scale over time.
+  - OpenBL traces a line through the world each frame instead of the occlusion query.
   - The original also tests glow visibility against props. 54 of the `sm_hub_1` glows sit inside lamp globes, and the original shows none of them. Measured beside a lamp on `sm_hub_1` (camera −1839.87 −2179.87 −40, pitch 9.22, yaw 59.79), the original is 40 37 24 around the lamp head and 61 58 39 above it. OpenBL drawing those glows gave 59 51 33 and 91 87 57; without them it gives 45 39 27 and 62 61 43.
   - OpenBL therefore hides glows enclosed by a prop (at least five of six axis rays from the glow hit the same prop, tested once at load).
 
-Not yet checked against the original: additive (`rendermode` 5) and colour (`rendermode` 1) sprite brightness, the light cones, and whether glows keep a constant size on screen. Not done: `renderfx` pulses and strobes, `GlowProxySize`, sprite fades driven by proxies (`PlayerProximity`, `LampBeam`, `LampHalo`), and scripts switching sprites on and off. `openbl-viewer --no-sprites` hides them all.
+**Fades from material proxies**, evaluated per sprite with its distance and direction from the camera:
+
+- **`PlayerProximity`** (the light cones, `volumelight*_proxyfade`): `$alpha` = distance × 0.001 − 0.2. A cone is invisible within 200 units and full at 1,200, so the flat card disappears as you walk under it. In the 3D skybox the distance is multiplied by the skybox scale.
+- **`LampBeam`** (the street-light beams, `streetlight*_proxyfade`; read from `client.dll`): `$alpha` = 1 − |z|, with z the vertical part of the normalized camera-to-sprite direction. A beam fades as it is seen from below.
+- **`LampHalo`**: `$alpha` = clamp((|z| − 0.25) × 1.35, 0, 1). The halo appears as you look up or down at the lamp.
+
+Not yet checked against the original: additive (`rendermode` 5) and colour (`rendermode` 1) sprite brightness, and the light cones. Not done: scripts switching sprites on and off, and scale animations. `openbl-viewer --no-sprites` hides all sprites.
 
 ## Monitors (`func_monitor` + `point_camera`)
 

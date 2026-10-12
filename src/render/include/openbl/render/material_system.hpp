@@ -146,6 +146,10 @@ public:
     // frames and params() rows.
     void update(const formats::ProxyContext& context);
     const std::vector<MaterialParams>& params() const { return params_; }
+    // A material's $alpha for one entity: its proxies run with `context`
+    // (the entity's distance and direction from the camera), e.g. sprites
+    // with PlayerProximity, LampBeam or LampHalo. Without proxies, its static $alpha.
+    float entity_alpha(const RenderMaterial& material, const formats::ProxyContext& context);
     // Loaded materials whose proxies run, and how many of them animate a texture.
     std::size_t proxy_materials() const { return dynamic_.size(); }
     std::size_t animated_materials() const;

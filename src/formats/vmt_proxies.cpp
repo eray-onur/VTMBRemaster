@@ -221,6 +221,10 @@ MaterialProxies::MaterialProxies(const Material& material, std::uint32_t seed) :
         } else if (k == "playerproximity" || k == "playerspeed" || k == "playerposition" || k == "globalwetness") {
             op.in = {input(proxy, "scale", 1)};
             out("resultvar");
+        } else if (k == "lampbeam" || k == "lamphalo") {
+            // No keys: both write $alpha (read from the client DLL's code).
+            op.out = {"$alpha", -1};
+            slot("$alpha");
         } else {
             unsupported_.push_back(k);
             continue;
@@ -379,6 +383,12 @@ void MaterialProxies::evaluate(const ProxyContext& ctx) {
             write(op.out, m);
         } else if (k == "playerproximity") {
             write_scalar(op.out, f(op, 0) * ctx.player_distance);
+        } else if (k == "lampbeam") {
+            // Fades as the view turns vertical: an upright beam seen from below.
+            write_scalar(op.out, 1.0f - std::abs(ctx.view_direction_z));
+        } else if (k == "lamphalo") {
+            // Shows as the view turns vertical: a halo seen looking up at the lamp.
+            write_scalar(op.out, std::clamp((std::abs(ctx.view_direction_z) - 0.25f) * 1.35f, 0.0f, 1.0f));
         } else if (k == "playerspeed") {
             write_scalar(op.out, f(op, 0) * ctx.player_speed);
         } else if (k == "globalwetness") {

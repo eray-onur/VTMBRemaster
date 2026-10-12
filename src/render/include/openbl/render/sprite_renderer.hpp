@@ -34,9 +34,12 @@ public:
 
     // `view`: column-major view matrix (its rows are the camera axes); `eye`:
     // camera position. Glow sprites behind world geometry (seen from `eye`)
-    // are not drawn. `skybox`: draw only sprites in the 3D skybox's area, or only the rest.
+    // are not drawn. `skybox`: draw only sprites in the 3D skybox's area, or
+    // only the rest; `world_scale`: world units per unit of distance (the
+    // skybox's scale), for distance-driven material proxies.
     void draw(rhi::CommandList& cmd, const std::array<float, 16>& view_projection, const std::array<float, 16>& view,
-              const std::array<float, 3>& eye, float time, const Fog& fog = {}, bool skybox = false);
+              const std::array<float, 3>& eye, float time, const Fog& fog = {}, bool skybox = false,
+              float world_scale = 1.0f);
 
     const SpriteStats& stats() const { return stats_; }
 
@@ -56,6 +59,7 @@ private:
         int fx = 0;                      // renderfx.
         float scale = 1.0f;
         float framerate = 10.0f;
+        float phase = 0.0f;              // Pulse offset (entity index x 363, as in Source).
         bool skybox = false;             // In the 3D skybox's area.
     };
 
@@ -63,6 +67,7 @@ private:
 
     rhi::Device& device_;
     const formats::BspFile& bsp_;
+    MaterialSystem& materials_;
     SpriteStats stats_;
     std::vector<Sprite> sprites_;
     std::unique_ptr<rhi::Pipeline> pipeline_;      // Depth-tested.

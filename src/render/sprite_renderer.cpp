@@ -27,10 +27,12 @@ static_assert(sizeof(PushConstants) == 128);
 // Render modes (rendermode) and effects (renderfx) as in Source.
 constexpr int kRenderGlow = 3;
 constexpr int kRenderTransAdd = 5;
-constexpr int kRenderFxNoDissipation = 14;
-// Glows without kRenderFxNoDissipation fade with distance: full brightness
-// within sqrt(kGlowFactor) units, then 1 / distance^2.
-constexpr float kGlowFactor = 102400.0f;
+constexpr int kRenderWorldGlow = 9; // A glow sized in the world rather than on screen.
+constexpr int kRenderFxPulseFast = 2;
+
+bool is_glow(int mode) { return mode == kRenderGlow || mode == kRenderWorldGlow; }
+// Glows do not fade with distance in Bloodlines' client code (no Half-Life 1
+// style 1 / distance^2 dissipation), so renderfx 14 ("no dissipation") changes nothing.
 
 std::string value(const formats::BspEntity& e, const char* key) {
     const auto it = e.find(key);
@@ -64,7 +66,7 @@ void angle_vectors(const V3& angles, V3& right, V3& up) {
 
 SpriteRenderer::SpriteRenderer(rhi::Device& device, MaterialSystem& materials, const formats::BspFile& bsp,
                                const std::vector<std::string>& shown)
-    : device_(device), bsp_(bsp) {
+    : device_(device), bsp_(bsp), materials_(materials) {
     std::optional<std::uint16_t> sky_area;
     for (const auto& e : bsp.entities) {
         if (value(e, "classname") == "sky_camera") {
@@ -113,6 +115,7 @@ SpriteRenderer::SpriteRenderer(rhi::Device& device, MaterialSystem& materials, c
         const std::string fr = value(e, "framerate");
         s.framerate = fr.empty() ? 10.0f : static_cast<float>(std::atof(fr.c_str()));
         s.skybox = sky_area && bsp.leafs[bsp.leaf_at({s.origin[0], s.origin[1], s.origin[2]})].area == *sky_area;
+        s.phase = static_cast<float>(&e - bsp.entities.data()) * 363.0f; // Pulses desynchronised per entity.
         sprites_.push_back(s);
     }
     stats_.sprites = sprites_.size();
@@ -145,7 +148,7 @@ SpriteRenderer::~SpriteRenderer() = default;
 
 void SpriteRenderer::hide_enclosed_glows(const std::function<bool(const std::array<float, 3>&)>& encloses) {
     const auto before = sprites_.size();
-    std::erase_if(sprites_, [&](const Sprite& s) { return s.mode == kRenderGlow && encloses(s.origin); });
+    std::erase_if(sprites_, [&](const Sprite& s) { return is_glow(s.mode) && encloses(s.origin); });
     stats_.hidden_glows += before - sprites_.size();
     stats_.sprites = sprites_.size();
 }
@@ -161,7 +164,7 @@ const rhi::BindGroup& SpriteRenderer::bind_group(const rhi::Texture* texture) {
 
 void SpriteRenderer::draw(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
                           const std::array<float, 16>& view, const std::array<float, 3>& eye, float time, const Fog& fog,
-                          bool skybox) {
+                          bool skybox, float world_scale) {
     if (sprites_.empty()) {
         return;
     }
@@ -177,18 +180,24 @@ void SpriteRenderer::draw(rhi::CommandList& cmd, const std::array<float, 16>& vi
             continue;
         }
         const RenderMaterial& m = *s.material;
-        const bool glow = s.mode == kRenderGlow;
+        const bool glow = is_glow(s.mode);
         float amount = s.amount;
+        if (s.fx == kRenderFxPulseFast) {
+            amount = std::clamp(amount + 16.0f / 255.0f * std::sin(time * 8.0f + s.phase), 0.0f, 1.0f);
+        }
+        // Material proxies that depend on this sprite's place relative to the
+        // camera (PlayerProximity light cones, LampBeam, LampHalo) set $alpha.
+        const V3 to_sprite{s.origin[0] - eye[0], s.origin[1] - eye[1], s.origin[2] - eye[2]};
+        const float distance = std::sqrt(to_sprite[0] * to_sprite[0] + to_sprite[1] * to_sprite[1] + to_sprite[2] * to_sprite[2]);
+        formats::ProxyContext context;
+        context.time = time;
+        context.player_distance = distance * world_scale;
+        context.view_direction_z = distance > 0.0f ? to_sprite[2] / distance : 0.0f;
+        amount *= materials_.entity_alpha(m, context);
         if (glow) {
             // Glows show through everything except the world, which hides them.
             if (bsp_.segment_blocked({eye[0], eye[1], eye[2]}, {s.origin[0], s.origin[1], s.origin[2]})) {
                 continue;
-            }
-            if (s.fx != kRenderFxNoDissipation) {
-                const float d2 = (s.origin[0] - eye[0]) * (s.origin[0] - eye[0]) +
-                                 (s.origin[1] - eye[1]) * (s.origin[1] - eye[1]) +
-                                 (s.origin[2] - eye[2]) * (s.origin[2] - eye[2]);
-                amount *= std::min(1.0f, kGlowFactor / std::max(d2, 1.0f));
             }
         }
         if (amount <= 0.0f) {

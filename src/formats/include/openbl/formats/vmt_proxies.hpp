@@ -36,6 +36,9 @@ struct ProxyContext {
     float player_speed = 0;     // PlayerSpeed.
     std::array<float, 3> player_position{}; // PlayerPosition.
     float wetness = 0;          // GlobalWetness, 0 (dry) to 1.
+    // LampBeam and LampHalo: z of the normalized direction from the camera to
+    // the entity (1: straight up at it, -1: straight down).
+    float view_direction_z = 0;
 };
 
 // Parses a texture transform value: "center .5 .5 scale 1 1 rotate 0 translate 0 0"

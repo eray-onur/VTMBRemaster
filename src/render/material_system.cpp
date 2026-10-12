@@ -357,6 +357,17 @@ void MaterialSystem::register_dynamic(RenderMaterial& material, const formats::M
     }
 }
 
+float MaterialSystem::entity_alpha(const RenderMaterial& material, const formats::ProxyContext& context) {
+    for (Dynamic& d : dynamic_) {
+        if (d.material == &material) {
+            d.proxies.evaluate(context);
+            const auto* a = d.proxies.var("$alpha");
+            return a && !a->is_matrix ? std::clamp(a->v[0], 0.0f, 1.0f) : 1.0f;
+        }
+    }
+    return material.params_index < params_.size() ? params_[material.params_index].color[3] : 1.0f;
+}
+
 std::size_t MaterialSystem::animated_materials() const {
     return static_cast<std::size_t>(std::count_if(dynamic_.begin(), dynamic_.end(), [](const Dynamic& d) {
         return !d.base_frame_var.empty() || !d.normal_frame_var.empty();

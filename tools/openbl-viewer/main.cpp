@@ -554,7 +554,8 @@ private:
             }
             particles_->draw(cmd, sm, right, up, {sky_eye.x, sky_eye.y, sky_eye.z}, sky_fog, true);
             if (draw_sprites_) {
-                sprites_->draw(cmd, sm, to_array(view), {sky_eye.x, sky_eye.y, sky_eye.z}, settings_.time, sky_fog, true);
+                sprites_->draw(cmd, sm, to_array(view), {sky_eye.x, sky_eye.y, sky_eye.z}, settings_.time, sky_fog, true,
+                               sky->scale);
             }
             cmd.clear_depth();
             settings_.skybox = false;

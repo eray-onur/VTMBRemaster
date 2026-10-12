@@ -6,7 +6,7 @@ Proxies are small per-frame programs listed in a material's `Proxies` block. The
 
 ## In OpenBL
 
-`formats::MaterialProxies` (`openbl/formats/vmt_proxies.hpp`) holds a material's variables and runs its proxies; `MaterialSystem::update` runs every loaded material's proxies once per frame. Of the 197 shipped materials with proxies (loose and archived; map pakfiles hold more), 183 have proxies that run. The rest use only `BreakableSurface`, `Camo`, `LampBeam`, `LampHalo`, `ParticleSphereProxy`, `Shadow`, `ShadowModel`, `TextConsole` or `WaterLOD`, which are recognised but do nothing yet.
+`formats::MaterialProxies` (`openbl/formats/vmt_proxies.hpp`) holds a material's variables and runs its proxies; `MaterialSystem::update` runs every loaded material's proxies once per frame. Of the 197 shipped materials with proxies (loose and archived; map pakfiles hold more), 183 have proxies that run. The rest use only `BreakableSurface`, `Camo`, `ParticleSphereProxy`, `Shadow`, `ShadowModel`, `TextConsole` or `WaterLOD`, which are recognised but do nothing yet.
 
 What the renderer shows from the variables (world, props and characters; no sky material has proxies):
 
@@ -21,7 +21,7 @@ What the renderer shows from the variables (world, props and characters; no sky 
 
 Static values of these variables apply too, not only animated ones. In the shipped maps `UnlitTwoTexture` only appears on the camera-fed TVs (`dev/dev_tvmonitor1a`: a camera picture times rolling scanlines), whose picture needs render-to-texture monitors; the `danetv8inch` screens use it too but no map places that model.
 
-Not shown yet, because the features they drive do not exist: `$envmaptint` (no environment maps, so `GlobalWetness` has no effect), the sprite fades (`PlayerProximity`, `LampBeam`, `LampHalo`: no sprite rendering), the terminal text (`TextConsole`), and frames of texture layers other than the base and the water normal map. The engine inputs (player distance, speed and position; wetness) are all 0 until the game simulation provides them.
+Not shown yet, because the features they drive do not exist: `GlobalWetness` (no rain yet, so wetness stays 0), the terminal text (`TextConsole`), and frames of texture layers other than the base and the water normal map. Sprites evaluate their materials per entity, with the camera's distance (`PlayerProximity`) and direction (`LampBeam`, `LampHalo`); elsewhere the engine inputs (player distance, speed and position; wetness) stay 0 until the game simulation provides them.
 
 `openbl-viewer --time T` fixes the clock, and `--sequence N --fps F` captures N frames at fixed steps, so animated materials can be compared with the original at given moments and measured over time.
 
@@ -50,7 +50,7 @@ Not shown yet, because the features they drive do not exist: `$envmaptint` (no e
 | `PlayerPosition`, `PlayerSpeed` | `resultVar`, `scale` | Player position or speed times `scale`. Only test materials use them. |
 | `PlayerProximity` | `resultVar`, `scale` | Distance from the player to the entity, times `scale`. Used by street-light sprites (`streetlight3_proxyfade`) to fade with distance. |
 | `GlobalWetness` *(Bloodlines)* | `resultVar`, `scale` | A global wetness level, presumably driven by rain, times `scale`. 135 world materials write it into `$envmaptint` so that surfaces get shinier when wet. |
-| `LampBeam`, `LampHalo` *(Bloodlines)* | — | Fading for street-light beam and halo sprites. |
+| `LampBeam`, `LampHalo` *(Bloodlines)* | — | Write `$alpha` from z, the vertical part of the normalized camera-to-entity direction (read from `client.dll`): `LampBeam` 1 − \|z\|, `LampHalo` clamp((\|z\| − 0.25) × 1.35, 0, 1). |
 | `TextConsole` *(Bloodlines)* | — | Computer screens (`models/scenery/furniture/computer/screen`); probably draws the hacking-terminal text. |
 | `Camo` | `camoPatternTexture`, `camoBoundingBoxMin/Max`, `surfaceprop` | A camouflage effect inherited from the engine; one development material. |
 | `BreakableSurface` | — | Breakable glass: selects the cracked texture state. |
