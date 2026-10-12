@@ -528,8 +528,6 @@ private:
         if (sky_ && v.sky) {
             sky_->draw(cmd, to_array(projection * glm::mat4(glm::mat3(view))));
         }
-        // Camera axes in world space are the rows of the view rotation.
-        const std::array<float, 3> right{view[0][0], view[1][0], view[2][0]}, up{view[0][1], view[1][1], view[2][1]};
         render::PropDrawSettings prop_settings{settings_.light_scale, settings_.fullbright, &materials_->params()};
         // The 3D skybox: its area seen from the sky camera plus the eye / scale,
         // same orientation, with its own fog; then the depth is cleared so the
@@ -553,7 +551,6 @@ private:
                 props_->draw_opaque(cmd, sm, prop_settings);
             }
             draw_translucent(cmd, sm, to_array(view), sky_eye, sky_fog, true, sky->scale, prop_settings, nullptr);
-            particles_->draw(cmd, sm, right, up, {sky_eye.x, sky_eye.y, sky_eye.z}, sky_fog, true);
             cmd.clear_depth();
             settings_.skybox = false;
             prop_settings.skybox = false;
@@ -578,7 +575,6 @@ private:
             characters_->draw_opaque(cmd, m, character_settings);
         }
         draw_translucent(cmd, m, to_array(view), eye, fog, false, 1.0f, prop_settings, &character_settings);
-        particles_->draw(cmd, m, right, up, {eye.x, eye.y, eye.z}, fog, false);
     }
 
     // Water, then everything translucent in the original's order: back to
@@ -588,7 +584,7 @@ private:
                           const glm::vec3& eye, const render::Fog& fog, bool skybox, float world_scale,
                           const render::PropDrawSettings& prop_settings,
                           const render::CharacterDrawSettings* character_settings) {
-        enum Source : std::uint32_t { kWorld, kProps, kCharacters, kSprites };
+        enum Source : std::uint32_t { kWorld, kProps, kCharacters, kSprites, kParticles };
         world_->draw_water_surfaces(cmd, m, settings_);
         draw_order_.update({eye.x, eye.y, eye.z});
         translucent_.clear();
@@ -602,6 +598,7 @@ private:
         if (draw_sprites_) {
             sprites_->collect_translucent(draw_order_, {eye.x, eye.y, eye.z}, skybox, kSprites, translucent_);
         }
+        particles_->collect_translucent(draw_order_, {eye.x, eye.y, eye.z}, skybox, kParticles, translucent_);
         render::sort_back_to_front(translucent_);
         world_->begin_translucent(cmd, m, settings_);
         if (props_) {
@@ -613,6 +610,9 @@ private:
         if (draw_sprites_) {
             sprites_->begin_translucent(cmd, m, view, {eye.x, eye.y, eye.z}, settings_.time, fog, skybox, world_scale);
         }
+        // Camera axes in world space are the rows of the view rotation.
+        particles_->begin_translucent(m, {view[0], view[4], view[8]}, {view[1], view[5], view[9]}, {eye.x, eye.y, eye.z},
+                                      fog);
         std::uint32_t last = UINT32_MAX;
         for (const render::TranslucentItem& item : translucent_) {
             const bool rebind = item.source != last;
@@ -629,6 +629,9 @@ private:
                 break;
             case kSprites:
                 sprites_->draw_translucent_item(cmd, item.index, rebind);
+                break;
+            case kParticles:
+                particles_->draw_translucent_item(cmd, item.index);
                 break;
             }
         }

@@ -20,7 +20,7 @@ How OpenBL runs the effects described in [formats/particles.md](formats/particle
 
 ## Drawing
 
-Each particle with a `sprite` (`particles/<sprite>.tga`) is a quad facing the camera, `size` × `width` by `size` × `height` units, rolled by `rotation`; `movealign` stretches it along its motion instead. It is drawn with premultiplied blending, after the translucent world:
+Each particle with a `sprite` (`particles/<sprite>.tga`) is a quad facing the camera, `size` × `width` by `size` × `height` units, rolled by `rotation`; `movealign` stretches it along its motion instead. It is drawn with premultiplied blending. Each effect is one item in the translucent queue ([RENDERING.md](RENDERING.md#translucent-order)), placed by the leaves its particles reach, with its particles back to front:
 
 - **added light** = the sprite's colour × (`red`, `green`, `blue`) / 255 × `color` / 255, on gamma-encoded values (the sprites are already dark where transparent, so their alpha is not applied again);
 - **darkening** = sprite alpha × `mask` / 255: the background is scaled by one minus that (smoke darkens what is behind it).
