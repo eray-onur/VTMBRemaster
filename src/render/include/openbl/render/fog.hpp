@@ -17,8 +17,8 @@ struct Fog {
     bool enabled = false;
     std::array<float, 3> color{}; // Encoded (gamma) 0-1, as authored.
     float start = 0, end = 0;     // World units of view depth.
-    // Water fog, for drawing what lies below a water surface at `water_z`
-    // seen from `eye_z`: only the part of the view ray below the surface counts.
+    // Water fog below a water surface at `water_z`, seen from `eye_z` (above
+    // or below it): only the part of the view ray below the surface counts.
     bool water = false;
     float water_z = 0, eye_z = 0;
 

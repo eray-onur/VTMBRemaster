@@ -483,7 +483,13 @@ public:
             cmd.end_render_target();
         }
         settings_.water_targets = water_targets_ && draw_water_targets(cmd, projection, view, camera.position);
-        draw_view(cmd, View{projection, projection, view, camera.position});
+        View main{projection, projection, view, camera.position};
+        // An eye under water sees everything through the water's fog.
+        if (const auto water = underwater(camera.position)) {
+            const render::RenderMaterial& m = *water->material;
+            main.fog = render::Fog::underwater(m.fog_color, m.fog_start, m.fog_end, water->z, camera.position.z);
+        }
+        draw_view(cmd, main);
     }
 
 private:
@@ -505,6 +511,36 @@ private:
     // fog), drawn without water or monitors. As in the original, one pair of
     // targets serves all water: it is drawn for the nearest plane in view.
     // Returns false if no water is in view.
+    // The water the eye is in, from its BSP leaf: the surface height and the
+    // water material (its fog). Empty above water.
+    struct Underwater {
+        float z = 0;
+        const render::RenderMaterial* material = nullptr;
+    };
+    std::optional<Underwater> underwater(const glm::vec3& eye) {
+        if (bsp_.leafs.empty() || bsp_.nodes.empty()) {
+            return std::nullopt;
+        }
+        const formats::BspLeaf& leaf = bsp_.leafs[bsp_.leaf_at({eye.x, eye.y, eye.z})];
+        if (!(leaf.contents & formats::contents::Water) || leaf.water_data < 0 ||
+            static_cast<std::size_t>(leaf.water_data) >= bsp_.leaf_water.size()) {
+            return std::nullopt;
+        }
+        const formats::BspLeafWater& w = bsp_.leaf_water[static_cast<std::size_t>(leaf.water_data)];
+        if (w.texinfo < 0 || static_cast<std::size_t>(w.texinfo) >= bsp_.texinfos.size()) {
+            return std::nullopt;
+        }
+        const std::int32_t texdata = bsp_.texinfos[static_cast<std::size_t>(w.texinfo)].texdata;
+        if (texdata < 0 || static_cast<std::size_t>(texdata) >= bsp_.texdatas.size()) {
+            return std::nullopt;
+        }
+        const render::RenderMaterial& m = materials_->material(bsp_.texdatas[static_cast<std::size_t>(texdata)].material);
+        if (!m.water || eye.z >= w.surface_z) {
+            return std::nullopt;
+        }
+        return Underwater{w.surface_z, &m};
+    }
+
     bool draw_water_targets(rhi::CommandList& cmd, const glm::mat4& projection, const glm::mat4& view,
                             const glm::vec3& eye) {
         world_->create_water_targets(device_.frame_width(), device_.frame_height());
@@ -535,17 +571,26 @@ private:
         const bool above = eye.z >= plane.z;
         const float black[4] = {0, 0, 0, 1};
         cmd.begin_render_target(*world_->water_reflection(), black);
-        if (above) {
+        {
             // Mirror about z = plane.z; the flip of x restores the winding.
+            // From above: what is above the surface. From below: what is below
+            // it (seen at grazing angles), all of it under water.
             glm::mat4 mirror(1.0f);
             mirror[2][2] = -1.0f;
             mirror[3][2] = 2.0f * plane.z;
             const glm::mat4 flipped = glm::scale(glm::mat4(1.0f), glm::vec3(-1, 1, 1)) * projection;
             const glm::mat4 mirrored_view = view * mirror;
-            View v{flipped, oblique_projection(flipped, plane_in_view(mirrored_view, glm::vec4(0, 0, 1, -plane.z))),
-                   mirrored_view, glm::vec3(eye.x, eye.y, 2.0f * plane.z - eye.z)};
+            const glm::vec4 keep = above ? glm::vec4(0, 0, 1, -plane.z) : glm::vec4(0, 0, -1, plane.z);
+            View v{flipped, oblique_projection(flipped, plane_in_view(mirrored_view, keep)), mirrored_view,
+                   glm::vec3(eye.x, eye.y, 2.0f * plane.z - eye.z)};
             v.monitors = v.water = false;
+            v.sky = above;
             v.pvs_eye = eye; // The mirrored eye is often inside solid; the reflection shows what the eye sees.
+            if (!above && plane.fog_material) {
+                // The whole mirrored path is under water: a surface far above counts every point as below it.
+                const render::RenderMaterial& m = *plane.fog_material;
+                v.fog = render::Fog::underwater(m.fog_color, m.fog_start, m.fog_end, 1e9f, v.eye.z);
+            }
             draw_view(cmd, v);
         }
         cmd.end_render_target();

@@ -239,6 +239,13 @@ const RenderMaterial& MaterialSystem::material(std::string_view name) {
     RenderMaterial& out = materials_.emplace(key, load(key, source)).first->second;
     if (source) {
         register_dynamic(out, *source);
+        // After `out` is cached, so materials naming themselves (or each other) resolve.
+        if (out.water) {
+            if (const auto bottom = source->param("$bottommaterial"); bottom && !bottom->empty()) {
+                const RenderMaterial& b = material(*bottom);
+                out.bottom = b.water && !b.missing ? &b : nullptr;
+            }
+        }
     }
     return out;
 }

@@ -147,6 +147,9 @@ private:
         std::vector<std::unique_ptr<rhi::BindGroup>> frame_bind_groups;
         bool decal = false;
         bool skybox = false; // In the 3D skybox's area.
+        // Water: the bind groups of its material's $bottommaterial, for eyes below the surface.
+        std::unique_ptr<rhi::BindGroup> bottom_bind_group;
+        std::vector<std::unique_ptr<rhi::BindGroup>> bottom_frame_bind_groups;
         int monitor = -1; // Screen faces of monitors_[monitor], showing its render target.
         // Translucent batches: the BSP node the faces lie on (-1: none; then
         // the leaves their bounds touch), whether they belong to a brush

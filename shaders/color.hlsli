@@ -7,15 +7,17 @@
 // sky_camera's own for the 3D skybox): linear in view depth, blended on
 // encoded colour like the original's fixed-function fog. Settings come as
 // two float4: (colour rgb encoded 0-1, mode) and (start, end, water z, eye z).
-// Mode 0: no fog; 1: distance fog; 2: water fog, used while drawing what lies
-// below a water surface: the distance counts only the part of the view ray
-// below the water (z < water z), as in the original's vertex shaders.
+// Mode 0: no fog; 1: distance fog; 2: water fog, for what lies below a water
+// surface seen from above, and for everything seen from below it: the
+// distance counts only the part of the view ray below the water (z < water
+// z), as in the original's vertex shaders.
 float fog_amount(float view_depth, float world_z, float4 fog_color, float4 fog_range) {
     if (fog_color.a < 0.5 || fog_range.y <= fog_range.x) {
         return 0.0;
     }
     if (fog_color.a > 1.5) {
-        const float under = max(fog_range.z - world_z, 0.0) / max(fog_range.w - world_z, 1e-3);
+        // The fraction of the ray from the eye (z = fog_range.w) to the point below the surface.
+        const float under = (fog_range.z - min(world_z, fog_range.w)) / max(abs(fog_range.w - world_z), 1e-3);
         return saturate((view_depth * saturate(under) - fog_range.x) / (fog_range.y - fog_range.x));
     }
     // Linear in depth, then 1 - (1 - f)^2, as if fogged twice: measured

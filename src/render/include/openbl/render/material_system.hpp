@@ -69,6 +69,9 @@ struct RenderMaterial {
     // Water shader parameters. Colours are as authored (gamma-encoded): the
     // original multiplies encoded render-target colour by them.
     bool water = false;
+    // $bottommaterial: what the same surface is drawn with from below the
+    // water (often the material itself). Null if it names none.
+    const RenderMaterial* bottom = nullptr;
     const rhi::Texture* bumpmap = nullptr;    // $bumpmap of LightmappedGeneric, WorldVertexTransition, VertexLitGeneric, Cable (linear).
     // $detail: raw (encoded) texels multiplied in at 2x, at the untransformed
     // base coordinates times $detailscale (docs/RENDERING.md). Null if none.

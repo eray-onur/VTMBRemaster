@@ -26,6 +26,7 @@ static const uint kReflect = 1;
 static const uint kRefract = 2;
 static const uint kCheap = 4;      // Blends to cheap water over cheap_range.
 static const uint kForceCheap = 8; // Cheap water only.
+static const uint kUnderside = 16; // Seen from below (with the $bottommaterial): the normal points down.
 
 // Camera position and time, the world fog (2 elements; see color.hlsli), then
 // the view-projection matrix (4 columns).
@@ -78,7 +79,7 @@ float4 ps_main(VSOutput input) : SV_Target {
     float3 b = (dpdy * dudx.x - dpdx * dudy.x) * sign(det);
     t = dot(t, t) > 1e-12 ? normalize(t) : float3(1, 0, 0);
     b = dot(b, b) > 1e-12 ? normalize(b) : float3(0, 1, 0);
-    const float3 n = float3(0, 0, 1);
+    const float3 n = float3(0, 0, (flags & kUnderside) ? -1.0 : 1.0);
     const float3 nm = normal_map.Sample(texture_sampler, input.bump_uv).xyz * 2.0 - 1.0;
     const float3 normal = t * nm.x + b * nm.y + n * nm.z;
     const float cos_view = max(dot(normalize(to_eye), normal), 0.0);

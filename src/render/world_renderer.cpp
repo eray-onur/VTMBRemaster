@@ -68,6 +68,7 @@ constexpr std::uint32_t kWaterReflect = 1;
 constexpr std::uint32_t kWaterRefract = 2;
 constexpr std::uint32_t kWaterCheap = 4;
 constexpr std::uint32_t kWaterForceCheap = 8;
+constexpr std::uint32_t kWaterUnderside = 16;
 
 constexpr std::uint32_t kAlphaTest = 1;
 constexpr std::uint32_t kBlendLayers = 2;
@@ -726,19 +727,26 @@ void WorldRenderer::create_water_targets(std::uint32_t width, std::uint32_t heig
         const bool sampled = water_reflection_ && !batch.skybox;
         const rhi::Texture* reflection = sampled ? &water_reflection_->texture() : black_.get();
         const rhi::Texture* refraction = sampled ? &water_refraction_->texture() : black_.get();
-        const RenderMaterial& m = *batch.material;
-        const rhi::Texture* envmap = m.envmap ? m.envmap : black_cube_;
-        auto group = [&](const rhi::Texture* dudv, const rhi::Texture* normal) {
-            const rhi::Texture* textures[] = {dudv, normal, reflection, refraction, envmap};
-            return device_.create_bind_group(*water_pipeline_, *sampler_, textures);
+        // The material's bind group and one per frame (the dudv and normal maps
+        // step through their frames together).
+        auto groups = [&](const RenderMaterial& m, std::unique_ptr<rhi::BindGroup>& first,
+                          std::vector<std::unique_ptr<rhi::BindGroup>>& frames) {
+            const rhi::Texture* envmap = m.envmap ? m.envmap : black_cube_;
+            auto group = [&](const rhi::Texture* dudv, const rhi::Texture* normal) {
+                const rhi::Texture* textures[] = {dudv, normal, reflection, refraction, envmap};
+                return device_.create_bind_group(*water_pipeline_, *sampler_, textures);
+            };
+            first = group(m.dudv, m.normal_map);
+            frames.clear();
+            const std::size_t count = std::max(m.dudv_frames.size(), m.normal_frames.size());
+            for (std::size_t f = 0; f < count; ++f) {
+                frames.push_back(group(f < m.dudv_frames.size() ? m.dudv_frames[f] : m.dudv,
+                                       f < m.normal_frames.size() ? m.normal_frames[f] : m.normal_map));
+            }
         };
-        batch.bind_group = group(m.dudv, m.normal_map);
-        batch.frame_bind_groups.clear();
-        // The dudv and normal maps step through their frames together.
-        const std::size_t frames = std::max(m.dudv_frames.size(), m.normal_frames.size());
-        for (std::size_t f = 0; f < frames; ++f) {
-            batch.frame_bind_groups.push_back(group(f < m.dudv_frames.size() ? m.dudv_frames[f] : m.dudv,
-                                                    f < m.normal_frames.size() ? m.normal_frames[f] : m.normal_map));
+        groups(*batch.material, batch.bind_group, batch.frame_bind_groups);
+        if (batch.material->bottom) {
+            groups(*batch.material->bottom, batch.bottom_bind_group, batch.bottom_frame_bind_groups);
         }
     }
 }
@@ -1017,7 +1025,10 @@ void WorldRenderer::draw_water(rhi::CommandList& cmd, const std::array<float, 16
         if (batch.skybox != settings.skybox) {
             continue;
         }
-        const RenderMaterial& m = *batch.material;
+        // From below the surface (the faces face up), with the $bottommaterial.
+        const bool below = settings.camera_position[2] < batch.center[2];
+        const bool bottom = below && batch.material->bottom && batch.bottom_bind_group;
+        const RenderMaterial& m = bottom ? *batch.material->bottom : *batch.material;
         const bool targets = settings.water_targets && water_reflection_ && !batch.skybox;
         const bool refract = targets && m.refract;
         for (std::size_t k = 0; k < 3; ++k) {
@@ -1033,7 +1044,8 @@ void WorldRenderer::draw_water(rhi::CommandList& cmd, const std::array<float, 16
         // (la_dane_1's open sea is skybox water).
         const bool cheap = m.envmap && (m.force_cheap || m.cheap_end > m.cheap_start);
         pc.bump_u[3] = static_cast<float>((targets && m.reflect ? kWaterReflect : 0) | (refract ? kWaterRefract : 0) |
-                                          (cheap ? kWaterCheap : 0) | (cheap && m.force_cheap ? kWaterForceCheap : 0));
+                                          (cheap ? kWaterCheap : 0) | (cheap && m.force_cheap ? kWaterForceCheap : 0) |
+                                          (below ? kWaterUnderside : 0));
         for (std::size_t k = 0; k < 3; ++k) {
             pc.cheap[k] = m.fog_color[k];
         }
@@ -1041,7 +1053,12 @@ void WorldRenderer::draw_water(rhi::CommandList& cmd, const std::array<float, 16
         const float scale = batch.skybox && sky_camera_ ? sky_camera_->scale : 1.0f;
         pc.cheap_range[0] = m.cheap_start / scale;
         pc.cheap_range[1] = m.cheap_end / scale;
-        cmd.set_bind_group(batch.current_bind_group());
+        if (bottom) {
+            const auto& frames = batch.bottom_frame_bind_groups;
+            cmd.set_bind_group(frames.empty() ? *batch.bottom_bind_group : *frames[m.normal_frame % frames.size()]);
+        } else {
+            cmd.set_bind_group(batch.current_bind_group());
+        }
         cmd.push_constants(&pc, sizeof(pc));
         cmd.draw_indexed(batch.index_count, batch.first_index);
     }
