@@ -128,7 +128,7 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Decals: the original's placement rule read from `engine.dll` (within 4 units of a face's plane; displacements by bounds overlap); the remaining ~85 float too far from any surface for the original to draw them either; displacements now follow the original ([formats/maps.md](formats/maps.md#decals-infodecal))
 - [ ] Decals: `DecalModulate` on props; confirm orientation against the original
 - [x] Cloth simulation for hair and clothing on characters: Verlet particles with the model's constraints (second group as minimum distances), capsules, shape pull; viewer `--no-cloth` ([ANIMATION.md](ANIMATION.md))
-- [ ] Cloth: props (curtains, lanterns), the unknown piece parameter and settings records, comparison with the running game
+- [ ] Cloth: props, once physics and scripts move them (at rest they settle within about 1 unit of their authored shape; the only animated ones are `ch_temple_2`'s hidden broken panels; [ANIMATION.md](ANIMATION.md#cloth)); the unknown piece parameter and settings records, comparison with the running game
 - [ ] Animation: confirm the third fade time (+620) and the last two combo-window values in the running game
 
 ## Phase 2: simulation core
