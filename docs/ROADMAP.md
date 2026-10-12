@@ -125,7 +125,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Particle simulation and rendering: active `env_particle` effects, emitters, curves, motion, premultiplied sprites ([PARTICLES.md](PARTICLES.md))
 - [ ] Particles: calibrate units and colour scale on more captures (one done: barrel fire), collisions, refraction, `func_particle` rain, script-started effects, fire light
 - [x] Decals: faces just behind the decal, displacements, and props (`$modelmaterial`); 4,520 of 4,609 on the world plus a few on props
-- [ ] Decals: the remaining few dozen (graffiti 20 to 60 units off surfaces), `DecalModulate` on props; confirm orientation against the original
+- [x] Decals: the original's placement rule read from `engine.dll` (within 4 units of a face's plane; displacements by bounds overlap); the remaining ~85 float too far from any surface for the original to draw them either; displacements now follow the original ([formats/maps.md](formats/maps.md#decals-infodecal))
+- [ ] Decals: `DecalModulate` on props; confirm orientation against the original
 - [x] Cloth simulation for hair and clothing on characters: Verlet particles with the model's constraints (second group as minimum distances), capsules, shape pull; viewer `--no-cloth` ([ANIMATION.md](ANIMATION.md))
 - [ ] Cloth: props (curtains, lanterns), the unknown piece parameter and settings records, comparison with the running game
 - [ ] Animation: confirm the third fade time (+620) and the last two combo-window values in the running game

@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <utility>
 
 namespace openbl::formats {
@@ -1369,23 +1370,33 @@ std::vector<BspDecalPiece> project_decal(const BspFile& bsp, const Vec3& origin,
             return out;
         }
     }
-    // Displacements (bumpy terrain and walls): project onto their triangles.
-    const float extent = std::max(width, height) * 0.5f + reach;
+    // Displacements (bumpy terrain and walls): as in the original engine
+    // (R_DecalLeaf in engine.dll), every displacement whose bounds overlap the
+    // box of half the decal's larger side around the origin, with no 4-unit
+    // limit; projected onto its triangles from that distance.
+    const float size = std::max(width, height) * 0.5f;
     for (std::size_t f = 0; f < bsp.faces.size(); ++f) {
         if (bsp.faces[f].dispinfo < 0) {
             continue;
         }
         const BspFaceMesh mesh = build_face_mesh(bsp, f);
-        bool near = false;
+        Vec3 lo{std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
+        Vec3 hi{-lo[0], -lo[1], -lo[2]};
         for (const Vec3& p : mesh.positions) {
-            near = near || (std::abs(p[0] - origin[0]) <= extent && std::abs(p[1] - origin[1]) <= extent &&
-                            std::abs(p[2] - origin[2]) <= extent);
+            for (int k = 0; k < 3; ++k) {
+                lo[k] = std::min(lo[k], p[k]);
+                hi[k] = std::max(hi[k], p[k]);
+            }
         }
-        if (!near) {
+        bool overlap = !mesh.positions.empty();
+        for (int k = 0; k < 3; ++k) {
+            overlap = overlap && origin[k] - size <= hi[k] && origin[k] + size >= lo[k];
+        }
+        if (!overlap) {
             continue;
         }
         const auto decal = project_mesh_decal(mesh.positions, mesh.indices, origin, width, height, {0, 0, 1}, {0, 1, 0},
-                                              reach, 0.0f);
+                                              std::max(size, reach), 0.0f);
         if (!decal) {
             continue;
         }

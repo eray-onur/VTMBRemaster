@@ -411,9 +411,10 @@ struct BspDecalPiece {
 
 // Projects a width x height decal (an infodecal's texture size times its
 // $decalscale) onto the planar faces of the world and of brush entities (at
-// their origins) within `reach` units in front of `origin`. The decal's up
+// their origins) within `reach` units in front of `origin` (failing that, up
+// to 8 behind), or failing both onto displacements near it. The decal's up
 // axis follows world +z on walls and +y on floors; see docs/formats/maps.md.
-// Displacements, props and tool brushes are not decaled.
+// Props and tool brushes are not decaled.
 std::vector<BspDecalPiece> project_decal(const BspFile& bsp, const Vec3& origin, float width, float height,
                                          float reach = 4.0f);
 
