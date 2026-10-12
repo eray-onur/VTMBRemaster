@@ -313,11 +313,7 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
                 rotation[static_cast<std::size_t>(r)][static_cast<std::size_t>(k)] = m[k][r];
             }
         }
-        const auto& hull_min = model->mdl->hull_min;
-        const auto& hull_max = model->mdl->hull_max;
-        const std::array<formats::Vec3, 2> bounds{{{origin[0] + hull_min[0], origin[1] + hull_min[1], origin[2] + hull_min[2]},
-                                                   {origin[0] + hull_max[0], origin[1] + hull_max[1], origin[2] + hull_max[2]}}};
-        inst.lighting = lighting.sample({origin[0], origin[1], origin[2] + kLightingHeight}, rotation, bounds);
+        inst.lighting = lighting.sample({origin[0], origin[1], origin[2] + kLightingHeight}, rotation);
 
         // The requested sequence, else the idle: the first ACT_IDLE sequence,
         // else any sequence named like an idle.
@@ -417,8 +413,11 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
 CharacterRenderer::~CharacterRenderer() = default;
 
 void CharacterRenderer::create_shadow(Instance& inst, const formats::BspFile& bsp, const formats::Vec3& origin) {
-    const LocalLight& light = inst.lighting.lights[0];
-    if (light.type == LocalLight::Type::None || luminance(inst.lighting.arriving[0]) < kShadowMinLight) {
+    // The local light that brings the most to the character.
+    const std::size_t brightest =
+        luminance(inst.lighting.arriving[1]) > luminance(inst.lighting.arriving[0]) ? 1 : 0;
+    const LocalLight& light = inst.lighting.lights[brightest];
+    if (light.type == LocalLight::Type::None || luminance(inst.lighting.arriving[brightest]) < kShadowMinLight) {
         return;
     }
     // Away from the light, but always downwards: from the light's position

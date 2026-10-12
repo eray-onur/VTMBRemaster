@@ -10,17 +10,25 @@ namespace {
 using formats::BspLightType;
 using formats::Vec3;
 
-// Rays traced to gather the surrounding lightmaps.
+// Rays traced to gather the surrounding lightmaps, and how far they look (as
+// far as the original's, which also looks for the sky against the sun).
 constexpr std::size_t kAmbientRays = 162;
-constexpr float kAmbientRayLength = 4096.0f;
-// How far the sun's ray looks for the sky.
-constexpr float kSunRayLength = 65536.0f;
+constexpr float kRayLength = 57016.0f;
 
-// Weight of the gathered lightmaps. Fitted against original-game captures of
-// sp_tutorial_1 with gamma-2.2 shading (docs/PARITY.md); one room so far.
-// Rays that reach the sky take the sky's ambient light at full weight: a face
-// open to the whole sky then gets what an upward world surface there gets.
-constexpr float kAmbientWeight = 0.15f;
+// Lights that bring at most this much at the sample point (brightest channel)
+// are left out, and only lights at least this bright there (luminance) become
+// local lights: the original's r_worldlightmin.
+constexpr float kWorldLightMin = 1.0f / 128.0f;
+// How far short of a light its line of sight stops.
+constexpr float kLightClearance = 8.0f;
+// Emissive surfaces lit per vertex: a spot along the surface normal whose cone
+// reaches 80 degrees from it; spot lights' outer cones are kept within the
+// same 80 degrees and no narrower than 0.99 in cosine.
+constexpr float kWideConeCos = 0.173648f;
+constexpr float kNarrowConeCos = 0.99f;
+// Without a radius, a local light reaches as far as its intensity over its
+// attenuation stays above this.
+constexpr float kRangeCutoff = 0.03f;
 
 float dot(const Vec3& a, const Vec3& b) {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -66,7 +74,7 @@ std::array<float, kLocalLightFloats> pack_local_lights(const ModelLighting& ligh
             p = to_model_direction({l.position[0] - m[12], l.position[1] - m[13], l.position[2] - m[14]});
         }
         const Vec3 spot = to_model_direction(l.direction);
-        const float values[16] = {p[0], p[1], p[2], 0.0f,
+        const float values[16] = {p[0], p[1], p[2], l.range * l.range,
                                   l.color[0] * scale, l.color[1] * scale, l.color[2] * scale, static_cast<float>(l.type),
                                   l.attenuation[0], l.attenuation[1], l.attenuation[2], l.exponent,
                                   spot[0] * l.spot_scale, spot[1] * l.spot_scale, spot[2] * l.spot_scale,
@@ -87,8 +95,7 @@ PropLighting::PropLighting(const formats::BspFile& bsp) : bsp_(bsp), styles_(bsp
     }
 }
 
-ModelLighting PropLighting::sample(const Vec3& point, const std::array<std::array<float, 3>, 3>& rotation,
-                                   const std::array<Vec3, 2>& bounds) const {
+ModelLighting PropLighting::sample(const Vec3& point, const std::array<std::array<float, 3>, 3>& rotation) const {
     ModelLighting out;
     // Model-space axis k in world space is column k of the rotation.
     std::array<Vec3, 3> axes{};
@@ -96,14 +103,19 @@ ModelLighting PropLighting::sample(const Vec3& point, const std::array<std::arra
         axes[k] = {rotation[0][k], rotation[1][k], rotation[2][k]};
     }
 
-    // Every visible light, with what it brings to the point (before n.l).
+    // Every light that reaches the point: what it brings there (after the
+    // spot cone, before n.l), and how bright it counts when the local lights
+    // are chosen.
     struct Candidate {
         LocalLight light;
         Vec3 to_light{};
         std::array<float, 3> arriving{};
+        float brightness = 0;
+        bool sun = false;
     };
     std::vector<Candidate> visible;
     std::array<float, 3> sky_ambient{};
+    bool sun_seen = false;
     for (const auto& light : bsp_.world_lights) {
         const float style = light.style >= 0 ? styles_.default_value(static_cast<std::size_t>(light.style)) : 0.0f;
         if (style <= 0) {
@@ -118,18 +130,25 @@ ModelLighting PropLighting::sample(const Vec3& point, const std::array<std::arra
         Candidate c;
         c.light.color = {light.intensity[0] * style, light.intensity[1] * style, light.intensity[2] * style};
         if (light.type == BspLightType::Sky) {
-            // The sun: a directional light, where the sky is seen against it.
+            // The sun: a directional light where the sky is seen against it.
+            // Only the first counts.
+            if (sun_seen) {
+                continue;
+            }
             c.to_light = {-light.normal[0], -light.normal[1], -light.normal[2]};
-            const Vec3 end{point[0] + c.to_light[0] * kSunRayLength, point[1] + c.to_light[1] * kSunRayLength,
-                           point[2] + c.to_light[2] * kSunRayLength};
+            const Vec3 end{point[0] + c.to_light[0] * kRayLength, point[1] + c.to_light[1] * kRayLength,
+                           point[2] + c.to_light[2] * kRayLength};
             bool sky = false;
             bsp_.trace_lightmap(point, end, &sky);
             if (!sky) {
                 continue;
             }
+            sun_seen = true;
+            c.sun = true;
             c.light.type = LocalLight::Type::Directional;
             c.light.direction = light.normal;
             c.arriving = c.light.color;
+            c.brightness = luminance(c.light.color);
             visible.push_back(c);
             continue;
         }
@@ -138,11 +157,8 @@ ModelLighting PropLighting::sample(const Vec3& point, const std::array<std::arra
             continue;
         }
         Vec3 to_light{light.origin[0] - point[0], light.origin[1] - point[1], light.origin[2] - point[2]};
-        const float dist_sq = dot(to_light, to_light);
-        const float dist = std::sqrt(dist_sq);
+        const float dist = std::sqrt(dot(to_light, to_light));
         // The radius cuts the light off, as in the map compiler's lightmaps.
-        // (The shaders' saturate(1 - d^2 w) range term with w = 1/radius^2
-        // spreads the props' brightness more; docs/RENDERING.md.)
         if (dist < 1e-3f || (light.radius > 0 && dist > light.radius)) {
             continue;
         }
@@ -151,83 +167,110 @@ ModelLighting PropLighting::sample(const Vec3& point, const std::array<std::arra
         }
         // Emissive-surface lights store no attenuation terms (all zero); they
         // fall off with the inverse square of the distance.
-        const bool unattenuated = light.constant_attn == 0 && light.linear_attn == 0 && light.quadratic_attn == 0;
+        const bool surface = light.type == BspLightType::Surface;
+        const std::array<float, 3> terms =
+            surface ? std::array<float, 3>{0.0f, 0.0f, 1.0f}
+                    : std::array<float, 3>{light.constant_attn, light.linear_attn, light.quadratic_attn};
         const float r = std::max(dist, 1.0f);
-        const float attenuation =
-            unattenuated ? r * r : light.constant_attn + light.linear_attn * r + light.quadratic_attn * r * r;
-        float scale = 1.0f / std::max(attenuation, 1.0f);
-        if (light.type == BspLightType::Spot) {
-            const float d = -dot(to_light, light.normal);
-            if (d <= light.stopdot2) {
-                continue;
-            }
-            if (d < light.stopdot) {
-                float falloff = (d - light.stopdot2) / (light.stopdot - light.stopdot2);
-                if (light.exponent != 0 && light.exponent != 1) {
-                    falloff = std::pow(falloff, light.exponent);
-                }
-                scale *= falloff;
-            }
-        } else if (light.type == BspLightType::Surface) {
-            scale *= std::max(0.0f, -dot(to_light, light.normal));
-        }
-        if (scale <= 0 || bsp_.segment_blocked(point, light.origin)) {
+        const float scale = 1.0f / std::max(terms[0] + terms[1] * r + terms[2] * r * r, 1.0f);
+        if (std::max({c.light.color[0], c.light.color[1], c.light.color[2]}) * scale <= kWorldLightMin) {
             continue;
+        }
+        // The line of sight stops just short of the light, which often sits
+        // inside its fixture.
+        const float reach = std::max(dist - kLightClearance, 0.0f);
+        if (bsp_.segment_blocked(point, {point[0] + to_light[0] * reach, point[1] + to_light[1] * reach,
+                                          point[2] + to_light[2] * reach})) {
+            continue;
+        }
+        float cone = 1.0f;
+        const float d = -dot(to_light, light.normal);
+        if (light.type == BspLightType::Spot) {
+            if (d <= light.stopdot2) {
+                cone = 0.0f;
+            } else if (d < light.stopdot) {
+                cone = (d - light.stopdot2) / (light.stopdot - light.stopdot2);
+                if (light.exponent != 0 && light.exponent != 1) {
+                    cone = std::pow(cone, light.exponent);
+                }
+            }
+        } else if (surface) {
+            cone = d > 0.01f ? d : 0.0f;
         }
         c.to_light = to_light;
         for (std::size_t ch = 0; ch < 3; ++ch) {
-            c.arriving[ch] = c.light.color[ch] * scale;
+            c.arriving[ch] = c.light.color[ch] * scale * cone;
         }
-        const bool inside = light.origin[0] >= bounds[0][0] && light.origin[0] <= bounds[1][0] &&
-                            light.origin[1] >= bounds[0][1] && light.origin[1] <= bounds[1][1] &&
-                            light.origin[2] >= bounds[0][2] && light.origin[2] <= bounds[1][2];
-        if (light.type != BspLightType::Surface && !inside) {
-            c.light.type = light.type == BspLightType::Spot ? LocalLight::Type::Spot : LocalLight::Type::Point;
-            c.light.position = light.origin;
-            c.light.direction = light.normal;
-            c.light.attenuation = {light.constant_attn, light.linear_attn, light.quadratic_attn};
-            if (light.type == BspLightType::Spot) {
-                // Exponents 0 and 1 both give a linear ramp, as above.
-                c.light.stopdot2 = light.stopdot2;
-                c.light.spot_scale = 1.0f / std::max(light.stopdot - light.stopdot2, 1e-4f);
-                c.light.exponent = light.exponent != 0 ? light.exponent : 1.0f;
+        // Ranked without the cone: a spot light aimed past the point can
+        // still light parts of the model, which are lit per vertex.
+        c.brightness = luminance(c.light.color) * scale;
+
+        c.light.type = light.type == BspLightType::Point ? LocalLight::Type::Point : LocalLight::Type::Spot;
+        c.light.position = light.origin;
+        c.light.direction = light.normal;
+        c.light.attenuation = terms;
+        float outer = kWideConeCos, inner = 1.0f, exponent = 1.0f;
+        if (light.type == BspLightType::Spot) {
+            outer = std::clamp(light.stopdot2, kWideConeCos, kNarrowConeCos);
+            inner = light.stopdot > 1.0f ? 1.0f : std::max(light.stopdot, outer + 0.001f);
+            // Exponents 0 and 1 both give a linear ramp, as above.
+            exponent = light.exponent != 0 ? light.exponent : 1.0f;
+        }
+        if (c.light.type == LocalLight::Type::Spot) {
+            c.light.stopdot2 = outer;
+            c.light.spot_scale = 1.0f / (inner - outer);
+            c.light.exponent = exponent;
+        }
+        // How far it reaches per vertex: its radius, else where its intensity
+        // over its attenuation falls to kRangeCutoff.
+        if (light.radius > 0) {
+            c.light.range = light.radius;
+        } else {
+            const float reach_at = std::sqrt(dot(c.light.color, c.light.color)) / kRangeCutoff;
+            if (terms[2] == 0) {
+                c.light.range = terms[1] != 0 ? std::max((reach_at - terms[0]) / terms[1], 0.0f) : 0.0f;
+            } else {
+                const float disc = terms[1] * terms[1] - 4.0f * terms[2] * (terms[0] - reach_at);
+                c.light.range = disc > 0 ? std::max((std::sqrt(disc) - terms[1]) / (2.0f * terms[2]), 0.0f) : 0.0f;
             }
         }
         visible.push_back(c);
     }
 
-    // The two brightest point, spot or sun lights outside the model become
-    // local lights; the rest are folded into the cube.
-    std::stable_sort(visible.begin(), visible.end(), [](const Candidate& a, const Candidate& b) {
-        const bool la = a.light.type != LocalLight::Type::None, lb = b.light.type != LocalLight::Type::None;
-        return la != lb ? la : luminance(a.arriving) > luminance(b.arriving);
-    });
+    // The two brightest become local lights. The rest are folded into the
+    // cube; the sun never is (it lights a model only as a local light).
+    std::stable_sort(visible.begin(), visible.end(),
+                     [](const Candidate& a, const Candidate& b) { return a.brightness > b.brightness; });
     std::size_t locals = 0;
     for (const Candidate& c : visible) {
-        fold(out.folded, axes, c.to_light, c.arriving);
-        if (c.light.type != LocalLight::Type::None && locals < out.lights.size()) {
+        if (locals < out.lights.size() && c.brightness >= kWorldLightMin) {
             out.arriving[locals] = c.arriving;
             out.lights[locals++] = c.light;
-        } else {
+            fold(out.folded, axes, c.to_light, c.arriving);
+        } else if (!c.sun) {
             fold(out.cube, axes, c.to_light, c.arriving);
+            fold(out.folded, axes, c.to_light, c.arriving);
         }
     }
 
-    // Indirect light: the lightmaps of the surfaces seen from the point,
-    // averaged per cube direction with cosine weights. Rays that reach the
-    // sky see its ambient light; rays that leave the world or hit unlit
-    // surfaces count as black.
+    // Indirect light: the lightmaps of the surfaces seen from the point, each
+    // times its texture's reflectivity, averaged per cube direction with
+    // cosine weights. Rays that reach the sky see its ambient light; rays that
+    // leave the world or hit unlit surfaces count as black.
     std::array<std::array<float, 3>, 6> sum{};
     std::array<float, 6> weight{};
     for (const Vec3& d : directions_) {
-        const Vec3 end{point[0] + d[0] * kAmbientRayLength, point[1] + d[1] * kAmbientRayLength,
-                       point[2] + d[2] * kAmbientRayLength};
+        const Vec3 end{point[0] + d[0] * kRayLength, point[1] + d[1] * kRayLength, point[2] + d[2] * kRayLength};
         std::array<float, 3> color{};
         bool sky = false;
         if (const auto hit = bsp_.trace_lightmap(point, end, &sky)) {
             color = lightmap_at(*hit);
-            for (float& v : color) {
-                v *= kAmbientWeight;
+            const std::int32_t texdata = bsp_.texinfos[bsp_.faces[hit->face].texinfo].texdata;
+            const Vec3 reflectivity = texdata >= 0 && static_cast<std::size_t>(texdata) < bsp_.texdatas.size()
+                                          ? bsp_.texdatas[static_cast<std::size_t>(texdata)].reflectivity
+                                          : Vec3{};
+            for (std::size_t ch = 0; ch < 3; ++ch) {
+                color[ch] *= reflectivity[ch];
             }
         } else if (sky) {
             color = sky_ambient;

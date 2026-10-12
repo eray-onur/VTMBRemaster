@@ -6,16 +6,19 @@
 // squared components of its normal, plus up to two lights evaluated per
 // vertex.
 //
+// This follows how the original builds a model's lighting state (and bakes
+// static props' vertex colours from it when a map loads; docs/RENDERING.md),
+// sampled at one point:
 // Direct light: every point, spot and emissive-surface world light, scaled by
-// its light style's default brightness, and the sun, whose line of sight to
-// the sample point is not blocked by solid BSP leaves (the sun: that reaches
-// the sky). The two brightest point, spot or sun lights there are kept as
-// local lights; the rest are folded into the cube, and so are lights inside
-// the model's bounds (lamp fixtures, the 3D skybox's own lights): lit per
-// vertex from inside, the model's outer surfaces would face away from them.
-// Indirect light: the baked lightmaps of the surfaces around the point, and
-// the sky's ambient light where the sky is seen, gathered with rays (bounce
-// light is not stored in the world light list).
+// its light style's default brightness, whose line of sight to the point is
+// not blocked by solid BSP leaves, and the sun where the sky is seen against
+// it. The two brightest there (by attenuated intensity, ignoring spot cones)
+// are kept as local lights, evaluated per vertex; the rest are folded into
+// the cube (the sun never is).
+// Indirect light: the baked lightmaps of the surfaces around the point, each
+// times its texture's reflectivity, and the sky's ambient light where the sky
+// is seen, gathered with rays (bounce light is not stored in the world light
+// list).
 // In the same units as the world: lit colour = base x light in linear terms.
 
 #include "openbl/formats/bsp.hpp"
@@ -33,7 +36,8 @@ struct AmbientCube {
 
 // A light the shaders evaluate per vertex: colour x max(n.l, 0) /
 // (constant + linear d + quadratic d^2) x the spot cone (directional lights:
-// colour x max(n.l, 0)). Chosen only within the light's radius.
+// colour x max(n.l, 0)), and nothing beyond its range. Emissive surfaces are
+// spots along their normal.
 struct LocalLight {
     enum class Type : std::uint8_t { None, Directional, Point, Spot };
     Type type = Type::None;
@@ -44,14 +48,15 @@ struct LocalLight {
     float stopdot2 = 0;                 // Spot: cosine of the outer cone,
     float spot_scale = 0;               // 1 / (inner cosine - outer cosine),
     float exponent = 1;                 // and the falloff's exponent.
+    float range = 0;                    // Point and spot: no light beyond this distance (0: unlimited).
 };
 
 struct ModelLighting {
     AmbientCube cube;                 // Model space; without the local lights.
     std::array<LocalLight, 2> lights; // Brightest first; unused ones have Type::None.
     // Each local light as it arrives at the sample point (after attenuation
-    // and the spot cone), linear: what picks the brightest, and the light a
-    // character's shadow falls away from.
+    // and the spot cone), linear: what picks the light a character's shadow
+    // falls away from.
     std::array<std::array<float, 3>, 2> arriving{};
     AmbientCube folded;               // The cube with the local lights folded in too.
 };
@@ -62,7 +67,7 @@ constexpr std::size_t kLocalLightFloats = 32;
 // The local lights in the model space of `model_to_world` (column-major, a
 // rotation and a translation), times `scale`, as the shaders read them: per
 // light 4 float4: (position, or the unit direction to a directional light;
-// unused), (colour; type: 0 none, 1 directional, 2 point, 3 spot),
+// range squared, 0 for none), (colour; type: 0 none, 1 directional, 2 point, 3 spot),
 // (attenuation; spot exponent), (spot direction x spot scale; -outer cosine
 // x spot scale), so the cone's ramp is one dot product. See local_light in
 // shaders/color.hlsli.
@@ -75,9 +80,7 @@ public:
 
     // `rotation` is the model-to-world rotation (row-major 3x3); the cube is
     // returned in model space so shaders can use object-space normals.
-    // `bounds`: the model's world-space box (min, max).
-    ModelLighting sample(const formats::Vec3& point, const std::array<std::array<float, 3>, 3>& rotation,
-                         const std::array<formats::Vec3, 2>& bounds) const;
+    ModelLighting sample(const formats::Vec3& point, const std::array<std::array<float, 3>, 3>& rotation) const;
 
 private:
     // Summed light styles (at their default brightness) at a traced point.

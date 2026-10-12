@@ -145,7 +145,6 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
             lo = glm::min(lo, w);
             hi = glm::max(hi, w);
         }
-        const std::array<formats::Vec3, 2> bounds{{{lo.x, lo.y, lo.z}, {hi.x, hi.y, hi.z}}};
         auto solid = [&](const glm::vec3& p) {
             return (bsp.leafs[bsp.leaf_at({p.x, p.y, p.z})].contents & formats::contents::Solid) != 0;
         };
@@ -153,13 +152,13 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
         const glm::vec3 c = lighting_origin ? glm::vec3(glm::make_vec3(lighting_origin->data()))
                                             : glm::vec3(m * glm::vec4(glm::make_vec3(model->center.data()), 1.0f));
         if (!solid(c)) {
-            inst.lighting = lighting.sample({c.x, c.y, c.z}, rotation, bounds);
+            inst.lighting = lighting.sample({c.x, c.y, c.z}, rotation);
         } else {
             // Embedded in the world (e.g. a building wrapped around a brush
             // block): light each side of the cube from just outside that side
             // of the model's bounds, where the lit surroundings are visible.
             // All lights are folded into the cube, as the samples differ per side.
-            inst.lighting.cube = lighting.sample({origin[0], origin[1], origin[2] + 16.0f}, rotation, bounds).folded;
+            inst.lighting.cube = lighting.sample({origin[0], origin[1], origin[2] + 16.0f}, rotation).folded;
             for (std::size_t face = 0; face < 6; ++face) {
                 glm::vec3 local = glm::make_vec3(model->center.data());
                 const std::size_t axis = face / 2;
@@ -167,7 +166,7 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
                 local[static_cast<int>(axis)] += sign * (model->half_extent[axis] + 8.0f);
                 const glm::vec3 p(m * glm::vec4(local, 1.0f));
                 if (!solid(p)) {
-                    inst.lighting.cube.color[face] = lighting.sample({p.x, p.y, p.z}, rotation, bounds).folded.color[face];
+                    inst.lighting.cube.color[face] = lighting.sample({p.x, p.y, p.z}, rotation).folded.color[face];
                 }
             }
             inst.lighting.folded = inst.lighting.cube;

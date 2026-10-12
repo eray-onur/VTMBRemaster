@@ -125,7 +125,7 @@ RopeRenderer::RopeRenderer(rhi::Device& device, MaterialSystem& materials, const
         // every light folded in, encoded, clamped to the material's range.
         std::vector<std::array<float, 3>> node_light;
         for (const V3& p : nodes) {
-            const ModelLighting l = lighting.sample(p, kIdentity, {p, p});
+            const ModelLighting l = lighting.sample(p, kIdentity);
             std::array<float, 3> c{};
             for (const auto& face : l.folded.color) {
                 for (std::size_t ch = 0; ch < 3; ++ch) {

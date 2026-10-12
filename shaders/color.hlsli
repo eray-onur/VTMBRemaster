@@ -97,9 +97,9 @@ float3 bumped_normal(float3 texel, float3 normal, float4 tangent) {
 // prop_lighting.hpp) at a model-space point with unit normal `n`, as the
 // original's model vertex shaders light it: colour x max(n.l, 0) /
 // (constant + linear d + quadratic d^2), times saturate(cos x scale - outer x
-// scale)^exponent for spots. Plain Lambert: half-Lambert is a per-material
-// switch that no shipped material sets. The shaders' range term is left out
-// (docs/RENDERING.md).
+// scale)^exponent for spots, and nothing beyond the light's range (r0.w, its
+// square), as the original's static-prop bake has it. Plain Lambert:
+// half-Lambert is a per-material switch that no shipped material sets.
 float3 local_light(float4 r0, float4 r1, float4 r2, float4 r3, float3 position, float3 n) {
     if (r1.w < 0.5) {
         return float3(0, 0, 0);
@@ -109,6 +109,9 @@ float3 local_light(float4 r0, float4 r1, float4 r2, float4 r3, float3 position, 
     }
     float3 to_light = r0.xyz - position;
     const float d2 = dot(to_light, to_light);
+    if (r0.w > 0.0 && d2 > r0.w) {
+        return float3(0, 0, 0);
+    }
     to_light /= max(sqrt(d2), 1e-3);
     const float d = max(sqrt(d2), 1.0);
     float scale = 1.0 / max(dot(r2.xyz, float3(1.0, d, d * d)), 1.0);
