@@ -51,7 +51,19 @@ The original's `lightmappedgeneric_ps20` (read from the shipped `.vcs`) lights t
 
 The average is taken on the lightmap texture's encoded values (luxel^(1/2.2) / 2, as for flat lightmaps), so OpenBL sums each direction over the styles in linear terms, then averages them as L^(1/2.2) and converts back. Over ch_temple_3's 2,402 bump-lit faces the three directions average 0.97 of the flat lightmap, but the encoded-space average is lower where they differ: the temple start view comes out 17% darker than with flat lightmaps, a sewer wall 9%. Not yet compared with the original.
 
-Not done: the bumped normal in environment-map reflections (23 of the 61 bump materials have an `$envmap`; OpenBL reflects about the face normal), `WorldVertexTransition` blends of two normal maps (they keep the flat lightmap), and normal maps on models. Bump-mapped materials on faces without the flag use the flat lightmap, as there is nothing else. `openbl-viewer --no-bump` uses the flat lightmap everywhere.
+**Environment maps.** With a `$bumpmap`, the reflection is about the bumped normal, in world space:
+
+- the vertex shader passes a tangent frame (tangent, binormal, normal), and the pixel shader takes n.x × tangent + n.y × binormal + n.z × normal;
+- the tangent and binormal come from the engine. The map data shows they are the texinfo's u and v texture axes, made perpendicular to the face (+u, +v). With that frame, the three directional lightmaps agree with where the strongest light is for 76–80% of the bump faces on ch_temple_3, hw_warrens_1, hw_warrens_3 and hw_ash_sewer_1; the other sign choices score 21–65%;
+- the mask is the normal map's alpha, in every combination: none samples an `$envmapmask`, so materials that name both (`metal/danewll*`, `stone/libcolumn*`) use the normal map's alpha, and so do the three without `$normalmapalphaenvmapmask` (`concrete/sewflra`, `concrete/zhaflra`, `objects/manholecovera`);
+- the mask multiplies the cube map's colour before `$envmaptint` and `$envmapcontrast`, not after as for flat surfaces;
+- some combinations add a Fresnel factor, (1 − n̂·ê)^5 scaled and offset by a constant the engine sets. No material sets `$fresnelreflection`, so OpenBL leaves it out.
+
+This applies to the faces without directional lightmaps too: they are lit from the flat lightmap, but still reflect about the bumped normal.
+
+**Two-texture blends.** `worldvertextransition_ps20` has no bump-mapped combinations, but `lightmappedgeneric_ps20` has combinations with a second base texture and a normal map. Only `WorldVertexTransition` materials have a second base texture, so its bump-mapped blends use these. The normal map then serves both layers, and the envmap mask is its alpha too. Combinations with a `$bumpmap2` blend the two normal maps by the same factor as the two base textures, but no shipped material has one. Five blends have a `$bumpmap` (`blends/warrtunnela`, `warrtrash`, `seablend`, `searock_tunnel`, `veslavarock`, on 8 maps). Their `$bumpbasetexture2withbumpmap` is 0 on two of them, yet no ps20 combination leaves the second layer unbumped, so OpenBL bumps both. On `sp_soc_3`'s tunnel walls, the result keeps more of the warm lantern light and less of the blue fill than the flat lightmap, as the three directions separate them.
+
+Not done: normal maps on models. Bump-mapped materials on faces without the flag use the flat lightmap, as there is nothing else. `openbl-viewer --no-bump` uses the flat lightmap and unbumped reflections (with the material's own envmap mask) everywhere.
 
 ## Models (`VertexLitGeneric`)
 

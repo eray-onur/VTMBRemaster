@@ -22,7 +22,9 @@ static const uint kAdditive = 128;
 static const uint kEnvmap = 256;
 // Envmap mask, bits 9-10: 0 none, 1 mask texture colour, 2 1 - base alpha, 3 mask texture alpha.
 static const uint kEnvmapMaskShift = 9;
-static const uint kBump = 2048; // $bumpmap: lit by the face's three directional lightmaps.
+// $bumpmap: lit by the face's three directional lightmaps (where it has them)
+// and bending the envmap reflection.
+static const uint kBump = 2048;
 
 struct VSInput {
     [[vk::location(0)]] float3 position : POSITION;
@@ -33,6 +35,8 @@ struct VSInput {
     [[vk::location(5)]] float style_step : TEXCOORD4;
     [[vk::location(6)]] float3 normal : NORMAL;
     [[vk::location(7)]] float bump_step : TEXCOORD5; // 0 unless the face has directional lightmaps.
+    [[vk::location(8)]] float3 tangent_s : TANGENT;  // Texture u axis, perpendicular to the normal.
+    [[vk::location(9)]] float3 tangent_t : BINORMAL; // Texture v axis.
 };
 
 struct VSOutput {
@@ -48,6 +52,8 @@ struct VSOutput {
     [[vk::location(8)]] float3 normal : NORMAL;
     [[vk::location(9)]] nointerpolation float bump_step : TEXCOORD8;
     [[vk::location(10)]] float2 bump_uv : TEXCOORD9; // Untransformed, as the original's bump coordinates.
+    [[vk::location(11)]] float3 tangent_s : TANGENT;
+    [[vk::location(12)]] float3 tangent_t : BINORMAL;
 };
 
 // Brightness of each of the 64 light styles (4 per element), the fog (2
@@ -84,6 +90,8 @@ VSOutput vs_main(VSInput input) {
     output.style_step = input.style_step;
     output.bump_step = input.bump_step;
     output.bump_uv = input.uv;
+    output.tangent_s = input.tangent_s;
+    output.tangent_t = input.tangent_t;
     return output;
 }
 
@@ -121,6 +129,13 @@ float4 ps_main(VSOutput input) : SV_Target {
         // "2 x texture" in gamma space, exactly. Fog fades it to neutral (0.5).
         return float4(lerp(linear_to_srgb(base.rgb), float3(0.5, 0.5, 0.5), fog), 1.0);
     }
+    // The normal map's texel × 2 − 1, not renormalised; its alpha masks the
+    // envmap. Two-layer blends use the one normal map for both layers.
+    float4 bump = float4(0.0, 0.0, 1.0, 1.0);
+    if (pc.flags & kBump) {
+        bump = bumpmap.Sample(texture_sampler, input.bump_uv);
+        bump.xyz = bump.xyz * 2.0 - 1.0;
+    }
     float3 light = float3(1.0, 1.0, 1.0);
     if (!(pc.flags & kUnlit)) {
         // The original stores the combined lightmap in an 8-bit texture as
@@ -130,7 +145,7 @@ float4 ps_main(VSOutput input) : SV_Target {
             // Each direction's lightmap, combined over the styles; then weighted
             // by how much the normal faces each direction (clamped at 0) and
             // averaged, on the encoded values as the original's shader does.
-            const float3 n = bumpmap.Sample(texture_sampler, input.bump_uv).xyz * 2.0 - 1.0;
+            const float3 n = bump.xyz;
             const float3 w = saturate(float3(dot(n, kBumpBasis[0]), dot(n, kBumpBasis[1]), dot(n, kBumpBasis[2])));
             float3 encoded_light = float3(0, 0, 0);
             [unroll] for (uint b = 0; b < 3; ++b) {
@@ -165,7 +180,14 @@ float4 ps_main(VSOutput input) : SV_Target {
     float3 encoded = linear_to_srgb(color);
     // The environment map is added after lighting (so dark rooms still shine),
     // reflected about the surface normal.
-    if (pc.flags & kEnvmap) {
+    if ((pc.flags & kEnvmap) && (pc.flags & kBump)) {
+        // About the bumped normal, in the face's tangent frame (texture u, v,
+        // normal). The normal map's alpha is the mask, whatever the material
+        // names, applied before the tint and contrast (lightmappedgeneric_ps20).
+        const float3 normal = bump.x * input.tangent_s + bump.y * input.tangent_t + bump.z * normalize(input.normal);
+        const float3 env = envmap_reflection(normal, style_values[kEye].xyz - input.world, envmap, texture_sampler);
+        encoded = saturate(encoded + envmap_term(env * bump.a, material_param(6), material_param(7).x));
+    } else if (pc.flags & kEnvmap) {
         encoded = add_envmap(encoded, input.normal, style_values[kEye].xyz - input.world, envmap, envmap_mask,
                              texture_sampler, input.uv, base.a, (pc.flags >> kEnvmapMaskShift) & 3, material_param(6),
                              material_param(7).x);

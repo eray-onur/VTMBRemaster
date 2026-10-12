@@ -34,8 +34,12 @@ struct Vertex {
     // Bump-lit faces: U distance from a style's flat lightmap to its first of
     // three directional ones (each style holds four blocks); 0 otherwise.
     float bump_step;
+    // The texture's u and v axes in world space, made perpendicular to the
+    // normal: the tangent frame of $bumpmap normals (docs/RENDERING.md).
+    float tangent_s[3];
+    float tangent_t[3];
 };
-static_assert(sizeof(Vertex) == 56);
+static_assert(sizeof(Vertex) == 80);
 
 // Lightmap styles drawn per face (faces store up to 8; the Steam release uses at most 4).
 constexpr std::size_t kMaxFaceStyles = 4;
@@ -135,6 +139,20 @@ std::vector<std::array<float, 3>> face_normals(const BspFile& bsp, std::size_t f
         }
     }
     return out;
+}
+
+// A texture axis (texinfo u or v, xyz) made perpendicular to `normal` and normalised.
+void tangent_axis(const std::array<float, 4>& axis, const std::array<float, 3>& normal, float out[3]) {
+    const float d = axis[0] * normal[0] + axis[1] * normal[1] + axis[2] * normal[2];
+    float len = 0.0f;
+    for (std::size_t k = 0; k < 3; ++k) {
+        out[k] = axis[k] - normal[k] * d;
+        len += out[k] * out[k];
+    }
+    len = std::sqrt(len);
+    for (std::size_t k = 0; k < 3; ++k) {
+        out[k] = len > 1e-6f ? out[k] / len : 0.0f;
+    }
 }
 
 // A brush model instance: the world (model 0) or a brush entity at its origin.
@@ -428,6 +446,9 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
                 light_vertex(out, ref.face, mesh.lightmap_uvs[v]);
                 out.blend = mesh.alphas[v];
                 std::copy(normals[v].begin(), normals[v].end(), out.normal);
+                const auto& tex = bsp.texinfos[bsp.faces[ref.face].texinfo].texture_vecs;
+                tangent_axis(tex[0], normals[v], out.tangent_s);
+                tangent_axis(tex[1], normals[v], out.tangent_t);
                 vertices.push_back(out);
             }
             for (std::uint32_t idx : mesh.indices) {
@@ -535,7 +556,9 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
                      {4, rhi::Format::RGBA8_UInt, 32},
                      {5, rhi::Format::R32_Float, 36},
                      {6, rhi::Format::RGB32_Float, 40},
-                     {7, rhi::Format::R32_Float, 52}};
+                     {7, rhi::Format::R32_Float, 52},
+                     {8, rhi::Format::RGB32_Float, 56},
+                     {9, rhi::Format::RGB32_Float, 68}};
     pd.texture_count = 6; // Base, second base, lightmap, envmap (cube), envmap mask, bump map.
     pd.push_constant_size = sizeof(PushConstants);
     pd.shader_data = true;
@@ -788,8 +811,7 @@ void WorldRenderer::draw_batch(rhi::CommandList& cmd, const Batch& batch, const 
                ((m.translucent || batch.decal) ? kTranslucent : 0) | ((batch.decal && m.modulate) ? kModulate : 0) |
                (m.multiply_layers ? kMultiplyLayers : 0) | ((m.additive && !batch.decal) ? kAdditive : 0) |
                (m.envmap && settings.envmaps ? kEnvmap | (static_cast<std::uint32_t>(m.envmap_mask_mode) << kEnvmapMaskShift) : 0) |
-               // Two-layer blends would mix two normal maps; they keep the flat lightmap for now.
-               (m.bumpmap && settings.bumpmaps && !batch.decal && !m.blend_layers ? kBump : 0);
+               (m.bumpmap && settings.bumpmaps && !batch.decal ? kBump : 0);
     pc.params_index = m.params_index < rows ? m.params_index : 0;
     cmd.set_bind_group(batch.current_bind_group());
     cmd.push_constants(&pc, sizeof(pc));
