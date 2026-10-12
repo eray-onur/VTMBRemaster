@@ -95,10 +95,10 @@ Doubling the distance instead fits worse (it overshoots the far values). Whether
 - **Colour:** the texture × `rendercolor` × `renderamt` / 255, on encoded values.
 - **Render modes:** additive for `rendermode` 5 (`kRenderTransAdd`), 3 (`kRenderGlow`) and 9 (`kRenderWorldGlow`, 66 sprites over all maps), alpha-blended otherwise. Animated sprites step at the entity's `framerate`. Additive sprites fade out in fog.
 - **Effects:** only `renderfx` 0, 2 and 14 occur. 2 (`kRenderFxPulseFast`, 12 sprites) pulses the amount by 16 / 255 × sin(8 t + entity index × 363), as in Source. 14 ("no dissipation") changes nothing in Bloodlines, because its client code has no distance fade for glows. No sprite sets `GlowProxySize`.
-- **Glows** (`rendermode` 3 and 9) are drawn over everything except what hides their centre. In the client DLL (`client.dll`, read from its code), the glow brightness is multiplied by the visible fraction of an octagonal occlusion proxy drawn at the glow's centre: 3 units in radius, or distance × 3/128 for mode 3, so that proxy keeps one size on screen. The sprite itself always has its world size: the scale function only animates the scale over time.
+- **Glows** (`rendermode` 3 and 9) are depth-tested like other sprites. In the client DLL (`client.dll`, read from its code), the glow brightness is multiplied by the visible fraction of an octagonal occlusion proxy drawn at the glow's centre: 3 units in radius, or distance × 3/128 for mode 3, so that proxy keeps one size on screen. The sprite itself always has its world size: the scale function only animates the scale over time.
+  - Only the world hides a glow's centre. 54 `sm_hub_1` glows sit inside the opaque globes of the curved street lamps (`pierlightb.mdl`). The original still draws them at full strength: the globe covers the middle of the glow, while the pole, palms, columns and NPCs behind the glow's quad are brightened. Measured with `r_drawsprites 0` against 1 from below and from above a globe (stations `lamp` and `c1` below); the radial profiles match OpenBL's within 2 to 3 levels out to 300 pixels.
   - OpenBL traces a line through the world each frame instead of the occlusion query.
-  - The original also tests glow visibility against props. 54 of the `sm_hub_1` glows sit inside lamp globes, and the original shows none of them. Measured beside a lamp on `sm_hub_1` (camera −1839.87 −2179.87 −40, pitch 9.22, yaw 59.79), the original is 40 37 24 around the lamp head and 61 58 39 above it. OpenBL drawing those glows gave 59 51 33 and 91 87 57; without them it gives 45 39 27 and 62 61 43.
-  - OpenBL therefore hides glows enclosed by a prop (at least five of six axis rays from the glow hit the same prop, tested once at load).
+  - An earlier OpenBL version hid glows enclosed by a prop, from a comparison with no sprites-off baseline from the original. The on/off captures showed that was wrong.
 
 **Fades from material proxies**, evaluated per sprite with its distance and direction from the camera:
 
@@ -106,7 +106,16 @@ Doubling the distance instead fits worse (it overshoots the far values). Whether
 - **`LampBeam`** (the street-light beams, `streetlight*_proxyfade`; read from `client.dll`): `$alpha` = 1 − |z|, with z the vertical part of the normalized camera-to-sprite direction. A beam fades as it is seen from below.
 - **`LampHalo`**: `$alpha` = clamp((|z| − 0.25) × 1.35, 0, 1). The halo appears as you look up or down at the lamp.
 
-Not yet checked against the original: additive (`rendermode` 5) and colour (`rendermode` 1) sprite brightness, and the light cones. Not done: scripts switching sprites on and off, and scale animations. `openbl-viewer --no-sprites` hides all sprites.
+**Checked against the original** on `sm_hub_1`. Each station was captured with sprites on, off (`r_drawsprites 0`, which also hides rain and the cables) and on again, so the sprites' share is measured directly. OpenBL's own share comes from a render against one with `--no-sprites`. The table gives OpenBL's summed sprite light over the original's, per channel; the original's sums also contain rain and cables.
+
+| Station | Camera (x y z, pitch / yaw in OpenBL's convention) | Sprites | OpenBL / original (R G B) |
+|---|---|---|---|
+| `j1` | −1179.87 350.13 −39.94, 10.49 / 266.08 | traffic lights, `rendermode` 1 (green and yellow on, red off; the original's `streetlight_timer` disabled and the sprites set with `ent_fire` to match) | 0.93 0.97 0.99 |
+| `w3` | −2019.87 −2049.87 40, −2.68 / 83.67 | the tattoo shop's wall lamps, `rendermode` 5 | 1.00 1.00 1.01 |
+| `c1` | −1999.87 −2099.87 40, 14.04 / 182.88 | skyline light cones (3D skybox) and a lamp-globe glow | 1.03 1.04 1.06 (cones alone 0.87) |
+| `lamp` | −1839.87 −2179.87 −39.94, 13.35 / 58.92 | a lamp-globe glow from below | 1.39 1.43 1.91 (about 2 levels brighter across a wide, faint ring) |
+
+Not done: scripts switching sprites on and off (the traffic lights cycle every 40 s through `logic_relay` skins and sprites), and scale animations. `openbl-viewer --no-sprites` hides all sprites.
 
 ## Monitors (`func_monitor` + `point_camera`)
 

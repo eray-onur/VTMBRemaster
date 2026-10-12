@@ -10,7 +10,6 @@
 #include "openbl/rhi/rhi.hpp"
 
 #include <array>
-#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -22,7 +21,6 @@ struct SpriteStats {
     std::size_t sprites = 0;           // Drawn (switched on at map start).
     std::size_t off = 0;               // Switched off until a script turns them on.
     std::size_t missing_materials = 0;
-    std::size_t hidden_glows = 0;      // Glows inside a prop (a lamp globe), which the original hides.
 };
 
 class SpriteRenderer {
@@ -42,11 +40,6 @@ public:
               float world_scale = 1.0f);
 
     const SpriteStats& stats() const { return stats_; }
-
-    // The original shows a glow only where its centre is visible, props
-    // included; glows placed inside a closed prop (e.g. a lamp globe) never
-    // show. `encloses` tells whether a point is inside one.
-    void hide_enclosed_glows(const std::function<bool(const std::array<float, 3>&)>& encloses);
 
 private:
     struct Sprite {
@@ -70,8 +63,7 @@ private:
     MaterialSystem& materials_;
     SpriteStats stats_;
     std::vector<Sprite> sprites_;
-    std::unique_ptr<rhi::Pipeline> pipeline_;      // Depth-tested.
-    std::unique_ptr<rhi::Pipeline> glow_pipeline_; // Glows: drawn over everything (occlusion is traced).
+    std::unique_ptr<rhi::Pipeline> pipeline_; // Depth-tested, glows included.
     std::unique_ptr<rhi::Sampler> sampler_;
     std::unique_ptr<rhi::Buffer> corners_;
     std::unique_ptr<rhi::Buffer> indices_;

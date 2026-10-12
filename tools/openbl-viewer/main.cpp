@@ -350,13 +350,9 @@ public:
         }
         particles_ = std::make_unique<render::ParticleRenderer>(device, *assets_, bsp_, options.shown);
         sprites_ = std::make_unique<render::SpriteRenderer>(device, *materials_, bsp_, options.shown);
-        if (props_) {
-            sprites_->hide_enclosed_glows([this](const std::array<float, 3>& p) { return props_->encloses(p); });
-        }
         draw_sprites_ = options.sprites;
         std::cout << "sprites: " << sprites_->stats().sprites << " on, " << sprites_->stats().off << " off, "
-                  << sprites_->stats().missing_materials << " with a missing material, " << sprites_->stats().hidden_glows
-                  << " glows inside props\n";
+                  << sprites_->stats().missing_materials << " with a missing material\n";
         std::cout << "particles: " << particles_->stats().systems << " active effects ("
                   << particles_->stats().missing_definitions << " with a missing definition)\n";
         if (auto sky = bsp_.entities.at(0).find("skyname"); sky != bsp_.entities.at(0).end()) {

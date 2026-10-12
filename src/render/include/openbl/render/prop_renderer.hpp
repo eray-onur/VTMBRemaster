@@ -58,12 +58,6 @@ public:
 
     const PropStats& stats() const { return stats_; }
 
-    // True if `point` is closed in by a prop's surface: of six rays along the
-    // axes, at least five hit the same prop within its size. Used to hide glow
-    // sprites placed inside lamp globes, which the original's glow visibility
-    // test hides.
-    bool encloses(const std::array<float, 3>& point) const;
-
 private:
     struct Mesh {
         std::uint32_t first_index = 0;

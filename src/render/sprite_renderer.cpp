@@ -132,8 +132,6 @@ SpriteRenderer::SpriteRenderer(rhi::Device& device, MaterialSystem& materials, c
     pd.depth_write = false;
     pd.blend = rhi::BlendMode::Premultiplied;
     pipeline_ = device.create_pipeline(pd);
-    pd.depth_test = false;
-    glow_pipeline_ = device.create_pipeline(pd);
     rhi::SamplerDesc sd;
     sd.address = rhi::AddressMode::Clamp;
     sampler_ = device.create_sampler(sd);
@@ -145,13 +143,6 @@ SpriteRenderer::SpriteRenderer(rhi::Device& device, MaterialSystem& materials, c
 }
 
 SpriteRenderer::~SpriteRenderer() = default;
-
-void SpriteRenderer::hide_enclosed_glows(const std::function<bool(const std::array<float, 3>&)>& encloses) {
-    const auto before = sprites_.size();
-    std::erase_if(sprites_, [&](const Sprite& s) { return is_glow(s.mode) && encloses(s.origin); });
-    stats_.hidden_glows += before - sprites_.size();
-    stats_.sprites = sprites_.size();
-}
 
 const rhi::BindGroup& SpriteRenderer::bind_group(const rhi::Texture* texture) {
     auto& g = bind_groups_[texture];
@@ -195,7 +186,10 @@ void SpriteRenderer::draw(rhi::CommandList& cmd, const std::array<float, 16>& vi
         context.view_direction_z = distance > 0.0f ? to_sprite[2] / distance : 0.0f;
         amount *= materials_.entity_alpha(m, context);
         if (glow) {
-            // Glows show through everything except the world, which hides them.
+            // The world hides a glow whose centre it blocks. Props don't, even
+            // a lamp globe around the centre: the original's glow visibility
+            // test only sees the world. The glow is depth-tested like any
+            // sprite, so the globe still covers the middle of it.
             if (bsp_.segment_blocked({eye[0], eye[1], eye[2]}, {s.origin[0], s.origin[1], s.origin[2]})) {
                 continue;
             }
@@ -244,13 +238,12 @@ void SpriteRenderer::draw(rhi::CommandList& cmd, const std::array<float, 16>& vi
         std::copy(s.color.begin(), s.color.end(), pc.color);
         pc.color[3] = amount;
 
-        const rhi::Pipeline& pipeline = glow ? *glow_pipeline_ : *pipeline_;
-        if (&pipeline != bound) {
-            cmd.set_pipeline(pipeline);
+        if (!bound) {
+            cmd.set_pipeline(*pipeline_);
             cmd.set_vertex_buffer(*corners_);
             cmd.set_index_buffer(*indices_);
             cmd.set_shader_data(fog_rows.data(), sizeof(fog_rows));
-            bound = &pipeline;
+            bound = pipeline_.get();
         }
         cmd.set_bind_group(bind_group(texture));
         cmd.push_constants(&pc, sizeof(pc));

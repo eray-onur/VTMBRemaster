@@ -6,7 +6,7 @@ Roadmap line 15: confirm how material proxies behave, such as scrolling, flicker
 
 Checked by scanning the GOG install's DLLs for command names:
 
-- **Available:** `noclip`, `god`, `notarget`, `sv_cheats`, `map`, `changelevel`, `screenshot`, `startmovie`/`endmovie`, `host_timescale`, `host_framerate`, `cl_showpos`, `cl_drawhud`, `r_drawviewmodel`, `mat_fullbright`, `r_drawentities`, `thirdperson`/`firstperson`, `bind`, `exec`, `cvarlist`, `find`.
+- **Available:** `noclip`, `god`, `notarget`, `sv_cheats`, `map`, `changelevel`, `screenshot`, `startmovie`/`endmovie`, `host_timescale`, `host_framerate`, `cl_showpos`, `cl_drawhud`, `r_drawviewmodel`, `mat_fullbright`, `r_drawentities`, `thirdperson`/`firstperson`, `bind`, `exec`, `cvarlist`, `find`, `ent_fire`. `client.dll` also has `r_drawsprites`, `r_drawropes`, `r_drawopaquerenderables`, `r_drawtranslucentrenderables` and `r_drawwatersurface`. Grabbing a view with `r_drawsprites` 1, then 0, then 1 measures the sprites' share directly (it also hides rain and the cables).
 - **Missing:** `setpos`, `setang`, `getpos` and `jpeg`. Stock Source `setpos` teleporting is not available.
 - **Script API:** `vampire.dll` gives scripts `FindPlayer()` and entity methods `GetOrigin`, `SetOrigin`, `GetAngles` and `SetAngles`, documented as "Sets the origin of this entity" and so on. Shipped scripts call them with tuples, e.g. `SetOrigin((x, y, z))`. Teleporting therefore goes through Python typed into the console, which works (see below).
 
@@ -82,6 +82,8 @@ Captured automatically by driving the running game window: console commands type
 
 - `sensitivity 1`, `m_yaw 0.022` and `m_pitch 0.022` give about 0.068° of yaw and 0.061° of pitch per injected mouse count. That isn't quite linear, so each aim is checked against the readout.
 - `noclip` is a toggle, so don't send it twice.
+- With `-console` the console starts open, so the first console key press closes it.
+- Bringing the window to the front can turn the view by several degrees. Aim and grab within one focus, and read the angles from each grab.
 - A teleport typed while the map is still loading is ignored.
 - Facing directions can't be derived blindly. The hospital monitor screens face away from their brush normals, and the haven TV faces opposite its prop yaw; the tutorial terminal faces along its prop yaw. Check each view with a frame grab before recording.
 

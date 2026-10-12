@@ -78,9 +78,10 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Environment maps on props and characters (`VertexLitGeneric`), nearest cubemap per model; checked on the `sm_hub_1` manhole
 - [x] Environment maps: `$fresnelreflection` (unused; default none), `$envmapmode` (not read by the shaders), sphere maps resampled to cubes, cheap water (`$forcecheap`, distance blend; works in the 3D skybox)
 - [ ] Translucent sorting, prop fade distances
-- [x] Sprites (`env_sprite`): render modes, colour and amount, orientation modes, glows over geometry with world occlusion and glows inside props hidden (checked against the original beside an `sm_hub_1` lamp); viewer `--no-sprites`
+- [x] Sprites (`env_sprite`): render modes, colour and amount, orientation modes, depth-tested glows hidden only when the world blocks their centre (lamp-globe glows drawn, as the original does); viewer `--no-sprites`
 - [x] Sprites: world glows (`rendermode` 9), the fast pulse (`renderfx` 2), and the `PlayerProximity`, `LampBeam` and `LampHalo` fades (formulas read from `client.dll`); glows keep their world size (confirmed in the client code)
-- [ ] Sprites: check additive and colour-mode brightness and the skyline light cones against the original; scripts switching sprites on and off; scale animations
+- [x] Sprites checked against the original on `sm_hub_1` with `r_drawsprites` on/off captures: colour mode, additive, lamp-globe glows and the skyline light cones, within about 7% except a faint glow excess close to a lamp and cones at 0.87 ([RENDERING.md](RENDERING.md#sprites-env_sprite))
+- [ ] Sprites: scripts switching sprites on and off (traffic lights; needs entity I/O, Phase 2); scale animations
 - [ ] Visibility culling: draw only what the PVS and area portals allow (every pass currently draws the whole map, plus the water passes)
 - [ ] Bump-mapped surfaces: the three directional lightmaps of `$bumpmap` world faces (OpenBL uses the flat one), normal maps on models
 - [ ] Detail textures (`$detail`, multiplied in at 2×)
@@ -102,7 +103,7 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Free-fly viewer on Windows and Linux
 - [x] Material proxies at runtime: Sine, LinearRamp, noise, arithmetic chains, AnimatedTexture (base and water normal frames), TextureScroll, TextureTransform, driving the base texture transform, `$color`/`$alpha` and `$selfillumtint` on the world and props; `--time` for fixed-clock renders
 - [x] Material proxies: characters, `UnlitTwoTexture` second layer with `$texture2transform` (TV scanlines), `--sequence` frame captures
-- [ ] Material proxies that need missing features: sprite fades (PlayerProximity, LampBeam, LampHalo; needs sprites), GlobalWetness (environment maps are done; needs rain), TextConsole (needs the terminal UI); confirm the ones the captures could not show (security-camera `Sine`, sprite fades, `GlobalWetness` in rain, ticker scroll speed)
+- [ ] Material proxies that need missing features: GlobalWetness (environment maps are done; needs rain), TextConsole (needs the terminal UI); confirm the ones the captures could not show (security-camera `Sine`, sprite fades, `GlobalWetness` in rain, ticker scroll speed)
 - [x] Render-to-texture monitors (`func_monitor` + `point_camera`, aimed by `look_dest`): render targets in the RHI, one per visible monitor; checked against the hospital and haven TV captures
 - [x] `StartHidden` entities are not drawn (brush entities, props, NPCs); `--show NAME` overrides it for a brush entity
 - [ ] Monitors: confirm the camera `FOV` convention, picture brightness and render-target size; cameras parented to moving props
