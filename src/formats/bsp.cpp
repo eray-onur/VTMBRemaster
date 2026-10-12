@@ -1221,7 +1221,11 @@ BspFaceMesh build_face_mesh(const BspFile& bsp, std::size_t face_index) {
             mesh.positions.push_back({base[0] + dv.vector[0] * dv.distance, base[1] + dv.vector[1] * dv.distance,
                                       base[2] + dv.vector[2] * dv.distance});
             mesh.uvs.push_back(texture_uv(bsp, ti, base));
-            mesh.lightmap_uvs.push_back(lightmap_uv(face, ti, base));
+            // A displacement's lightmap is laid out along its own grid, not
+            // the face's lightmap axes: x from the start corner along the
+            // third corner's edge (the columns), y along the second's (the rows).
+            mesh.lightmap_uvs.push_back({static_cast<float>(col) * step * static_cast<float>(face.lightmap_size[0]),
+                                         static_cast<float>(row) * step * static_cast<float>(face.lightmap_size[1])});
             mesh.alphas.push_back(dv.alpha / 255.0f);
         }
     }

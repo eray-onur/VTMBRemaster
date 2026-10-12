@@ -83,6 +83,8 @@ A face's lightmap takes `(w+1)·(h+1)·4` bytes per used style. All 392,965 lit 
 
 A displacement replaces a quad face with a `(2^power + 1)²` grid of vertices. Powers 2, 3 and 4 occur. To build the grid, rotate the face's corners so that the one nearest `start_position` comes first. Interpolate between the corners, then move each grid point by `direction × distance`. Texture coordinates come from the undisplaced surface. Every displacement's face points back to that displacement.
 
+**Lightmap layout.** A displacement's lightmap does not follow its face's lightmap axes: its luxels are laid out along the grid itself, from the start corner. Luxel x runs from the first corner towards the fourth (the grid's columns) over the face's lightmap width, and y towards the second (the rows) over its height. Checked with the luxel sample positions (lump 34) and by the light agreeing across the edges two displacements share: on `sm_pier_1`, `sm_hub_1`, `hw_warrens_1`, `la_hub_1` and `sm_beachhouse_1` the median difference along shared edges is 1–10%, against 50–130% with the face's lightmap axes, which drew hard-edged light and dark patches on `sm_pier_1`'s beach under the pier. The sample positions name the displacement triangle each luxel was lit on; the triangles go in 2 × 2-quad blocks, eight fanned around each block's centre.
+
 ## Static props (`sprp` v4, 56 bytes each)
 
 The lump holds a model-name dictionary (`char[128]` each), a leaf list (`u16`), then the props: origin, angles (pitch, yaw, roll), model index, first leaf, leaf count, solid, flags, skin, fade min, fade max, lighting origin. All 24,409 props reference models that exist.

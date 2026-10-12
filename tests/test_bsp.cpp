@@ -374,6 +374,18 @@ TEST_CASE("BSP lightmap coordinates and RGBE") {
     CHECK(quad.lightmap_uvs[2][0] == doctest::Approx(4.0f));
     CHECK(quad.lightmap_uvs[2][1] == doctest::Approx(4.0f));
     CHECK(quad.lightmap_uvs[0][0] == doctest::Approx(0.0f));
+    // A displacement's lightmap follows its grid from the start corner (64, 64):
+    // columns along x, rows along y, whatever the face's lightmap axes say.
+    const auto disp = build_face_mesh(bsp, 1);
+    REQUIRE(disp.lightmap_uvs.size() == 9);
+    REQUIRE(bsp.faces[1].lightmap_size[0] == 4);
+    REQUIRE(bsp.faces[1].lightmap_size[1] == 4);
+    CHECK(disp.lightmap_uvs[0][0] == doctest::Approx(0.0f)); // start corner
+    CHECK(disp.lightmap_uvs[0][1] == doctest::Approx(0.0f));
+    CHECK(disp.lightmap_uvs[2][0] == doctest::Approx(4.0f)); // row 0, last column
+    CHECK(disp.lightmap_uvs[2][1] == doctest::Approx(0.0f));
+    CHECK(disp.lightmap_uvs[6][0] == doctest::Approx(0.0f)); // last row, column 0
+    CHECK(disp.lightmap_uvs[6][1] == doctest::Approx(4.0f));
 
     const std::byte luxel[4] = {std::byte{255}, std::byte{128}, std::byte{0}, std::byte{0xFF}}; // exponent -1
     const auto rgb = decode_rgbe(luxel);
