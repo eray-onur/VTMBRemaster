@@ -345,7 +345,7 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
                 anim::set_flex_controller(mdl, controllers, name, value);
             }
             const auto weights = anim::evaluate_flex_rules(mdl, controllers);
-            inst.flex_deltas.assign(std::size_t{model->flex_slots} * 4, 0.0f);
+            inst.flex_deltas.assign(std::size_t{model->flex_slots} * 8, 0.0f);
             bool any = false;
             for (const ModelFlex& f : model->flexes) {
                 const float w = f.flex >= 0 && static_cast<std::size_t>(f.flex) < weights.size()
@@ -356,9 +356,10 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
                     continue;
                 }
                 any = true;
-                for (const auto& [slot, delta] : f.deltas) {
+                for (const ModelFlex::Delta& d : f.deltas) {
                     for (std::size_t k = 0; k < 3; ++k) {
-                        inst.flex_deltas[std::size_t{slot} * 4 + k] += scale * delta[k];
+                        inst.flex_deltas[std::size_t{d.slot} * 8 + k] += scale * d.position[k];
+                        inst.flex_deltas[std::size_t{d.slot} * 8 + 4 + k] += scale * d.normal[k];
                     }
                 }
             }
@@ -595,7 +596,8 @@ const CharacterRenderer::Model* CharacterRenderer::load_model(const std::string&
                             if (vertices[global].flex_slot < 0) {
                                 vertices[global].flex_slot = static_cast<float>(flex_slots++);
                             }
-                            flex.deltas.emplace_back(static_cast<std::uint32_t>(vertices[global].flex_slot), fv.delta);
+                            flex.deltas.push_back({static_cast<std::uint32_t>(vertices[global].flex_slot), fv.delta,
+                                                   fv.normal_delta});
                         }
                         flexes.push_back(std::move(flex));
                     }

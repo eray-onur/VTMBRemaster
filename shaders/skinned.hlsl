@@ -11,7 +11,7 @@ struct PushConstants {
     float alpha_ref;
     uint flags;
     uint params_row; // Element where this mesh's material params start.
-    uint flex_base;  // Element of flex slot 0's offset (float4 per slot); 0 when no flex is active.
+    uint flex_base;  // Element of flex slot 0's offsets (position, normal: 2 float4 per slot); 0 when no flex is active.
     float4 model_z;  // Model-to-world z row, for water fog.
     uint cloth_base;  // Element of cloth particle 0's position (float4 per particle); 0: no cloth.
     uint cloth_count; // Particles; their normals follow the positions.
@@ -97,10 +97,13 @@ float3 transform(uint bone, float4 v) {
 }
 
 VSOutput vs_main(VSInput input) {
-    // Facial flexes move bind-pose positions before skinning.
+    // Facial flexes move bind-pose positions and bend their normals before skinning.
     float3 bind_position = input.position;
+    float3 bind_normal = input.normal;
     if (pc.flex_base != 0 && input.flex_slot >= 0) {
-        bind_position += shader_data[pc.flex_base + (uint)input.flex_slot].xyz;
+        const uint slot = pc.flex_base + (uint)input.flex_slot * 2;
+        bind_position += shader_data[slot].xyz;
+        bind_normal += shader_data[slot + 1].xyz; // Lighting renormalises.
     }
     float3 position = float3(0, 0, 0);
     float3 normal = float3(0, 0, 0);
@@ -109,7 +112,7 @@ VSOutput vs_main(VSInput input) {
         const float w = input.weights[k];
         if (w > 0) {
             position += w * transform(input.bones[k], float4(bind_position, 1.0));
-            normal += w * transform(input.bones[k], float4(input.normal, 0.0));
+            normal += w * transform(input.bones[k], float4(bind_normal, 0.0));
             tangent += w * transform(input.bones[k], float4(input.tangent.xyz, 0.0));
         }
     }

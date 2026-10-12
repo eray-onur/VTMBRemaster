@@ -132,7 +132,11 @@ private:
     struct ModelFlex {
         std::int32_t flex = 0; // Index into MdlFile::flex_names.
         std::array<float, 4> targets{};
-        std::vector<std::pair<std::uint32_t, std::array<float, 3>>> deltas; // Slot, position offset.
+        struct Delta {
+            std::uint32_t slot = 0;
+            std::array<float, 3> position{}, normal{}; // Offsets at full weight.
+        };
+        std::vector<Delta> deltas;
     };
     // A cloth piece at LOD 0, with what is needed to skin its particles on the CPU.
     struct ClothPiece {
@@ -175,7 +179,7 @@ private:
         std::array<float, 16> transform{};
         ModelLighting lighting;
         std::optional<anim::AnimationPlayer> player; // Empty: bind pose.
-        std::vector<float> flex_deltas; // float4 per flex slot; empty when no flex is active.
+        std::vector<float> flex_deltas; // Per flex slot: position and normal offsets (2 float4); empty when no flex is active.
         std::vector<formats::MdlMatrix> skinning;    // Updated by update().
         std::vector<anim::ClothSimulation> cloth;    // One per Model::cloth piece.
         std::vector<float> cloth_data; // Positions, then normals: float4 per particle; updated by update().

@@ -31,7 +31,7 @@ Code: `openbl/anim/flex.hpp`. A face is driven by **flex controllers** (44 on a 
 2. **Mesh flexes** turn a flex weight into a morph scale with their four-point ramp (fade in, hold, fade out).
 3. The **vertex offsets** of every active mesh flex, times its scale, are summed per vertex.
 
-On the GPU, every vertex any flex can move has a slot (a vertex attribute); a character's summed offsets go into its per-draw shader data, one float4 per slot, and the vertex shader adds them to the bind-pose position before skinning. Normal offsets are not applied yet.
+On the GPU, every vertex any flex can move has a slot (a vertex attribute); a character's summed position and normal offsets go into its per-draw shader data, two float4 per slot, and the vertex shader adds them to the bind-pose position and normal before skinning (the lighting renormalises the normal), so creases of a smile shade as they move.
 
 Nothing drives the controllers until expressions, dialogue and lip-sync exist (Phase 2). `openbl-viewer --flex NAME=VALUE` sets a controller on every NPC, e.g. `--flex smile=1 --flex jaw_drop=0.6` or `--flex blink=1`.
 
@@ -55,7 +55,7 @@ Unknown and unused: the piece parameter (0.3 to 8; 0.3 on furniture cloth), the 
 
 ## Not done yet
 
-- **Layers** (`MdlSequence::layers`, e.g. `katana_bobble_layer`): how they combine with the base sequence (added or replacing) is unknown.
+- **Layers** (`MdlSequence::layers`; `openbl-cli mdl sequences` lists them): every layered sequence is a weapon sequence, and every layer a weapon overlay: `*_aim_layer` on the aiming sequences of the firearms, crossbow and throwing stars, `*_idle_layer`, `*_bobble_layer` on weapon runs, `*_relaxed_move_layer` on weapon walks. They play only once characters carry weapons (Phase 2), and how they combine with the base sequence (added or replacing) has to be seen in combat in the original.
 - **Root motion** (`MdlAnimation::movements`), which needs entities that move.
-- **Flex drivers**: expressions (`.vfe`, `expressions/*.txt`), lip-sync (`.lip`), choreography (`.vcd`); normal offsets of flexes.
+- **Flex drivers**: expressions (`.vfe`, `expressions/*.txt`), lip-sync (`.lip`), choreography (`.vcd`).
 - **Confirmation against the original**: fade timing, cycle convention ((N − 1) / fps), and the third fade time.

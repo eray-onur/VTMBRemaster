@@ -630,7 +630,16 @@ void list_sequences(const vfs::GameFileSystem& gfs, const std::string& path, int
             std::cout << "  (" << a.frame_count << " frames @ " << a.fps << " fps"
                       << ((s.flags & formats::sequence_flags::Looping) ? ", loops" : "") << ")";
         }
-        std::cout << "  " << s.activity_name << "\n";
+        std::cout << "  " << s.activity_name;
+        if (s.flags != 0) {
+            std::cout << "  flags 0x" << std::hex << s.flags << std::dec;
+        }
+        for (const std::int32_t layer : s.layers) {
+            if (layer >= 0 && static_cast<std::size_t>(layer) < mdl.sequences.size()) {
+                std::cout << "  layer " << mdl.sequences[static_cast<std::size_t>(layer)].label;
+            }
+        }
+        std::cout << "\n";
     }
     for (const auto& inc : mdl.include_models) {
         list_sequences(gfs, inc, depth + 1);
