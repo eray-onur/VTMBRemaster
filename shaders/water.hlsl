@@ -102,21 +102,21 @@ float4 ps_main(VSOutput input) : SV_Target {
         expensive = pc.refract.rgb; // The fog colour when there is no refraction.
         if (flags & kRefract) {
             const float2 uv = saturate(screen + shift * pc.refract.a);
-            expensive = linear_to_srgb(refraction.Sample(texture_sampler, uv).rgb) * pc.refract.rgb;
+            expensive = refraction.Sample(texture_sampler, uv).rgb * pc.refract.rgb;
         }
         // Fresnel: (1 - cos)^4 between the view direction and the normal-mapped normal.
         if (flags & kReflect) {
             const float c = 1.0 - cos_view;
             float2 uv = saturate(screen + shift * pc.reflect.a);
             uv.x = 1.0 - uv.x;
-            reflected = linear_to_srgb(reflection.Sample(texture_sampler, uv).rgb) * (c * c) * (c * c);
+            reflected = reflection.Sample(texture_sampler, uv).rgb * (c * c) * (c * c);
         }
     }
     float3 cheap = pc.cheap.rgb;
     if (cheapness > 0.0) {
         const float3 r = 2.0 * dot(normal, to_eye) * normal - dot(normal, normal) * to_eye;
         const float c = 1.0 - cos_view;
-        cheap += linear_to_srgb(envmap.Sample(texture_sampler, r).rgb) * (c * c);
+        cheap += envmap.Sample(texture_sampler, r).rgb * (c * c);
     }
     const float4 fog_color = water_data[1];
     const float fog = fog_amount(input.clip.w, input.world.z, fog_color, water_data[2]);

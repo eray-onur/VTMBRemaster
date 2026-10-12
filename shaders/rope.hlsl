@@ -60,12 +60,12 @@ float4 ps_main(VSOutput input) : SV_Target {
     if (pc.flags & kAlphaTest) {
         clip(base.a - pc.alpha_ref);
     }
-    float3 color = base.rgb;
+    float3 color = to_linear(base.rgb);
     if (!(pc.flags & kUnlit)) {
         // The strip faces the camera, so the normal map's facing is its z.
         const float facing = saturate(bumpmap.Sample(texture_sampler, input.uv).b * 2.0 - 1.0);
         color *= pow(input.light * facing, 2.2); // Encoded light x facing, in linear terms.
     }
     const float fog = fog_amount(input.depth_z.x, input.depth_z.y, fog_data[0], fog_data[1]);
-    return float4(fogged(linear_to_srgb(color), fog_data[0], fog), 1.0);
+    return float4(fogged(to_gamma(color), fog_data[0], fog), 1.0);
 }

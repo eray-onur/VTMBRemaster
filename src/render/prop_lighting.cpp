@@ -17,10 +17,10 @@ constexpr float kAmbientRayLength = 4096.0f;
 constexpr float kSunRayLength = 65536.0f;
 
 // Weight of the gathered lightmaps. Fitted against original-game captures of
-// sp_tutorial_1 (docs/PARITY.md); one room so far. Rays that reach the sky
-// take the sky's ambient light at full weight: a face open to the whole sky
-// then gets what an upward world surface there gets.
-constexpr float kAmbientWeight = 0.5f;
+// sp_tutorial_1 with gamma-2.2 shading (docs/PARITY.md); one room so far.
+// Rays that reach the sky take the sky's ambient light at full weight: a face
+// open to the whole sky then gets what an upward world surface there gets.
+constexpr float kAmbientWeight = 0.15f;
 
 float dot(const Vec3& a, const Vec3& b) {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -142,7 +142,7 @@ ModelLighting PropLighting::sample(const Vec3& point, const std::array<std::arra
         const float dist = std::sqrt(dist_sq);
         // The radius cuts the light off, as in the map compiler's lightmaps.
         // (The shaders' saturate(1 - d^2 w) range term with w = 1/radius^2
-        // made props 20% darker than the original's; docs/RENDERING.md.)
+        // spreads the props' brightness more; docs/RENDERING.md.)
         if (dist < 1e-3f || (light.radius > 0 && dist > light.radius)) {
             continue;
         }

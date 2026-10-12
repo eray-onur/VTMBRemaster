@@ -63,6 +63,6 @@ float4 ps_main(VSOutput input) : SV_Target {
     // In fog the added light fades out and the masking turns towards the fog colour.
     const float fog = fog_amount(input.depth_z.x, input.depth_z.y, pc.fog, float4(pc.right.w, pc.up.w, pc.eye.w, pc.eye.z));
     const float mask = t.a * input.color.a;
-    const float3 added = linear_to_srgb(t.rgb) * input.color.rgb * (1.0 - fog);
+    const float3 added = t.rgb * input.color.rgb * (1.0 - fog);
     return float4(added + pc.fog.rgb * mask * fog, mask);
 }

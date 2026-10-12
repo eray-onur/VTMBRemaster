@@ -30,5 +30,5 @@ VSOutput vs_main(VSInput input) {
 
 float4 ps_main(VSOutput input) : SV_Target {
     const float4 c = base_texture.Sample(texture_sampler, input.uv);
-    return float4(linear_to_srgb(c.rgb), c.a);
+    return c;
 }

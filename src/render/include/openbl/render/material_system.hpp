@@ -134,11 +134,10 @@ public:
     // `name` is relative to materials/, without extension. Results are cached.
     const RenderMaterial& material(std::string_view name);
     // `path` is a texture game path without extension, e.g. materials/brick/wall. Null if missing.
-    // Colour textures are sRGB; data textures (normal maps) must pass srgb = false.
-    const rhi::Texture* texture(const std::string& path, bool srgb = true);
+    const rhi::Texture* texture(const std::string& path);
 
     // Every frame of an animated texture (one entry if not animated; empty if missing).
-    std::vector<const rhi::Texture*> texture_frames(const std::string& path, bool srgb = true);
+    std::vector<const rhi::Texture*> texture_frames(const std::string& path);
 
     std::size_t missing_textures() const { return missing_textures_; }
 

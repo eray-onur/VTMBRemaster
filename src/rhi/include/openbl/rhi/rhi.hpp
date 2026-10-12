@@ -71,13 +71,13 @@ public:
 };
 
 // Colour output: the window and render targets use plain (UNORM) 8-bit
-// formats, and pixel shaders write sRGB-encoded colour themselves, so
+// formats, and pixel shaders write gamma-encoded colour themselves, so
 // blending happens on encoded values (gamma space), as in the original game.
 
 // An off-screen colour target with its own depth buffer, in the window's
 // colour and depth formats, so every pipeline can draw into it. Its texture
-// can be bound like any other (sampled as sRGB, so shaders read linear
-// colour); it starts out black.
+// can be bound like any other (shaders read the encoded values); it starts
+// out black.
 class RenderTarget {
 public:
     virtual ~RenderTarget() = default;

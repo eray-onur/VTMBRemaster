@@ -182,13 +182,14 @@ float4 ps_main(VSOutput input) : SV_Target {
         light = model_light(input.model_position, bumped);
     }
     const float4 tint = shader_data[pc.params_row + 2]; // $color, $alpha.
-    float3 color = base.rgb * tint.rgb * ((pc.flags & kUnlit) ? float3(1, 1, 1) : light);
+    const float3 albedo = to_linear(base.rgb);
+    float3 color = albedo * tint.rgb * ((pc.flags & kUnlit) ? float3(1, 1, 1) : light);
     if (pc.flags & kSelfIllum) {
-        color = lerp(color, base.rgb * shader_data[pc.params_row + 3].rgb, base.a);
+        color = lerp(color, albedo * shader_data[pc.params_row + 3].rgb, base.a);
     }
     const float4 fog_color = shader_data[kFogStart];
     const float fog = fog_amount(input.depth_z.x, input.depth_z.y, fog_color, shader_data[kFogStart + 1]);
-    float3 encoded = linear_to_srgb(color);
+    float3 encoded = to_gamma(color);
     if (pc.flags & kDetail) {
         encoded = apply_detail(encoded, detail.Sample(texture_sampler, input.detail_uv).rgb);
     }

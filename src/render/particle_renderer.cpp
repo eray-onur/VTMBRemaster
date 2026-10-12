@@ -119,7 +119,7 @@ ParticleRenderer::ParticleRenderer(rhi::Device& device, const AssetSource& asset
                                     std::as_bytes(std::span(indices)));
     const std::uint8_t white[4] = {255, 255, 255, 255};
     const std::span<const std::byte> mip = std::as_bytes(std::span(white));
-    white_ = device.create_texture({1, 1, 1, rhi::Format::RGBA8_sRGB}, std::span(&mip, 1));
+    white_ = device.create_texture({1, 1, 1, rhi::Format::RGBA8_UNorm}, std::span(&mip, 1));
 }
 
 ParticleRenderer::~ParticleRenderer() = default;
@@ -136,7 +136,7 @@ const rhi::Texture* ParticleRenderer::sprite(const std::string& name) {
             try {
                 const auto image = formats::decode_tga(*data);
                 const std::span<const std::byte> mip = std::as_bytes(std::span(image.rgba));
-                tex = device_.create_texture({image.width, image.height, 1, rhi::Format::RGBA8_sRGB}, std::span(&mip, 1));
+                tex = device_.create_texture({image.width, image.height, 1, rhi::Format::RGBA8_UNorm}, std::span(&mip, 1));
             } catch (const formats::FormatError& e) {
                 std::fprintf(stderr, "particle sprite %s: %s\n", key.c_str(), e.what());
             }

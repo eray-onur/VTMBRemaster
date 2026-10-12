@@ -1,7 +1,8 @@
-// Output encoding. The window and render targets use plain 8-bit formats, so
-// every pixel shader writes sRGB-encoded colour itself and blending happens on
-// encoded values, in gamma space, as in the original game (docs/RENDERING.md).
-// Shading stays in linear light; textures are decoded by their sRGB formats.
+// Colour encoding: pure gamma 2.2, as the original's shaders use. Textures,
+// the window and render targets are plain 8-bit formats holding encoded
+// values, so filtering and blending happen on encoded values, as in the
+// original game. Shaders decode a texture's colour with to_linear where it is
+// lit (light is linear), and write to_gamma of the result (docs/RENDERING.md).
 
 // Distance fog (worldspawn fogenable/fogcolor/fogstart/fogend, or the
 // sky_camera's own for the 3D skybox): linear in view depth, blended on
@@ -26,7 +27,13 @@ float fog_amount(float view_depth, float world_z, float4 fog_color, float4 fog_r
     return 1.0 - (1.0 - f) * (1.0 - f);
 }
 
-float3 linear_to_srgb(float3 c);
+float3 to_gamma(float3 c) {
+    return pow(saturate(c), 1.0 / 2.2);
+}
+
+float3 to_linear(float3 encoded) {
+    return pow(saturate(encoded), 2.2);
+}
 
 // Opaque and alpha-blended output: towards the fog colour.
 float3 fogged(float3 encoded, float4 fog_color, float amount) {
@@ -48,7 +55,7 @@ float3 envmap_term(float3 encoded_env, float4 tint_contrast, float saturation) {
 float3 envmap_reflection(float3 normal, float3 to_eye, TextureCube cube, SamplerState s) {
     const float3 n = normalize(normal);
     const float3 r = 2.0 * dot(n, to_eye) * n - to_eye;
-    return linear_to_srgb(cube.Sample(s, r).rgb);
+    return cube.Sample(s, r).rgb;
 }
 
 // Adds the environment map to encoded colour: the eye vector reflected about
@@ -109,11 +116,6 @@ float3 local_light(float4 r0, float4 r1, float4 r2, float4 r3, float3 position, 
         scale *= pow(saturate(dot(r3.xyz, -to_light) + r3.w), r2.w);
     }
     return r1.rgb * scale * max(dot(n, to_light), 0.0);
-}
-
-float3 linear_to_srgb(float3 c) {
-    c = saturate(c);
-    return lerp(1.055 * pow(c, 1.0 / 2.4) - 0.055, c * 12.92, step(c, 0.0031308));
 }
 
 // $detail: the original multiplies the encoded colour by 2 x the detail

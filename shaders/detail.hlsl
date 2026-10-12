@@ -48,6 +48,6 @@ float4 ps_main(VSOutput input) : SV_Target {
         clip(base.a - pc.alpha_ref);
     }
     const float fog = fog_amount(input.depth_z.x, input.depth_z.y, fog_data[0], fog_data[1]);
-    const float3 color = fogged(linear_to_srgb(base.rgb * input.light), fog_data[0], fog);
+    const float3 color = fogged(to_gamma(to_linear(base.rgb) * input.light), fog_data[0], fog);
     return float4(color, (pc.flags & kTranslucent) ? base.a : 1.0);
 }

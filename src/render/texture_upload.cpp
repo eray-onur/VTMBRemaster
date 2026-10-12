@@ -10,20 +10,20 @@ namespace openbl::render {
 
 namespace {
 
-std::optional<rhi::Format> native_format(formats::VtfFormat f, bool srgb) {
+std::optional<rhi::Format> native_format(formats::VtfFormat f) {
     using formats::VtfFormat;
     switch (f) {
     case VtfFormat::DXT1:
     case VtfFormat::DXT1_OneBitAlpha:
-        return srgb ? rhi::Format::BC1_sRGB : rhi::Format::BC1_UNorm;
+        return rhi::Format::BC1_UNorm;
     case VtfFormat::DXT3:
-        return srgb ? rhi::Format::BC2_sRGB : rhi::Format::BC2_UNorm;
+        return rhi::Format::BC2_UNorm;
     case VtfFormat::DXT5:
-        return srgb ? rhi::Format::BC3_sRGB : rhi::Format::BC3_UNorm;
+        return rhi::Format::BC3_UNorm;
     case VtfFormat::RGBA8888:
-        return srgb ? rhi::Format::RGBA8_sRGB : rhi::Format::RGBA8_UNorm;
+        return rhi::Format::RGBA8_UNorm;
     case VtfFormat::BGRA8888:
-        return srgb ? rhi::Format::BGRA8_sRGB : rhi::Format::BGRA8_UNorm;
+        return rhi::Format::BGRA8_UNorm;
     default:
         return std::nullopt;
     }
@@ -31,7 +31,7 @@ std::optional<rhi::Format> native_format(formats::VtfFormat f, bool srgb) {
 
 } // namespace
 
-std::unique_ptr<rhi::Texture> upload_vtf(rhi::Device& device, const formats::VtfTexture& vtf, bool srgb, std::uint32_t frame) {
+std::unique_ptr<rhi::Texture> upload_vtf(rhi::Device& device, const formats::VtfTexture& vtf, std::uint32_t frame) {
     const auto& h = vtf.header();
     const std::uint32_t first = vtf.largest_available_mip();
     if (first >= h.mip_count) {
@@ -49,8 +49,8 @@ std::unique_ptr<rhi::Texture> upload_vtf(rhi::Device& device, const formats::Vtf
 
     std::vector<std::span<const std::byte>> mips;
     std::vector<std::vector<std::uint8_t>> decoded;
-    const auto native = native_format(h.format, srgb);
-    desc.format = native ? *native : srgb ? rhi::Format::RGBA8_sRGB : rhi::Format::RGBA8_UNorm;
+    const auto native = native_format(h.format);
+    desc.format = native ? *native : rhi::Format::RGBA8_UNorm;
     for (std::uint32_t m = first; m < h.mip_count; ++m) {
         if (native && faces == 1) {
             mips.push_back(vtf.image(m, frame));
@@ -90,7 +90,7 @@ std::unique_ptr<rhi::Texture> create_checker_texture(rhi::Device& device) {
         }
     }
     const std::span<const std::byte> mip = std::as_bytes(std::span(pixels));
-    return device.create_texture({kSize, kSize, 1, rhi::Format::RGBA8_sRGB}, std::span(&mip, 1));
+    return device.create_texture({kSize, kSize, 1, rhi::Format::RGBA8_UNorm}, std::span(&mip, 1));
 }
 
 } // namespace openbl::render

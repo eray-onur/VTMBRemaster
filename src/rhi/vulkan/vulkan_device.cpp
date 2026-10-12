@@ -546,18 +546,13 @@ public:
         info.samples = VK_SAMPLE_COUNT_1_BIT;
         info.tiling = VK_IMAGE_TILING_OPTIMAL;
         info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-        info.flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
         VkImage image = VK_NULL_HANDLE;
         VmaAllocation allocation = nullptr;
         check(vmaCreateImage(allocator_, &info, &alloc, &image, &allocation, nullptr), "render target image");
-        const VkFormat sampled = swapchain_format_ == VK_FORMAT_B8G8R8A8_UNORM   ? VK_FORMAT_B8G8R8A8_SRGB
-                                 : swapchain_format_ == VK_FORMAT_R8G8B8A8_UNORM ? VK_FORMAT_R8G8B8A8_SRGB
-                                                                                 : swapchain_format_;
         const VkImageView attachment_view = create_view(image, swapchain_format_, VK_IMAGE_ASPECT_COLOR_BIT);
-        const VkImageView view = create_view(image, sampled, VK_IMAGE_ASPECT_COLOR_BIT);
-        TextureDesc desc{width, height, 1, from_vk(sampled)};
+        const VkImageView view = create_view(image, swapchain_format_, VK_IMAGE_ASPECT_COLOR_BIT);
+        TextureDesc desc{width, height, 1, from_vk(swapchain_format_)};
         auto color = std::make_unique<VulkanTexture>(*this, desc, image, view, allocation);
-        info.flags = 0;
 
         info.format = kDepthFormat;
         info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;

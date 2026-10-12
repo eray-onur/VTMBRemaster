@@ -101,7 +101,7 @@ VSOutput vs_main(VSInput input) {
 [[vk::binding(2, 0)]] Texture2D base_texture2;
 [[vk::binding(3, 0)]] Texture2D lightmap;
 [[vk::binding(4, 0)]] TextureCube envmap;
-[[vk::binding(5, 0)]] Texture2D envmap_mask; // Raw values (not sRGB-decoded).
+[[vk::binding(5, 0)]] Texture2D envmap_mask; // Raw values.
 [[vk::binding(6, 0)]] Texture2D bumpmap;     // Tangent-space normal map, raw values.
 [[vk::binding(7, 0)]] Texture2D detail;      // Raw values.
 
@@ -129,7 +129,7 @@ float4 ps_main(VSOutput input) : SV_Target {
     if (pc.flags & kModulate) {
         // The blend computes 2 * src * dst on encoded values: the original's
         // "2 x texture" in gamma space, exactly. Fog fades it to neutral (0.5).
-        return float4(lerp(linear_to_srgb(base.rgb), float3(0.5, 0.5, 0.5), fog), 1.0);
+        return float4(lerp(base.rgb, float3(0.5, 0.5, 0.5), fog), 1.0);
     }
     // The normal map's texel × 2 − 1, not renormalised; its alpha masks the
     // envmap. Two-layer blends use the one normal map for both layers.
@@ -175,11 +175,12 @@ float4 ps_main(VSOutput input) : SV_Target {
         }
     }
     const float4 tint = material_param(2); // $color, $alpha.
-    float3 color = base.rgb * tint.rgb * light;
+    const float3 albedo = to_linear(base.rgb);
+    float3 color = albedo * tint.rgb * light;
     if (pc.flags & kSelfIllum) {
-        color = lerp(color, base.rgb * material_param(3).rgb, base.a);
+        color = lerp(color, albedo * material_param(3).rgb, base.a);
     }
-    float3 encoded = linear_to_srgb(color);
+    float3 encoded = to_gamma(color);
     if (pc.flags & kDetail) {
         encoded = apply_detail(encoded, detail.Sample(texture_sampler, input.bump_uv * material_param(7).y).rgb);
     }

@@ -106,8 +106,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Parity tooling: viewer shot lists (`--shots`, `--fov`, `--size`), `openbl-cli image compare` (see docs/PARITY.md)
 - [x] Lightmap brightness measured against original-game captures: base × luxel in linear terms (scale 1.0, was 2.3); capture method verified; `--fov` follows the game's 4:3-horizontal convention ([PARITY.md](PARITY.md))
 - [x] Tool materials: faces hidden by their texinfo flags and by brush-entity class (triggers, dust motes, particle volumes) instead of by the `tools/` prefix; draws the `tools/black` ceiling-fan rod in `sp_tutorial_1` ([RENDERING.md](RENDERING.md#world-surfaces-lightmappedgeneric))
-- [x] Gamma-space blending: plain 8-bit targets, shaders encode sRGB, so translucent surfaces, decals and particles blend on encoded values like the original
-- [ ] Pure gamma 2.2 shading (the original multiplies in gamma 2.2; OpenBL's sRGB decode is up to ~15% darker in dark tones)
+- [x] Gamma-space blending: plain 8-bit targets, shaders encode their output, so translucent surfaces, decals and particles blend on encoded values like the original
+- [x] Pure gamma 2.2 shading: textures sampled as stored, decoded with x^2.2 and encoded with x^(1/2.2) in the shaders; the `sp_tutorial_1` world within 2% of the original's encoded brightness (was 0.71 in blue); prop indirect light refitted to 0.15 ([RENDERING.md](RENDERING.md#world-surfaces-lightmappedgeneric))
 - [x] Static models in maps
 - [x] Skinned and animated models: GPU skinning (per-draw bone data), NPCs from map entities playing their first `ACT_IDLE` sequence
 - [x] Animation: blend grids across pose parameters, fades between sequences, viewer `--npc-sequence`/`--pose` ([ANIMATION.md](ANIMATION.md))

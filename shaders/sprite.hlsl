@@ -44,7 +44,7 @@ float4 ps_main(VSOutput input) : SV_Target {
     const float4 t = sprite.Sample(texture_sampler, input.uv);
     const float fog = fog_amount(input.depth_z.x, input.depth_z.y, fog_data[0], fog_data[1]);
     const float a = t.a * pc.color.a;
-    const float3 colour = linear_to_srgb(t.rgb) * pc.color.rgb;
+    const float3 colour = t.rgb * pc.color.rgb;
     if (pc.center.w > 0.5) {
         // Additive (SRC_ALPHA, ONE in the original): fades out in fog.
         return float4(colour * a * (1.0 - fog), 0.0);

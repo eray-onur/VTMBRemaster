@@ -123,7 +123,7 @@ const rhi::Texture* MaterialSystem::sphere_cubemap(const std::string& path) {
                     }
                 }
             }
-            rhi::TextureDesc desc{kSize, kSize, 1, rhi::Format::RGBA8_sRGB};
+            rhi::TextureDesc desc{kSize, kSize, 1, rhi::Format::RGBA8_UNorm};
             desc.cube = true;
             const std::span<const std::byte> mip = std::as_bytes(std::span(faces));
             cube = device_.create_texture(desc, std::span(&mip, 1));
@@ -185,8 +185,8 @@ std::optional<formats::VtfTexture> MaterialSystem::read_vtf(const std::string& p
     return std::nullopt;
 }
 
-const rhi::Texture* MaterialSystem::texture(const std::string& path, bool srgb) {
-    const std::string key = srgb ? path : path + "#linear";
+const rhi::Texture* MaterialSystem::texture(const std::string& path) {
+    const std::string& key = path;
     auto it = textures_.find(key);
     if (it != textures_.end()) {
         return it->second.get();
@@ -194,7 +194,7 @@ const rhi::Texture* MaterialSystem::texture(const std::string& path, bool srgb) 
     std::unique_ptr<rhi::Texture> tex;
     try {
         if (auto vtf = read_vtf(path)) {
-            tex = upload_vtf(device_, *vtf, srgb);
+            tex = upload_vtf(device_, *vtf);
         }
     } catch (const formats::FormatError& e) {
         std::fprintf(stderr, "texture %s: %s\n", path.c_str(), e.what());
@@ -205,18 +205,18 @@ const rhi::Texture* MaterialSystem::texture(const std::string& path, bool srgb) 
     return textures_.emplace(key, std::move(tex)).first->second.get();
 }
 
-std::vector<const rhi::Texture*> MaterialSystem::texture_frames(const std::string& path, bool srgb) {
-    const std::string key = srgb ? path : path + "#linear";
+std::vector<const rhi::Texture*> MaterialSystem::texture_frames(const std::string& path) {
+    const std::string& key = path;
     if (auto it = frames_.find(key); it != frames_.end()) {
         return it->second;
     }
     std::vector<const rhi::Texture*> frames;
-    if (const auto* first = texture(path, srgb)) {
+    if (const auto* first = texture(path)) {
         frames.push_back(first);
         if (auto vtf = read_vtf(path)) {
             for (std::uint32_t f = 1; f < vtf->header().frame_count; ++f) {
                 try {
-                    auto tex = upload_vtf(device_, *vtf, srgb, f);
+                    auto tex = upload_vtf(device_, *vtf, f);
                     frames.push_back(tex.get());
                     textures_.emplace(key + "#frame" + std::to_string(f), std::move(tex));
                 } catch (const formats::FormatError& e) {
@@ -340,7 +340,7 @@ void MaterialSystem::register_dynamic(RenderMaterial& material, const formats::M
         if (!path) {
             continue;
         }
-        auto frames = texture_frames(*path, !normal);
+        auto frames = texture_frames(*path);
         if (frames.size() <= 1) {
             continue;
         }
@@ -349,7 +349,7 @@ void MaterialSystem::register_dynamic(RenderMaterial& material, const formats::M
             // Water steps its dudv map ($bumpmap) and normal map together.
             material.dudv_frames = std::move(frames);
             if (const auto normal_path = source.texture_path("$normalmap")) {
-                material.normal_frames = texture_frames(*normal_path, false);
+                material.normal_frames = texture_frames(*normal_path);
             }
         } else {
             (normal ? material.normal_frames : material.base_frames) = std::move(frames);
@@ -505,12 +505,12 @@ RenderMaterial MaterialSystem::load(const std::string& name, std::optional<forma
         if (flag(*mat, "$basealphaenvmapmask")) {
             out.envmap_mask_mode = RenderMaterial::EnvmapMask::BaseAlpha;
         } else if (flag(*mat, "$normalmapalphaenvmapmask") || flag(*mat, "$normalalphaenvmapmask")) {
-            if (auto path = mat->texture_path("$bumpmap"); path && texture(*path, false)) {
-                out.envmap_mask = texture(*path, false);
+            if (auto path = mat->texture_path("$bumpmap"); path && texture(*path)) {
+                out.envmap_mask = texture(*path);
                 out.envmap_mask_mode = RenderMaterial::EnvmapMask::MaskAlpha;
             }
-        } else if (auto path = mat->texture_path("$envmapmask"); path && texture(*path, false)) {
-            out.envmap_mask = texture(*path, false);
+        } else if (auto path = mat->texture_path("$envmapmask"); path && texture(*path)) {
+            out.envmap_mask = texture(*path);
             out.envmap_mask_mode = RenderMaterial::EnvmapMask::Texture;
         }
     }
@@ -522,13 +522,13 @@ RenderMaterial MaterialSystem::load(const std::string& name, std::optional<forma
     if (out.shader == "lightmappedgeneric" || out.shader == "worldvertextransition" ||
         out.shader == "vertexlitgeneric" || out.shader == "cable") {
         if (auto path = mat->texture_path("$bumpmap")) {
-            out.bumpmap = texture(*path, false);
+            out.bumpmap = texture(*path);
         }
     }
     // Detail textures. In the shipped data only shader tests and the cracked
     // breakable glass use them; the shaders support them on every surface.
     if (auto path = mat->texture_path("$detail")) {
-        out.detail = texture(*path, false);
+        out.detail = texture(*path);
     }
     out.water = out.shader == "water" || out.shader == "waterwarp";
     if (out.water) {
@@ -537,12 +537,12 @@ RenderMaterial MaterialSystem::load(const std::string& name, std::optional<forma
         // A flat normal map is also a zero dudv offset (both 0.5, 0.5).
         out.normal_map = out.dudv = flat_normal_.get();
         if (auto path = mat->texture_path("$normalmap")) {
-            if (const auto* t = texture(*path, false)) {
+            if (const auto* t = texture(*path)) {
                 out.normal_map = t;
             }
         }
         if (auto path = mat->texture_path("$bumpmap")) {
-            if (const auto* t = texture(*path, false)) {
+            if (const auto* t = texture(*path)) {
                 out.dudv = t;
             }
         }
