@@ -10,6 +10,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <random>
@@ -48,6 +49,13 @@ struct Definition {
     Curve fps, frames, min_frames, max_frames, loop;
     const std::string* sprite = nullptr; // Null or empty: invisible (an emitter).
     std::vector<SpawnDefinition> spawns;
+    // "precipitation": spawned in a box around the viewer by an effect that follows it.
+    bool precipitation = false;
+    // "collide": the particle ends where it meets the world, starting its
+    // `spawn` particle there and its `decal` particle lying flat on the surface.
+    bool collides = false;
+    const Definition* collide_spawn = nullptr;
+    const Definition* collide_decal = nullptr;
 
     const Curve& curve(Key k) const { return curves[static_cast<std::size_t>(k)]; }
 };
@@ -83,7 +91,36 @@ struct ParticleQuad {
     float mask = 0;                    // Darkening opacity, 0-1.
     bool align = false;                // movealign: stretch along `velocity` instead of facing the screen.
     Vec3 velocity{};
+    Vec3 normal{};                     // Non-zero: lies flat on a surface facing this way (collision decals).
     const std::string* sprite = nullptr; // Stable per definition, usable as a cache key.
+};
+
+// Where a particle meets the world.
+struct ParticleHit {
+    Vec3 point{};
+    Vec3 normal{}; // Unit, facing the side the particle came from.
+};
+
+// The world particles collide with; either function may be empty.
+struct ParticleWorld {
+    // The first surface the segment from `from` to `to` crosses.
+    std::function<std::optional<ParticleHit>(const Vec3& from, const Vec3& to)> trace;
+    // True if open sky lies straight above `point`.
+    std::function<bool(const Vec3& point)> open_sky;
+};
+
+// How an entity places and scales its effect.
+struct SystemPlacement {
+    // env_particle "ramp_scale": scales every emission rate (0: nothing is
+    // emitted until a script raises it, as for Santa Monica's rain).
+    float rate_scale = 1.0f;
+    // func_particle: the root's children start at random points in this world box.
+    std::optional<std::array<Vec3, 2>> volume;
+    // env_particle attached to the player ("attach_type" 11) with "bounds":
+    // the root follows the viewer, and its precipitation children start at
+    // random points under open sky up to this far from it horizontally and
+    // above it. 0: off.
+    float precipitation_bounds = 0.0f;
 };
 
 // One running effect (e.g. an env_particle).
@@ -95,6 +132,10 @@ public:
                    const Vec3& angles = {});
 
     bool valid() const { return root_ != nullptr; }
+    // Optional; set before the first advance(). `world` must outlive the system.
+    void set_placement(const SystemPlacement& placement, const ParticleWorld* world);
+    // The viewer, for effects that follow it.
+    void set_viewer(const Vec3& eye) { viewer_ = eye; }
     // Advances by `dt` seconds (internally in steps of at most 1/30 s).
     void advance(float dt);
     float time() const { return time_; }
@@ -127,10 +168,14 @@ private:
         Vec3 position{}, velocity{};
         Vec3 parent_last{};   // Parent position at the previous step.
         std::vector<Emitter> emitters; // One per Definition::spawns entry.
+        float floor_z = -std::numeric_limits<float>::infinity(); // Precipitation ends here.
+        Vec3 flat_normal{}; // Collision decals lie flat on the surface.
         bool alive = true;
     };
 
-    void spawn(const Definition& def, const Particle* parent, const SpawnDefinition* spawn);
+    // Null if not spawned (the cap, or precipitation with no open sky).
+    Particle* spawn(const Definition& def, const Particle* parent, const SpawnDefinition* spawn);
+    float uniform(float lo, float hi) { return std::uniform_real_distribution<float>(lo, hi)(rng_); }
     float value(const Particle& p, Key key, float fallback) const;
     // A spawn block's value at its parent's current age.
     float spawn_value(const Particle& parent, const SpawnDefinition& spawn, SpawnKey key, float fallback) const;
@@ -147,6 +192,9 @@ private:
     std::uint64_t next_id_ = 1;
     float time_ = 0;
     std::mt19937 rng_;
+    SystemPlacement placement_;
+    const ParticleWorld* world_ = nullptr;
+    Vec3 viewer_{};
 };
 
 // Upper bound on live particles per system, against runaway definitions.

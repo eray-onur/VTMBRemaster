@@ -6,7 +6,11 @@ How OpenBL runs the effects described in [formats/particles.md](formats/particle
 
 ## Where effects come from
 
-`env_particle` entities (1,121 in the maps) name a definition (`particle_definition`) and start when `active` is 1 and they are not `StartHidden`; the rest are started by scripts (Phase 2; `openbl-viewer --show NAME` starts one by targetname). Not handled yet: `func_particle` volumes (rain), `params_particle` and `params_explosion` (used by scripts), particles attached to props (`prop_haunted`), and the entity's `bounds` and `ramp_scale`.
+`env_particle` entities (1,121 in the maps) and `func_particle` brushes (83) name a definition (`particle_definition`) and start when `active` is 1 and they are not `StartHidden`; the rest are started by scripts (Phase 2; `openbl-viewer --show NAME` starts one by targetname). Not handled yet: `params_particle` and `params_explosion` (used by scripts), particles attached to props (`prop_haunted`) and other `attach_type` values.
+
+- **`ramp_scale`** multiplies every emission rate. Santa Monica's rain (`sm_hub_1`, `sm_hub_2`, `sm_oceanhouse_2`) starts at 0: a `logic_timer` fades `GlobalWetness` in 3 to 5 minutes into the map (`FadeGlobalWetness`, Phase 2), so at first the original shows no rain there. `sm_pier_1` and `sp_endsequences_b` start at 1.
+- **`func_particle`** (fire walls in `la_malkavian_4`/`_5` and `sp_endsequences_a`, `la_bradbury_3`'s blood rain, and the scripted rain boxes): the root's children start at random points in the brush's bounds (relative to the entity's origin), plus their spawn offsets.
+- **Precipitation.** Rain emitters are `env_particle`s with `attach_type` 11 (the player) and `bounds` (256 or 512). The effect follows the viewer, and its children marked `precipitation` start at random points up to `bounds` away horizontally and up to `bounds` above the viewer, only where open sky lies straight above (so it does not rain indoors). A drop ends where it crosses the first surface below its start. The box's shape is a guess; the template only says precipitation spawns "in a box around the player".
 
 ## Simulation
 
@@ -18,9 +22,13 @@ How OpenBL runs the effects described in [formats/particles.md](formats/particle
 - **Spawn modulation.** A spawn block's `red`/`green`/`blue`/`color`/`mask` (0 to 255) and `size`/`width`/`height` scale its children, and its `rotation` adds to theirs, using the block's values at the parent's current age. `timescale` stretches the children's lifetimes (2: twice as long), e.g. 8 on the moths' wing-beat frames.
 - **Curves** ([formats/particles.md](formats/particles.md)) are sampled at the particle's age, with one random draw per particle for ranges.
 
+## Collisions
+
+A definition with a `collide` block ends where it meets the world (lightmapped faces, traced each step along its motion; displacements are not traced yet). Its `spawn` block's particle starts at that point (rain and drip splashes), and its `decal` block's particle starts there lying flat on the surface, lifted 0.5 units (ripple rings, stains, scorch marks). Of the active effects, 164 use it: water drips (`WaterDrops_Timer` in 9 maps, `drip_emitter` in `sp_soc_3`/`_4` and `hw_ash_sewer_1`), blood trickles, the temple and lab fires, and rain. Not handled: `self` (bounce, gravity and friction after a hit; none active at map start) and `vdecal_first`/`vdecal_last` (real decals). A few definitions quote names with cp1252 curly quotes (`\x93RainSplashDummy\x94`); the library strips them.
+
 ## Drawing
 
-Each particle with a `sprite` (`particles/<sprite>.tga`) is a quad facing the camera, `size` × `width` by `size` × `height` units, rolled by `rotation`; `movealign` stretches it along its motion instead. It is drawn with premultiplied blending. Each effect is one item in the translucent queue ([RENDERING.md](RENDERING.md#translucent-order)), placed by the leaves its particles reach, with its particles back to front:
+Each particle with a `sprite` (`particles/<sprite>.tga`) is a quad facing the camera, `size` × `width` by `size` × `height` units, rolled by `rotation`; `movealign` stretches it along its motion instead, and collision decals lie flat on their surface. It is drawn with premultiplied blending. Each effect is one item in the translucent queue ([RENDERING.md](RENDERING.md#translucent-order)), placed by the leaves its particles reach, with its particles back to front:
 
 - **added light** = the sprite's colour × (`red`, `green`, `blue`) / 255 × `color` / 255, on gamma-encoded values (the sprites are already dark where transparent, so their alpha is not applied again);
 - **darkening** = sprite alpha × `mask` / 255: the background is scaled by one minus that (smoke darkens what is behind it).
@@ -46,6 +54,7 @@ With the template's semantics and gamma-space blending the flames sit in the rig
 ## Not done yet
 
 - Calibration on more effects (steam, smoke, water drops): the smoke above the barrel fire is too bright.
-- Bursts on later frames, `distance` emission, `depth_offset`, `no_z_test`, `flat`, `sortfront`, `lighting` (scaled by scene lighting), `precipitation`.
-- `collide` blocks (bounce, gravity, friction; decals where particles land), `refract` and `normal` (refracting effects).
+- Bursts on later frames, `distance` emission, `depth_offset`, `no_z_test`, `flat`, `sortfront`, `lighting` (scaled by scene lighting).
+- `collide`'s `self` (bounce, gravity, friction) and `vdecal` decals; collisions with displacements and props; `refract` and `normal` (refracting effects).
+- Rain compared with the original (box size, density, how drops look in motion).
 - The light that fire effects cast (the original lights the bums around the barrel; probably a separate dynamic light).

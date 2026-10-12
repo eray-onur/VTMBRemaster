@@ -401,7 +401,8 @@ public:
         std::cout << "sprites: " << sprites_->stats().sprites << " on, " << sprites_->stats().off << " off, "
                   << sprites_->stats().missing_materials << " with a missing material\n";
         std::cout << "particles: " << particles_->stats().systems << " active effects ("
-                  << particles_->stats().missing_definitions << " with a missing definition)\n";
+                  << particles_->stats().volumes << " volumes, " << particles_->stats().following
+                  << " following the viewer, " << particles_->stats().missing_definitions << " with a missing definition)\n";
         if (auto sky = bsp_.entities.at(0).find("skyname"); sky != bsp_.entities.at(0).end()) {
             try {
                 sky_ = std::make_unique<render::SkyRenderer>(device, *materials_, sky->second);
@@ -465,7 +466,7 @@ public:
         if (characters_) {
             characters_->update(time, main_visibility_.get());
         }
-        particles_->update(time);
+        particles_->update(time, {camera.position.x, camera.position.y, camera.position.z});
         // The static props' fade follows the main camera in every view, as in the original.
         if (props_ && prop_fade_) {
             props_->update_fades({camera.position.x, camera.position.y, camera.position.z});

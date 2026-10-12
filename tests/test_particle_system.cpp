@@ -76,6 +76,99 @@ TEST_CASE("Particle motion and placement") {
     CHECK(q[0].mask == doctest::Approx(0.2f));
 }
 
+namespace {
+
+// A floor at z = 0 everywhere, open sky above it.
+particles::ParticleWorld floor_world() {
+    particles::ParticleWorld w;
+    w.trace = [](const particles::Vec3& a, const particles::Vec3& b) -> std::optional<particles::ParticleHit> {
+        if (a[2] < 0 || b[2] >= 0) {
+            return std::nullopt;
+        }
+        const float t = a[2] / (a[2] - b[2]);
+        return particles::ParticleHit{{a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, 0}, {0, 0, 1}};
+    };
+    w.open_sky = [](const particles::Vec3& p) { return p[2] >= 0; };
+    return w;
+}
+
+} // namespace
+
+TEST_CASE("Particle collisions: splash and flat decal where a drop lands") {
+    // Curly quotes around a name, as some shipped definitions have.
+    auto lib = library({
+        {"particles/drip.txt", "Particle { sprite \"drop\" frames \"300\" elevation_speed \"-300\" collide { spawn "
+                               "{ particle \x93splash\x94 } decal { particle \"ring\" } } }"},
+        {"particles/splash.txt", R"(Particle { sprite "dot" frames "30" })"},
+        {"particles/ring.txt", R"(Particle { sprite "ringlet" frames "30" })"},
+    });
+    const auto world = floor_world();
+    ParticleSystem s(lib, "drip", {5, 0, 100});
+    s.set_placement({}, &world);
+    s.advance(0.2f); // 60 units down.
+    REQUIRE(quads(s).size() == 1);
+    s.advance(0.2f); // Lands at 1/3 s.
+    const auto q = quads(s);
+    REQUIRE(q.size() == 2);
+    const auto& ring = q[0].normal[2] != 0 ? q[0] : q[1];
+    const auto& splash = q[0].normal[2] != 0 ? q[1] : q[0];
+    CHECK(ring.normal[2] == 1.0f);
+    CHECK(ring.position[2] == doctest::Approx(0.5f)); // Lifted off the surface.
+    CHECK(splash.position[0] == doctest::Approx(5.0f));
+    CHECK(splash.position[2] == doctest::Approx(0.0f).epsilon(0.01));
+}
+
+TEST_CASE("Particle precipitation, volumes and ramp scale") {
+    auto lib = library({
+        {"particles/rain.txt", R"(Particle { loop "1" precipitation "1" spawn { particle "drop" rate "300" } })"},
+        {"particles/drop.txt", R"(Particle { sprite "drop" frames "300" z_speed "-200" precipitation "1" })"},
+    });
+    const auto world = floor_world();
+    SUBCASE("rain falls in a box around the viewer and ends at the floor") {
+        ParticleSystem s(lib, "rain", {0, 0, 0});
+        particles::SystemPlacement placement;
+        placement.precipitation_bounds = 100;
+        s.set_placement(placement, &world);
+        s.set_viewer({1000, 2000, 50});
+        s.advance(2.0f);
+        const auto q = quads(s);
+        CHECK(q.size() > 100); // Lives end at the floor (at most 0.75 s), not after 10 s.
+        CHECK(q.size() < 300);
+        for (const auto& d : q) {
+            CHECK(std::abs(d.position[0] - 1000) <= 100);
+            CHECK(std::abs(d.position[1] - 2000) <= 100);
+            CHECK(d.position[2] >= 0);
+            CHECK(d.position[2] <= 150);
+        }
+    }
+    SUBCASE("ramp scale 0 emits nothing") {
+        ParticleSystem s(lib, "rain", {0, 0, 0});
+        particles::SystemPlacement placement;
+        placement.precipitation_bounds = 100;
+        placement.rate_scale = 0;
+        s.set_placement(placement, &world);
+        s.advance(2.0f);
+        CHECK(quads(s).empty());
+    }
+    SUBCASE("a volume spreads the root's children through its box") {
+        ParticleSystem s(lib, "rain", {0, 0, 0});
+        particles::SystemPlacement placement;
+        placement.volume = std::array<particles::Vec3, 2>{{{-50, 10, 200}, {50, 20, 300}}};
+        s.set_placement(placement, nullptr);
+        s.advance(0.1f);
+        const auto q = quads(s);
+        REQUIRE(q.size() > 10);
+        float lo = 1e9f, hi = -1e9f;
+        for (const auto& d : q) {
+            CHECK(d.position[1] >= 10);
+            CHECK(d.position[1] <= 20);
+            lo = std::min(lo, d.position[0]);
+            hi = std::max(hi, d.position[0]);
+        }
+        CHECK(hi - lo > 50);
+    }
+}
+
 TEST_CASE("Particle integration: every effect in the real install runs") {
     auto game = test::game_dir();
     if (!game) {

@@ -46,6 +46,14 @@ float at0(const Curve& c, float fallback, float pick = 0.5f) {
 } // namespace
 
 std::string ParticleLibrary::path_of(std::string_view name) {
+    // Some definitions quote names with cp1252 curly quotes (0x93, 0x94),
+    // which the parser keeps as part of the name.
+    while (!name.empty() && static_cast<unsigned char>(name.front()) >= 0x80) {
+        name.remove_prefix(1);
+    }
+    while (!name.empty() && static_cast<unsigned char>(name.back()) >= 0x80) {
+        name.remove_suffix(1);
+    }
     std::string n = lower(name);
     std::replace(n.begin(), n.end(), '\\', '/');
     if (n.starts_with("particles/")) {
@@ -82,6 +90,7 @@ const Definition* ParticleLibrary::find(std::string_view name) {
     def.max_frames = block.curve("max_frames");
     def.loop = block.curve("loop");
     def.sprite = text_ptr(block, "sprite");
+    def.precipitation = at0(block.curve("precipitation"), 0.0f) != 0;
     for (const auto& child : block.children) {
         if (!formats::iequals(child.name, "spawn")) {
             continue;
@@ -97,6 +106,22 @@ const Definition* ParticleLibrary::find(std::string_view name) {
     for (const auto& child : block.children) {
         if (formats::iequals(child.name, "spawn")) {
             def.spawns[s++].particle = find(child.text("particle"));
+        } else if (formats::iequals(child.name, "collide")) {
+            // Its `spawn` and `decal` blocks name the particles started where
+            // this one lands. `self` (bounce, friction, gravity) and real
+            // decals (vdecal_first/last) are not handled yet.
+            def.collides = true;
+            for (const auto& c : child.children) {
+                const std::string_view particle = c.text("particle");
+                if (particle.empty()) {
+                    continue;
+                }
+                if (formats::iequals(c.name, "spawn")) {
+                    def.collide_spawn = find(particle);
+                } else if (formats::iequals(c.name, "decal")) {
+                    def.collide_decal = find(particle);
+                }
+            }
         }
     }
     return &def;
@@ -117,14 +142,42 @@ ParticleSystem::ParticleSystem(ParticleLibrary& library, std::string_view defini
     }
 }
 
+void ParticleSystem::set_placement(const SystemPlacement& placement, const ParticleWorld* world) {
+    placement_ = placement;
+    world_ = world;
+}
+
 float ParticleSystem::initial(const SpawnDefinition& spawn, SpawnKey key, float fallback) {
     const Curve& c = spawn.curves[static_cast<std::size_t>(key)];
     return c ? c->at(0.0f, 1.0f, std::uniform_real_distribution<float>(0.0f, 1.0f)(rng_)) : fallback;
 }
 
-void ParticleSystem::spawn(const Definition& def, const Particle* parent, const SpawnDefinition* spawn) {
+ParticleSystem::Particle* ParticleSystem::spawn(const Definition& def, const Particle* parent,
+                                                const SpawnDefinition* spawn) {
     if (particles_.size() >= kMaxParticlesPerSystem) {
-        return;
+        return nullptr;
+    }
+    // Where the root's children start: anywhere in a func_particle's volume,
+    // or, for precipitation, under open sky in a box around the viewer.
+    std::optional<Vec3> start;
+    float floor_z = -std::numeric_limits<float>::infinity();
+    if (spawn && parent && parent->parent_id == 0) {
+        if (placement_.volume) {
+            const auto& [lo, hi] = *placement_.volume;
+            start = Vec3{uniform(lo[0], hi[0]), uniform(lo[1], hi[1]), uniform(lo[2], hi[2])};
+        } else if (placement_.precipitation_bounds > 0 && def.precipitation) {
+            const float b = placement_.precipitation_bounds;
+            start = Vec3{viewer_[0] + uniform(-b, b), viewer_[1] + uniform(-b, b), viewer_[2] + uniform(0.0f, b)};
+            if (world_ && world_->open_sky && !world_->open_sky(*start)) {
+                return nullptr;
+            }
+            // It falls until the first surface below.
+            if (world_ && world_->trace) {
+                if (const auto hit = world_->trace(*start, {(*start)[0], (*start)[1], (*start)[2] - 4096.0f})) {
+                    floor_z = hit->point[2];
+                }
+            }
+        }
     }
     std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
     Particle p;
@@ -150,7 +203,8 @@ void ParticleSystem::spawn(const Definition& def, const Particle* parent, const 
     if (p.loop) {
         p.lifetime = kForever;
     }
-    p.anchor = parent ? parent->position : origin_;
+    p.anchor = start ? *start : parent ? parent->position : origin_;
+    p.floor_z = floor_z;
     if (parent) {
         p.parent_id = parent->id;
         p.parent_last = parent->position;
@@ -189,6 +243,7 @@ void ParticleSystem::spawn(const Definition& def, const Particle* parent, const 
         p.position[k] = p.anchor[k] + p.offset[k] + p.radius * dir;
     }
     particles_.push_back(std::move(p));
+    return &particles_.back();
 }
 
 float ParticleSystem::value(const Particle& p, Key key, float fallback) const {
@@ -241,6 +296,10 @@ void ParticleSystem::step(float dt) {
             p.alive = false;
             continue;
         }
+        // An effect attached to the player follows the viewer.
+        if (!p.parent_id && placement_.precipitation_bounds > 0) {
+            p.anchor = viewer_;
+        }
         // Follow the parent by `parent_speed` of its motion.
         if (p.parent_id) {
             if (auto it = index_.find(p.parent_id); it != index_.end() && particles_[it->second].alive) {
@@ -267,6 +326,31 @@ void ParticleSystem::step(float dt) {
             next[k] = p.anchor[k] + p.offset[k] + p.radius * dir[k];
             p.velocity[k] = (next[k] - p.position[k]) / dt;
         }
+        if (next[2] < p.floor_z) {
+            p.alive = false;
+            continue;
+        }
+        // Colliding particles end where they meet the world.
+        if (p.def->collides && world_ && world_->trace) {
+            if (const auto hit = world_->trace(p.position, next)) {
+                p.alive = false;
+                Particle landed = p; // spawn() may reallocate.
+                landed.position = hit->point;
+                if (landed.def->collide_spawn) {
+                    spawn(*landed.def->collide_spawn, &landed, nullptr);
+                }
+                if (landed.def->collide_decal) {
+                    // Lifted off the surface, against z-fighting.
+                    for (std::size_t k = 0; k < 3; ++k) {
+                        landed.position[k] = hit->point[k] + hit->normal[k] * 0.5f;
+                    }
+                    if (Particle* decal = spawn(*landed.def->collide_decal, &landed, nullptr)) {
+                        decal->flat_normal = hit->normal;
+                    }
+                }
+                continue;
+            }
+        }
         p.position = next;
 
         // Children: a burst once, then `rate` per second while this particle lives.
@@ -287,7 +371,8 @@ void ParticleSystem::step(float dt) {
                 em.burst_done = true;
             }
             if (sd.curves[static_cast<std::size_t>(SpawnKey::Rate)]) {
-                em.accumulator += std::max(spawn_value(particles_[i], sd, SpawnKey::Rate, 0), 0.0f) * dt;
+                em.accumulator += std::max(spawn_value(particles_[i], sd, SpawnKey::Rate, 0), 0.0f) *
+                                  placement_.rate_scale * dt;
                 const int whole = static_cast<int>(em.accumulator);
                 em.accumulator -= static_cast<float>(whole);
                 n += whole;
@@ -323,6 +408,7 @@ void ParticleSystem::collect(std::vector<ParticleQuad>& out) const {
         q.mask = std::clamp(value(p, Key::Mask, 0.0f) / 255.0f * p.mask_scale, 0.0f, 1.0f);
         q.align = value(p, Key::MoveAlign, 0.0f) != 0.0f;
         q.velocity = p.velocity;
+        q.normal = p.flat_normal;
         q.sprite = sprite;
         out.push_back(q);
     }

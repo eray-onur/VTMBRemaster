@@ -10,6 +10,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <optional>
 #include <sstream>
@@ -63,8 +64,24 @@ ParticleRenderer::ParticleRenderer(rhi::Device& device, const AssetSource& asset
             sky_area = bsp.leafs[bsp.leaf_at(o)].area;
         }
     }
+    // Particles collide with lightmapped world faces (not displacements yet).
+    world_.trace = [&bsp](const particles::Vec3& from, const particles::Vec3& to) -> std::optional<particles::ParticleHit> {
+        const auto hit = bsp.trace_lightmap(from, to);
+        if (!hit) {
+            return std::nullopt;
+        }
+        const formats::BspFace& face = bsp.faces[hit->face];
+        const formats::Vec3& n = bsp.planes[face.plane].normal;
+        const float sign = face.side ? -1.0f : 1.0f;
+        return particles::ParticleHit{hit->point, {n[0] * sign, n[1] * sign, n[2] * sign}};
+    };
+    world_.open_sky = [&bsp](const particles::Vec3& p) {
+        bool sky = false;
+        return !bsp.trace_lightmap(p, {p[0], p[1], p[2] + 16384.0f}, &sky) && sky;
+    };
     for (const auto& e : bsp.entities) {
-        if (value(e, "classname") != "env_particle") {
+        const std::string cls = value(e, "classname");
+        if (cls != "env_particle" && cls != "func_particle") {
             continue;
         }
         const bool named = std::find(shown.begin(), shown.end(), value(e, "targetname")) != shown.end();
@@ -77,11 +94,37 @@ ParticleRenderer::ParticleRenderer(rhi::Device& device, const AssetSource& asset
         std::istringstream(value(e, "angles")) >> em.angles[0] >> em.angles[1] >> em.angles[2];
         em.seed = seed++;
         em.skybox = sky_area && bsp.leafs[bsp.leaf_at(em.origin)].area == *sky_area;
+        if (const std::string ramp = value(e, "ramp_scale"); !ramp.empty()) {
+            em.placement.rate_scale = static_cast<float>(std::atof(ramp.c_str()));
+        }
+        if (cls == "func_particle") {
+            // The brush's bounds, relative to the entity's origin.
+            const std::string model = value(e, "model");
+            const std::size_t index =
+                model.size() > 1 && model[0] == '*' ? std::strtoul(model.c_str() + 1, nullptr, 10) : 0;
+            if (index == 0 || index >= bsp.models.size()) {
+                continue;
+            }
+            const auto& m = bsp.models[index];
+            std::array<particles::Vec3, 2> box{};
+            for (std::size_t k = 0; k < 3; ++k) {
+                box[0][k] = em.origin[k] + m.mins[k];
+                box[1][k] = em.origin[k] + m.maxs[k];
+            }
+            em.placement.volume = box;
+        } else if (value(e, "attach_type") == "11") {
+            const std::string bounds = value(e, "bounds");
+            em.placement.precipitation_bounds =
+                bounds.empty() ? 512.0f : static_cast<float>(std::atof(bounds.c_str()));
+        }
         em.system = std::make_unique<particles::ParticleSystem>(library_, em.definition, em.origin, em.seed, em.angles);
         if (!em.system->valid()) {
             ++stats_.missing_definitions;
             continue;
         }
+        em.system->set_placement(em.placement, &world_);
+        stats_.volumes += em.placement.volume.has_value();
+        stats_.following += em.placement.precipitation_bounds > 0;
         emitters_.push_back(std::move(em));
     }
     stats_.systems = emitters_.size();
@@ -149,14 +192,16 @@ const rhi::Texture* ParticleRenderer::sprite(const std::string& name) {
     return resolved;
 }
 
-void ParticleRenderer::update(float time) {
+void ParticleRenderer::update(float time, const std::array<float, 3>& eye) {
     if (time < time_) {
         for (Emitter& em : emitters_) {
             em.system = std::make_unique<particles::ParticleSystem>(library_, em.definition, em.origin, em.seed, em.angles);
+            em.system->set_placement(em.placement, &world_);
         }
         time_ = 0;
     }
     for (Emitter& em : emitters_) {
+        em.system->set_viewer(eye);
         em.system->advance(time - time_);
     }
     time_ = time;
@@ -190,8 +235,9 @@ void ParticleRenderer::collect_translucent(const formats::BspDrawOrder& order, c
         }
         TranslucentItem item;
         item.slot = order.nearest_slot(leaves);
+        // Effects around the viewer (rain) are nearest of all.
         const float dx = em.origin[0] - eye[0], dy = em.origin[1] - eye[1], dz = em.origin[2] - eye[2];
-        item.distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+        item.distance = em.placement.precipitation_bounds > 0 ? 0.0f : std::sqrt(dx * dx + dy * dy + dz * dz);
         item.source = source;
         item.index = static_cast<std::uint32_t>(i);
         out.push_back(item);
@@ -244,9 +290,12 @@ void ParticleRenderer::draw_translucent_item(rhi::CommandList& cmd, std::uint32_
         data_.clear();
         while (end < quads.size() && end - start < kMaxPerDraw && sprite(*quads[end].sprite) == tex) {
             const auto& q = quads[end];
+            // Orientation: 0 facing the camera, 1 along the motion, 2 flat on a surface.
+            const bool flat = q.normal[0] != 0 || q.normal[1] != 0 || q.normal[2] != 0;
+            const auto& axis = flat ? q.normal : q.velocity;
             data_.insert(data_.end(), {q.position[0], q.position[1], q.position[2], q.width, q.height, q.rotation,
-                                       q.align ? 1.0f : 0.0f, 0.0f, q.color[0], q.color[1], q.color[2], q.mask,
-                                       q.velocity[0], q.velocity[1], q.velocity[2], 0.0f});
+                                       flat ? 2.0f : q.align ? 1.0f : 0.0f, 0.0f, q.color[0], q.color[1], q.color[2],
+                                       q.mask, axis[0], axis[1], axis[2], 0.0f});
             ++end;
         }
         auto& group = bind_groups_[tex];

@@ -1,6 +1,7 @@
-// Particles: camera-facing quads built from per-particle shader data (4 float4
-// per particle: position and width; height, roll and align flag; additive
-// colour and mask; velocity). Drawn with premultiplied blending, so a particle
+// Particles: quads built from per-particle shader data (4 float4 per particle:
+// position and width; height, roll and orientation; additive colour and mask;
+// velocity, or the surface normal of a collision decal). Orientation 0 faces
+// the camera, 1 stretches along the motion (movealign), 2 lies flat. Drawn with premultiplied blending, so a particle
 // both adds light (colour) and darkens what is behind it (mask).
 
 #include "color.hlsli"
@@ -33,15 +34,21 @@ VSOutput vs_main(VSInput input) {
     const float3 center = d0.xyz;
     const float half_w = d0.w * 0.5, half_h = d1.x * 0.5;
     float3 world;
-    if (d1.z > 0.5 && dot(d3.xyz, d3.xyz) > 1e-6) {
+    const float s = sin(radians(d1.y)), c = cos(radians(d1.y));
+    const float2 r = float2(c * input.corner.x - s * input.corner.y, s * input.corner.x + c * input.corner.y);
+    if (d1.z > 1.5) {
+        // Flat on the surface the particle landed on, rolled about its normal.
+        const float3 n = normalize(d3.xyz);
+        const float3 t = normalize(cross(n, abs(n.z) < 0.9 ? float3(0, 0, 1) : float3(1, 0, 0)));
+        const float3 b = cross(n, t);
+        world = center + t * (r.x * half_w) + b * (r.y * half_h);
+    } else if (d1.z > 0.5 && dot(d3.xyz, d3.xyz) > 1e-6) {
         // movealign: the quad's height runs along the motion, its width across the view.
         const float3 axis = normalize(d3.xyz);
         float3 side = cross(axis, normalize(pc.eye.xyz - center));
         side = dot(side, side) > 1e-8 ? normalize(side) : pc.right.xyz;
         world = center + side * (input.corner.x * half_w) + axis * (input.corner.y * half_h);
     } else {
-        const float s = sin(radians(d1.y)), c = cos(radians(d1.y));
-        const float2 r = float2(c * input.corner.x - s * input.corner.y, s * input.corner.x + c * input.corner.y);
         world = center + pc.right.xyz * (r.x * half_w) + pc.up.xyz * (r.y * half_h);
     }
     VSOutput output;

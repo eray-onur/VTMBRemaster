@@ -22,7 +22,9 @@
 namespace openbl::render {
 
 struct ParticleStats {
-    std::size_t systems = 0;          // Active env_particle effects found.
+    std::size_t systems = 0;          // Active env_particle and func_particle effects found.
+    std::size_t volumes = 0;          // Of those, func_particle volumes.
+    std::size_t following = 0;        // Of those, effects following the viewer (rain).
     std::size_t missing_definitions = 0;
     std::size_t missing_sprites = 0;
 };
@@ -34,8 +36,9 @@ public:
                      const std::vector<std::string>& shown = {});
     ~ParticleRenderer();
 
-    // Advances every effect to `time` (seconds); going back in time restarts them.
-    void update(float time);
+    // Advances every effect to `time` (seconds); going back in time restarts
+    // them. `eye`: the viewer, whom rain and other attached effects follow.
+    void update(float time, const std::array<float, 3>& eye);
     // One item per effect in the translucent queue (render/translucent.hpp),
     // placed by the leaves its particles reach; its particles are drawn back
     // to front. `skybox`: only effects in the 3D skybox's area, or only the
@@ -58,6 +61,7 @@ private:
         particles::Vec3 origin{};
         particles::Vec3 angles{};
         std::uint32_t seed = 1;
+        particles::SystemPlacement placement;
         bool skybox = false; // In the 3D skybox's area.
         std::unique_ptr<particles::ParticleSystem> system;
         std::vector<particles::ParticleQuad> quads; // This view's particles (collect_translucent).
@@ -67,6 +71,7 @@ private:
     const AssetSource& assets_;
     const formats::BspFile& bsp_;
     particles::ParticleLibrary library_;
+    particles::ParticleWorld world_; // Collisions and open sky, from the map.
     ParticleStats stats_;
     std::vector<Emitter> emitters_;
     float time_ = 0;
