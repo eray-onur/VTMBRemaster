@@ -765,6 +765,56 @@ TEST_CASE("View visibility: the eye's PVS and the frustum's sides") {
     CHECK(vis.leaf(1));
 }
 
+TEST_CASE("View visibility: closed area portals hide the areas behind them") {
+    // Leaf 0 (x >= 0, cluster 0, area 1) and leaf 1 (x < 0, cluster 1, area
+    // 2), joined by portal 5. Both clusters see each other.
+    BspFile bsp;
+    bsp.planes.push_back({{1, 0, 0}, 0});
+    BspNode node;
+    node.children = {-1, -2};
+    bsp.nodes.push_back(node);
+    bsp.leafs.resize(2);
+    bsp.leafs[0].cluster = 0;
+    bsp.leafs[0].area = 1;
+    bsp.leafs[1].cluster = 1;
+    bsp.leafs[1].area = 2;
+    bsp.models.push_back({});
+    bsp.visibility.clusters = 2;
+    bsp.visibility.offsets = {{{20, 20}}, {{21, 21}}};
+    bsp.visibility.data.assign(20, std::byte{0});
+    bsp.visibility.data.push_back(std::byte{0x03});
+    bsp.visibility.data.push_back(std::byte{0x03});
+    bsp.areas = {{0, 0}, {1, 0}, {1, 1}};
+    BspAreaPortal to2, to1;
+    to2.key = 5;
+    to2.other_area = 2;
+    to1.key = 5;
+    to1.other_area = 1;
+    bsp.area_portals = {to2, to1};
+    // A door's portal, closed at the start.
+    BspEntity portal;
+    portal.emplace("classname", "func_areaportal");
+    portal.emplace("portalnumber", "5");
+    portal.emplace("StartOpen", "0");
+    bsp.entities.push_back(portal);
+
+    const std::array<float, 16> identity{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    ViewVisibility vis(bsp);
+    CHECK_FALSE(vis.portal_open(5));
+    vis.update({5, 0, 0}, identity);
+    CHECK(vis.leaf(0));
+    CHECK_FALSE(vis.leaf(1));
+    CHECK(vis.area(1));
+    CHECK_FALSE(vis.area(2));
+    vis.set_portal_open(5, true);
+    vis.update({5, 0, 0}, identity);
+    CHECK(vis.leaf(1));
+    vis.set_portal_open(5, false);
+    vis.update({-5, 0, 0}, identity); // From the other side.
+    CHECK(vis.leaf(1));
+    CHECK_FALSE(vis.leaf(0));
+}
+
 TEST_CASE("Static prop fade: linear in the squared distance") {
     BspStaticProp prop;
     prop.fade_min = 1000;

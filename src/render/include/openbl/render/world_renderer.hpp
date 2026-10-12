@@ -158,7 +158,8 @@ private:
         std::vector<std::uint32_t> leaves;
         bool entity = false;
         std::array<float, 3> center{};
-        // Opaque batches: their faces grouped by the clusters they lie in,
+        formats::Vec3 mins{}, maxs{}; // Bounds of its faces (translucent batches are culled by them and `leaves`).
+        // Opaque batches and decals: their faces grouped by the clusters they lie in,
         // each group with its bounds, so a view draws only the groups in its
         // PVS and frustum (docs/RENDERING.md#visibility).
         struct Run {

@@ -53,7 +53,7 @@ namespace {
 
 constexpr const char* kUsage =
     "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--show TARGETNAME]... [--npc-sequence NAME] [--pose NAME=VALUE]... [--flex CONTROLLER=VALUE]... [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
-    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-envmap] [--no-bump] [--no-sprites] [--no-ropes] [--no-detail-props] [--no-cull] [--no-prop-fade] [--no-cloth] [--no-shadows] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
+    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-envmap] [--no-bump] [--no-sprites] [--no-ropes] [--no-detail-props] [--no-cull] [--no-area-portals] [--no-prop-fade] [--no-cloth] [--no-shadows] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
     "                     [--validation] [--no-vsync]";
 
 struct Options {
@@ -79,6 +79,7 @@ struct Options {
     bool ropes = true;   // --no-ropes: no keyframe_rope / move_rope cables.
     bool detail_props = true; // --no-detail-props: no grass and debris from the detail-prop lump.
     bool cull = true;    // --no-cull: draw the whole map in every view.
+    bool area_portals = true; // --no-area-portals: every area portal open (closed doors do not hide areas).
     bool prop_fade = true; // --no-prop-fade: static props never fade with distance.
     bool characters = true;
     std::optional<std::filesystem::path> screenshot;
@@ -169,6 +170,8 @@ Options parse_args(int argc, char** argv) {
             o.detail_props = false;
         } else if (a == "--no-cull") {
             o.cull = false;
+        } else if (a == "--no-area-portals") {
+            o.area_portals = false;
         } else if (a == "--no-prop-fade") {
             o.prop_fade = false;
         } else if (a == "--no-envmap") {
@@ -388,6 +391,12 @@ public:
         if (options.cull) {
             visibility_ = std::make_unique<formats::ViewVisibility>(bsp_);
             main_visibility_ = std::make_unique<formats::ViewVisibility>(bsp_);
+            if (!options.area_portals) {
+                for (const formats::BspAreaPortal& portal : bsp_.area_portals) {
+                    visibility_->set_portal_open(portal.key, true);
+                    main_visibility_->set_portal_open(portal.key, true);
+                }
+            }
         }
         std::cout << "sprites: " << sprites_->stats().sprites << " on, " << sprites_->stats().off << " off, "
                   << sprites_->stats().missing_materials << " with a missing material\n";

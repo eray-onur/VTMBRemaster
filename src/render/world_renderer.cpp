@@ -539,6 +539,8 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
         }
         for (std::size_t k = 0; k < 3; ++k) {
             batch.center[k] = (lo[k] + hi[k]) * 0.5f;
+            batch.mins[k] = lo[k];
+            batch.maxs[k] = hi[k];
         }
         if (owner == kFace) {
             const auto it = leaves_of_face.find(static_cast<std::size_t>(std::get<4>(key)));
@@ -546,7 +548,9 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
                 batch.leaves = it->second;
             }
         }
-        if ((owner == kEntity || owner == kFace) && batch.leaves.empty() && !faces.empty()) {
+        // Translucent faces on nodes are culled by the leaves around them too.
+        if ((owner == kEntity || owner == kFace || (mat.translucent && !mat.water)) && batch.leaves.empty() &&
+            !faces.empty()) {
             batch.leaves = formats::leaves_in_box(bsp, {lo[0], lo[1], lo[2]}, {hi[0], hi[1], hi[2]});
         }
         (mat.water ? water_ : mat.translucent ? translucent_ : opaque_).push_back(std::move(batch));
@@ -584,7 +588,53 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
         batch.skybox = key.second;
         batch.decal = true;
         batch.first_index = static_cast<std::uint32_t>(indices.size());
+        // Culled like opaque faces: grouped by the clusters of the faces they
+        // lie on (displacements: of the leaves their bounds touch).
+        struct Placed {
+            const formats::BspDecalPiece* piece;
+            std::vector<std::int32_t> clusters;
+            formats::Vec3 mins, maxs;
+        };
+        std::vector<Placed> placed;
         for (const auto& piece : pieces) {
+            Placed p{&piece, {}, {1e30f, 1e30f, 1e30f}, {-1e30f, -1e30f, -1e30f}};
+            for (const auto& v : piece.positions) {
+                for (int k = 0; k < 3; ++k) {
+                    p.mins[k] = std::min(p.mins[k], v[k]);
+                    p.maxs[k] = std::max(p.maxs[k], v[k]);
+                }
+            }
+            if (piece.face < face_clusters.size()) {
+                p.clusters = face_clusters[piece.face];
+            }
+            if (p.clusters.empty() && !piece.positions.empty()) {
+                for (std::uint32_t l : formats::leaves_in_box(bsp, p.mins, p.maxs)) {
+                    const std::int32_t c = bsp.leafs[l].cluster;
+                    if (std::find(p.clusters.begin(), p.clusters.end(), c) == p.clusters.end()) {
+                        p.clusters.push_back(c);
+                    }
+                }
+            }
+            std::sort(p.clusters.begin(), p.clusters.end());
+            placed.push_back(std::move(p));
+        }
+        std::stable_sort(placed.begin(), placed.end(),
+                         [](const Placed& a, const Placed& b) { return a.clusters < b.clusters; });
+        for (const Placed& p : placed) {
+            const auto& piece = *p.piece;
+            if (batch.runs.empty() || batch.runs.back().clusters != p.clusters) {
+                Batch::Run run;
+                run.first_index = static_cast<std::uint32_t>(indices.size());
+                run.clusters = p.clusters;
+                run.mins = p.mins;
+                run.maxs = p.maxs;
+                batch.runs.push_back(std::move(run));
+            }
+            Batch::Run& run = batch.runs.back();
+            for (int k = 0; k < 3; ++k) {
+                run.mins[k] = std::min(run.mins[k], p.mins[k]);
+                run.maxs[k] = std::max(run.maxs[k], p.maxs[k]);
+            }
             const auto base = static_cast<std::uint32_t>(vertices.size());
             for (std::size_t v = 0; v < piece.positions.size(); ++v) {
                 Vertex out{};
@@ -601,6 +651,7 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
             for (std::uint32_t k = 2; k < piece.positions.size(); ++k) {
                 indices.insert(indices.end(), {base, base + k - 1, base + k});
             }
+            run.index_count = static_cast<std::uint32_t>(indices.size()) - run.first_index;
         }
         batch.index_count = static_cast<std::uint32_t>(indices.size()) - batch.first_index;
         if (batch.index_count > 0) {
@@ -931,9 +982,11 @@ void WorldRenderer::draw_batch(rhi::CommandList& cmd, const Batch& batch, const 
 void WorldRenderer::draw_batches(rhi::CommandList& cmd, const std::vector<Batch>& batches,
                                  const std::array<float, 16>& vp, const WorldDrawSettings& settings) {
     const std::size_t rows = build_shader_data(settings);
+    // Placed once, bound again at each pipeline change (the caller has set a world pipeline).
+    const rhi::ShaderDataRef data = cmd.set_shader_data(shader_data_.data(), shader_data_.size() * sizeof(float));
     const rhi::Pipeline* bound = nullptr;
     for (const Batch& batch : batches) {
-        draw_batch(cmd, batch, vp, settings, rows, bound, nullptr);
+        draw_batch(cmd, batch, vp, settings, rows, bound, &data);
     }
 }
 
@@ -966,6 +1019,9 @@ void WorldRenderer::collect_translucent(const formats::BspDrawOrder& order, cons
     for (std::size_t i = 0; i < translucent_.size(); ++i) {
         const Batch& b = translucent_[i];
         if (b.skybox != settings.skybox || (b.monitor >= 0 && !settings.draw_monitors)) {
+            continue;
+        }
+        if (settings.visibility && !settings.visibility->object(b.leaves, b.mins, b.maxs)) {
             continue;
         }
         TranslucentItem item;

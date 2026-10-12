@@ -579,9 +579,14 @@ void PropRenderer::update_fades(const std::array<float, 3>& eye) {
 void PropRenderer::draw_opaque(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
                                const PropDrawSettings& settings) {
     const std::size_t rows = build_shader_data(settings);
+    // Placed once and bound again at each pipeline change: a copy per change
+    // ran out of the frame's shader data in busy views (ch_temple_1).
+    cmd.set_pipeline(*pipelines_[0][0]);
+    const rhi::ShaderDataRef data = cmd.set_shader_data(shader_data_.data(), shader_data_.size() * sizeof(float));
     Bound bound;
+    bound.pipeline = pipelines_[0][0].get();
     for (std::size_t i = 0; i < instances_.size(); ++i) {
-        draw_instance(cmd, view_projection, settings, rows, i, false, bound, nullptr);
+        draw_instance(cmd, view_projection, settings, rows, i, false, bound, &data);
     }
 }
 

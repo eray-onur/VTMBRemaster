@@ -89,7 +89,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Sprites checked against the original on `sm_hub_1` with `r_drawsprites` on/off captures: colour mode, additive, lamp-globe glows and the skyline light cones, within about 7% except a faint glow excess close to a lamp and cones at 0.87 ([RENDERING.md](RENDERING.md#sprites-env_sprite))
 - [ ] Sprites: scripts switching sprites on and off (traffic lights; needs entity I/O, Phase 2); scale animations
 - [x] Visibility culling: PVS and frustum per view for world batches (faces grouped by cluster), props, characters, sprites and particles; characters out of the main PVS not animated; 4–5× faster frames on `sm_hub_1` ([RENDERING.md](RENDERING.md#visibility)); viewer `--no-cull`
-- [ ] Visibility: area portals (doors closing off areas), culling translucent world faces and decals
+- [x] Visibility: area portals (`func_areaportal` with `StartOpen` 0, mostly behind doors, closed; windows open), translucent world faces and decals culled; viewer `--no-area-portals` ([RENDERING.md](RENDERING.md#visibility))
+- [ ] Visibility: portals opening and closing with doors (Phase 2), `func_areaportalwindow` fade distances; a faint culled/unculled difference on one `sm_warehouse_1` view
 - [x] Bump-mapped world surfaces: `$bumpmap` faces lit from their three directional lightmaps with the original's basis and weighted average ([RENDERING.md](RENDERING.md#bump-mapped-lightmaps)); viewer `--no-bump`
 - [x] Bump-mapped envmap reflections (tangent frame from the texture axes, normal-map alpha mask) and bump-mapped `WorldVertexTransition` blends ([RENDERING.md](RENDERING.md#bump-mapped-lightmaps))
 - [x] Normal maps on models: the ambient cube per pixel about the bumped normal, bumped envmap reflections; MDL tangents ([RENDERING.md](RENDERING.md#normal-maps-on-models))

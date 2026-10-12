@@ -231,19 +231,22 @@ Not done: "Simple" blob shadows and more than one shadow per character (neither 
 
 ## Visibility
 
-Each view draws only what it can see (`formats::ViewVisibility`). That takes two tests:
+Each view draws only what it can see (`formats::ViewVisibility`). That takes three tests:
 
 - **The PVS**: the clusters in the potentially visible set of the eye's cluster (the map's visibility lump).
+- **Area portals**: the clusters in an area reachable from the eye's area through open portals (the map's areas and area portals lumps).
 - **The frustum**: the view's left, right, bottom and top planes, from its view-projection matrix.
 
-An eye in solid or outside the visibility data sees everything. Area portals are not applied: every portal counts as open.
+An eye in solid or outside the visibility data sees everything.
 
-- **World**: each opaque material batch keeps its faces grouped by the clusters they lie in: those of the leaves listing the face, or, for brush entities and displacements, those of the leaves the face's bounds touch. Each group keeps its bounds. A view draws the groups with a cluster in its PVS and bounds in its frustum, and adjacent groups merge into one draw. Translucent faces, water and decals are not culled.
+**Area portals.** 518 portal entities over all maps: 237 `func_areaportal` and 281 `func_areaportalwindow`. 224 of the `func_areaportal`s have `StartOpen` 0, and nearly all of those name a door (`func_door_rotating`, `func_door`) or a `func_brush` as their target: the portal closes the area behind a closed door. OpenBL draws doors closed (entity I/O comes in Phase 2), so those portals start closed; the rest, with `StartOpen` 1 or no key (open, the FGD default per the Valve Developer Community), and every `func_areaportalwindow` (a see-through window that fades with distance in Source) are open. A portal's `portalnumber` is the key of its two area-portal records. `ViewVisibility::set_portal_open` changes one, for scripts later. Leaves in area 0 (solid, outside the map) are not affected.
+
+- **World**: each opaque material batch keeps its faces grouped by the clusters they lie in: those of the leaves listing the face, or, for brush entities and displacements, those of the leaves the face's bounds touch. Each group keeps its bounds. A view draws the groups with a cluster in its PVS and bounds in its frustum, and adjacent groups merge into one draw. Decals are grouped the same way, by the clusters of the faces they lie on. Translucent faces are culled as one item per batch, by the leaves their bounds touch and the bounds. Water is not culled.
 - **Props, characters, particle effects**: drawn if one of the leaves their box touches is in the PVS and the box is in the frustum. **Sprites**: their leaves only.
 - **Views**: the 3D skybox uses the sky camera's eye, and monitors their camera's. The water reflection uses the real eye's PVS, since the mirrored eye is often inside solid.
 - **Characters** outside the main camera's PVS are not animated. Their cloth settles again when they come back, as on the first frame.
 
-Culled and unculled renders are pixel-identical at a fixed time (`--time`) on five views of `sm_hub_1`, `sp_tutorial_1` and `ch_hub_1`. Frame times at 1600 × 900 on an RTX 4060 laptop, measured as the slope between 300 and 1,200 frames: `sm_hub_1` 1.8–2.8 ms against 7.2–11.4 ms without culling, `sp_tutorial_1` 0.2 ms against 2.2 ms. `openbl-viewer --no-cull` draws everything.
+Culled and unculled renders are pixel-identical at a fixed time (`--time`) on five views of `sm_hub_1`, `sp_tutorial_1` and `ch_hub_1`, and, with area portals, on four views each from the player start of `sp_giovanni_2a`, `sp_giovanni_2b`, `ch_temple_1` and `sp_tutorial_1` (the maps with the most closed portals). One view of `sm_warehouse_1` differs by 274 faint pixels, as it already did before area portals and decal culling; not yet explained. Area portals take the `sp_giovanni_2a` start view from 2.00 to 1.37 ms per frame. `openbl-viewer --no-area-portals` opens every portal. Frame times at 1600 × 900 on an RTX 4060 laptop, measured as the slope between 300 and 1,200 frames: `sm_hub_1` 1.8–2.8 ms against 7.2–11.4 ms without culling, `sp_tutorial_1` 0.2 ms against 2.2 ms. `openbl-viewer --no-cull` draws everything.
 
 ## Static prop fades
 
