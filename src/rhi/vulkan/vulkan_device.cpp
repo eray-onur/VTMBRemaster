@@ -216,7 +216,7 @@ public:
         ensure_pass();
         vkCmdDrawIndexed(cmd, index_count, 1, first_index, vertex_offset, 0);
     }
-    void set_shader_data(const void* data, std::size_t size) override {
+    ShaderDataRef set_shader_data(const void* data, std::size_t size) override {
         const VulkanPipeline& p = require_pipeline();
         if (!p.shader_data()) {
             throw std::runtime_error("bound pipeline does not use shader data");
@@ -231,6 +231,19 @@ public:
         std::memcpy(data_base + offset, data, size);
         data_cursor = offset + size;
         const auto dynamic_offset = static_cast<std::uint32_t>(offset);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p.layout(), 1, 1, &data_set, 1, &dynamic_offset);
+        return {offset};
+    }
+    void bind_shader_data(ShaderDataRef ref) override {
+        const VulkanPipeline& p = require_pipeline();
+        if (!p.shader_data()) {
+            throw std::runtime_error("bound pipeline does not use shader data");
+        }
+        // Every block was placed with a full kMaxShaderDataSize range left after it.
+        if (ref.offset >= data_cursor) {
+            throw std::invalid_argument("shader data not placed in this frame");
+        }
+        const auto dynamic_offset = static_cast<std::uint32_t>(ref.offset);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p.layout(), 1, 1, &data_set, 1, &dynamic_offset);
     }
 

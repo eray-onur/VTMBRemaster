@@ -6,9 +6,11 @@
 // animated styles flickering).
 
 #include "openbl/formats/bsp.hpp"
+#include "openbl/formats/draw_order.hpp"
 #include "openbl/render/fog.hpp"
 #include "openbl/render/light_styles.hpp"
 #include "openbl/render/material_system.hpp"
+#include "openbl/render/translucent.hpp"
 #include "openbl/rhi/rhi.hpp"
 
 #include <array>
@@ -100,13 +102,23 @@ public:
                   const std::vector<std::string>& shown = {});
     ~WorldRenderer();
 
-    // `view_projection` is a column-major 4x4 matrix. draw() runs both passes;
-    // callers mixing in other geometry draw all opaque passes before translucent ones.
-    void draw(rhi::CommandList& cmd, const std::array<float, 16>& view_projection, const WorldDrawSettings& settings);
+    // `view_projection` is a column-major 4x4 matrix. Callers mixing in other
+    // geometry draw all opaque passes before the translucent pass.
     void draw_opaque(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
                      const WorldDrawSettings& settings);
-    void draw_translucent(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
-                          const WorldDrawSettings& settings);
+
+    // The translucent pass, in the original's order and mixed with other
+    // renderers' items (render/translucent.hpp): water first, then each
+    // collected item. Translucent faces of the world are grouped by the BSP
+    // node they lie on; those of brush entities count as entities.
+    void draw_water_surfaces(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
+                             const WorldDrawSettings& settings);
+    void collect_translucent(const formats::BspDrawOrder& order, const WorldDrawSettings& settings,
+                             std::uint32_t source, std::vector<TranslucentItem>& out) const;
+    void begin_translucent(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
+                           const WorldDrawSettings& settings);
+    // `rebind`: another renderer drew since this one last did.
+    void draw_translucent_item(rhi::CommandList& cmd, std::uint32_t index, bool rebind);
 
     const WorldStats& stats() const { return stats_; }
     // Visible monitors; draw each camera's view into its target before the frame's main view.
@@ -132,6 +144,13 @@ private:
         bool decal = false;
         bool skybox = false; // In the 3D skybox's area.
         int monitor = -1; // Screen faces of monitors_[monitor], showing its render target.
+        // Translucent batches: the BSP node the faces lie on (-1: none; then
+        // the leaves their bounds touch), whether they belong to a brush
+        // entity, and the centre of their bounds.
+        std::int32_t node = -1;
+        std::vector<std::uint32_t> leaves;
+        bool entity = false;
+        std::array<float, 3> center{};
 
         const rhi::BindGroup& current_bind_group() const;
     };
@@ -139,6 +158,11 @@ private:
     void build_lightmap_atlas(const formats::BspFile& bsp, std::vector<std::array<float, 2>>& face_offsets);
     void draw_batches(rhi::CommandList& cmd, const std::vector<Batch>& batches, const std::array<float, 16>& vp,
                       const WorldDrawSettings& settings);
+    // Fills shader_data_ for `settings`; returns the material params rows it holds.
+    std::size_t build_shader_data(const WorldDrawSettings& settings);
+    void draw_batch(rhi::CommandList& cmd, const Batch& batch, const std::array<float, 16>& vp,
+                    const WorldDrawSettings& settings, std::size_t rows, const rhi::Pipeline*& bound,
+                    const rhi::ShaderDataRef* data);
     const rhi::Pipeline& pipeline_for(const RenderMaterial& m) const;
 
     rhi::Device& device_;
@@ -170,6 +194,14 @@ private:
     LightStyles styles_;
     // Shader data: style brightness (16 float4), then the material params table.
     std::vector<float> shader_data_;
+    // The translucent pass under way (begin_translucent).
+    struct TranslucentPass {
+        std::array<float, 16> view_projection{};
+        WorldDrawSettings settings;
+        std::size_t rows = 1;
+        rhi::ShaderDataRef data;
+        const rhi::Pipeline* bound = nullptr;
+    } pass_;
 };
 
 } // namespace openbl::render

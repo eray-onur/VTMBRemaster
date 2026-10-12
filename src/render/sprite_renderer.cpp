@@ -115,6 +115,10 @@ SpriteRenderer::SpriteRenderer(rhi::Device& device, MaterialSystem& materials, c
         const std::string fr = value(e, "framerate");
         s.framerate = fr.empty() ? 10.0f : static_cast<float>(std::atof(fr.c_str()));
         s.skybox = sky_area && bsp.leafs[bsp.leaf_at({s.origin[0], s.origin[1], s.origin[2]})].area == *sky_area;
+        // Its bounds, for the drawing order: half the picture's larger side around the origin.
+        const float r = 0.5f * static_cast<float>(std::max(m.base->desc().width, m.base->desc().height)) * s.scale;
+        s.leaves = formats::leaves_in_box(bsp, {s.origin[0] - r, s.origin[1] - r, s.origin[2] - r},
+                                          {s.origin[0] + r, s.origin[1] + r, s.origin[2] + r});
         s.phase = static_cast<float>(&e - bsp.entities.data()) * 363.0f; // Pulses desynchronised per entity.
         sprites_.push_back(s);
     }
@@ -153,102 +157,132 @@ const rhi::BindGroup& SpriteRenderer::bind_group(const rhi::Texture* texture) {
     return *g;
 }
 
-void SpriteRenderer::draw(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
-                          const std::array<float, 16>& view, const std::array<float, 3>& eye, float time, const Fog& fog,
-                          bool skybox, float world_scale) {
-    if (sprites_.empty()) {
-        return;
-    }
-    // Camera axes in world space: the rows of the view rotation.
-    const V3 cam_right{view[0], view[4], view[8]};
-    const V3 cam_up{view[1], view[5], view[9]};
-    const auto fog_rows = fog.rows();
-    PushConstants pc{};
-    std::memcpy(pc.view_projection, view_projection.data(), sizeof(pc.view_projection));
-    const rhi::Pipeline* bound = nullptr;
-    for (const Sprite& s : sprites_) {
+void SpriteRenderer::collect_translucent(const formats::BspDrawOrder& order, const std::array<float, 3>& eye,
+                                         bool skybox, std::uint32_t source, std::vector<TranslucentItem>& out) const {
+    for (std::size_t i = 0; i < sprites_.size(); ++i) {
+        const Sprite& s = sprites_[i];
         if (s.skybox != skybox) {
             continue;
         }
-        const RenderMaterial& m = *s.material;
-        const bool glow = is_glow(s.mode);
-        float amount = s.amount;
-        if (s.fx == kRenderFxPulseFast) {
-            amount = std::clamp(amount + 16.0f / 255.0f * std::sin(time * 8.0f + s.phase), 0.0f, 1.0f);
-        }
-        // Material proxies that depend on this sprite's place relative to the
-        // camera (PlayerProximity light cones, LampBeam, LampHalo) set $alpha.
-        const V3 to_sprite{s.origin[0] - eye[0], s.origin[1] - eye[1], s.origin[2] - eye[2]};
-        const float distance = std::sqrt(to_sprite[0] * to_sprite[0] + to_sprite[1] * to_sprite[1] + to_sprite[2] * to_sprite[2]);
-        formats::ProxyContext context;
-        context.time = time;
-        context.player_distance = distance * world_scale;
-        context.view_direction_z = distance > 0.0f ? to_sprite[2] / distance : 0.0f;
-        amount *= materials_.entity_alpha(m, context);
-        if (glow) {
-            // The world hides a glow whose centre it blocks. Props don't, even
-            // a lamp globe around the centre: the original's glow visibility
-            // test only sees the world. The glow is depth-tested like any
-            // sprite, so the globe still covers the middle of it.
-            if (bsp_.segment_blocked({eye[0], eye[1], eye[2]}, {s.origin[0], s.origin[1], s.origin[2]})) {
-                continue;
-            }
-        }
-        if (amount <= 0.0f) {
-            continue;
-        }
-        // The picture: an animated texture steps at the entity's frame rate.
-        const rhi::Texture* texture = m.base;
-        if (!m.base_frames.empty()) {
-            const auto frame = static_cast<std::size_t>(std::max(0.0f, time * s.framerate));
-            texture = m.base_frames[frame % m.base_frames.size()];
-        }
-        const float width = static_cast<float>(texture->desc().width) * s.scale;
-        const float height = static_cast<float>(texture->desc().height) * s.scale;
-        V3 right = cam_right, up = cam_up;
-        switch (m.sprite_orientation) {
-        case RenderMaterial::SpriteOrientation::ParallelUpright: {
-            // Upright, turned about z to face the camera.
-            up = {0, 0, 1};
-            right = normalize(V3{cam_right[0], cam_right[1], 0.0f});
-            break;
-        }
-        case RenderMaterial::SpriteOrientation::Oriented:
-            angle_vectors(s.angles, right, up);
-            break;
-        case RenderMaterial::SpriteOrientation::ViewParallelOriented: {
-            const float roll = s.angles[2] * 3.14159265f / 180.0f;
-            const float c = std::cos(roll), sn = std::sin(roll);
-            right = {cam_right[0] * c + cam_up[0] * sn, cam_right[1] * c + cam_up[1] * sn, cam_right[2] * c + cam_up[2] * sn};
-            up = {cam_up[0] * c - cam_right[0] * sn, cam_up[1] * c - cam_right[1] * sn, cam_up[2] * c - cam_right[2] * sn};
-            break;
-        }
-        case RenderMaterial::SpriteOrientation::ViewParallel:
-            break;
-        }
-        const V3 r = scale(right, width), u = scale(up, height);
-        pc.center[0] = s.origin[0];
-        pc.center[1] = s.origin[1];
-        pc.center[2] = s.origin[2];
-        pc.center[3] = (glow || s.mode == kRenderTransAdd || m.additive) ? 1.0f : 0.0f;
-        std::copy(r.begin(), r.end(), pc.right);
-        pc.right[3] = m.sprite_origin[0];
-        std::copy(u.begin(), u.end(), pc.up);
-        pc.up[3] = m.sprite_origin[1];
-        std::copy(s.color.begin(), s.color.end(), pc.color);
-        pc.color[3] = amount;
-
-        if (!bound) {
-            cmd.set_pipeline(*pipeline_);
-            cmd.set_vertex_buffer(*corners_);
-            cmd.set_index_buffer(*indices_);
-            cmd.set_shader_data(fog_rows.data(), sizeof(fog_rows));
-            bound = pipeline_.get();
-        }
-        cmd.set_bind_group(bind_group(texture));
-        cmd.push_constants(&pc, sizeof(pc));
-        cmd.draw_indexed(6);
+        TranslucentItem item;
+        item.slot = order.nearest_slot(s.leaves);
+        const float dx = s.origin[0] - eye[0], dy = s.origin[1] - eye[1], dz = s.origin[2] - eye[2];
+        item.distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+        item.source = source;
+        item.index = static_cast<std::uint32_t>(i);
+        out.push_back(item);
     }
+}
+
+void SpriteRenderer::begin_translucent(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
+                                       const std::array<float, 16>& view, const std::array<float, 3>& eye, float time,
+                                       const Fog& fog, bool skybox, float world_scale) {
+    pass_.view_projection = view_projection;
+    pass_.view = view;
+    pass_.eye = eye;
+    pass_.time = time;
+    pass_.skybox = skybox;
+    pass_.world_scale = world_scale;
+    const auto fog_rows = fog.rows();
+    cmd.set_pipeline(*pipeline_);
+    pass_.data = cmd.set_shader_data(fog_rows.data(), sizeof(fog_rows));
+    pass_.bound = false;
+}
+
+void SpriteRenderer::draw_translucent_item(rhi::CommandList& cmd, std::uint32_t index, bool rebind) {
+    if (rebind) {
+        pass_.bound = false; // Even if this sprite turns out not to be drawn.
+    }
+    if (index >= sprites_.size()) {
+        return;
+    }
+    const Sprite& s = sprites_[index];
+    const auto& view = pass_.view;
+    const auto& eye = pass_.eye;
+    const float time = pass_.time;
+    // Camera axes in world space: the rows of the view rotation.
+    const V3 cam_right{view[0], view[4], view[8]};
+    const V3 cam_up{view[1], view[5], view[9]};
+    const RenderMaterial& m = *s.material;
+    const bool glow = is_glow(s.mode);
+    float amount = s.amount;
+    if (s.fx == kRenderFxPulseFast) {
+        amount = std::clamp(amount + 16.0f / 255.0f * std::sin(time * 8.0f + s.phase), 0.0f, 1.0f);
+    }
+    // Material proxies that depend on this sprite's place relative to the
+    // camera (PlayerProximity light cones, LampBeam, LampHalo) set $alpha.
+    const V3 to_sprite{s.origin[0] - eye[0], s.origin[1] - eye[1], s.origin[2] - eye[2]};
+    const float distance = std::sqrt(to_sprite[0] * to_sprite[0] + to_sprite[1] * to_sprite[1] + to_sprite[2] * to_sprite[2]);
+    formats::ProxyContext context;
+    context.time = time;
+    context.player_distance = distance * pass_.world_scale;
+    context.view_direction_z = distance > 0.0f ? to_sprite[2] / distance : 0.0f;
+    amount *= materials_.entity_alpha(m, context);
+    if (glow) {
+        // The world hides a glow whose centre it blocks. Props don't, even
+        // a lamp globe around the centre: the original's glow visibility
+        // test only sees the world. The glow is depth-tested like any
+        // sprite, so the globe still covers the middle of it.
+        if (bsp_.segment_blocked({eye[0], eye[1], eye[2]}, {s.origin[0], s.origin[1], s.origin[2]})) {
+            return;
+        }
+    }
+    if (amount <= 0.0f) {
+        return;
+    }
+    // The picture: an animated texture steps at the entity's frame rate.
+    const rhi::Texture* texture = m.base;
+    if (!m.base_frames.empty()) {
+        const auto frame = static_cast<std::size_t>(std::max(0.0f, time * s.framerate));
+        texture = m.base_frames[frame % m.base_frames.size()];
+    }
+    const float width = static_cast<float>(texture->desc().width) * s.scale;
+    const float height = static_cast<float>(texture->desc().height) * s.scale;
+    V3 right = cam_right, up = cam_up;
+    switch (m.sprite_orientation) {
+    case RenderMaterial::SpriteOrientation::ParallelUpright: {
+        // Upright, turned about z to face the camera.
+        up = {0, 0, 1};
+        right = normalize(V3{cam_right[0], cam_right[1], 0.0f});
+        break;
+    }
+    case RenderMaterial::SpriteOrientation::Oriented:
+        angle_vectors(s.angles, right, up);
+        break;
+    case RenderMaterial::SpriteOrientation::ViewParallelOriented: {
+        const float roll = s.angles[2] * 3.14159265f / 180.0f;
+        const float c = std::cos(roll), sn = std::sin(roll);
+        right = {cam_right[0] * c + cam_up[0] * sn, cam_right[1] * c + cam_up[1] * sn, cam_right[2] * c + cam_up[2] * sn};
+        up = {cam_up[0] * c - cam_right[0] * sn, cam_up[1] * c - cam_right[1] * sn, cam_up[2] * c - cam_right[2] * sn};
+        break;
+    }
+    case RenderMaterial::SpriteOrientation::ViewParallel:
+        break;
+    }
+    const V3 r = scale(right, width), u = scale(up, height);
+    PushConstants pc{};
+    std::memcpy(pc.view_projection, pass_.view_projection.data(), sizeof(pc.view_projection));
+    pc.center[0] = s.origin[0];
+    pc.center[1] = s.origin[1];
+    pc.center[2] = s.origin[2];
+    pc.center[3] = (glow || s.mode == kRenderTransAdd || m.additive) ? 1.0f : 0.0f;
+    std::copy(r.begin(), r.end(), pc.right);
+    pc.right[3] = m.sprite_origin[0];
+    std::copy(u.begin(), u.end(), pc.up);
+    pc.up[3] = m.sprite_origin[1];
+    std::copy(s.color.begin(), s.color.end(), pc.color);
+    pc.color[3] = amount;
+
+    if (!pass_.bound) {
+        cmd.set_pipeline(*pipeline_);
+        cmd.set_vertex_buffer(*corners_);
+        cmd.set_index_buffer(*indices_);
+        cmd.bind_shader_data(pass_.data);
+        pass_.bound = true;
+    }
+    cmd.set_bind_group(bind_group(texture));
+    cmd.push_constants(&pc, sizeof(pc));
+    cmd.draw_indexed(6);
 }
 
 } // namespace openbl::render

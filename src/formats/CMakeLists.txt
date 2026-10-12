@@ -4,6 +4,7 @@ add_library(openbl_formats
     bsp.cpp
     console_script.cpp
     dlg.cpp
+    draw_order.cpp
     expressions.cpp
     fnt.cpp
     image_decode.cpp

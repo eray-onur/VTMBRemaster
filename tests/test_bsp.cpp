@@ -1,4 +1,5 @@
 #include "openbl/formats/bsp.hpp"
+#include "openbl/formats/draw_order.hpp"
 #include "openbl/formats/mesh_decal.hpp"
 #include "openbl/formats/error.hpp"
 #include "openbl/formats/zip.hpp"
@@ -657,6 +658,74 @@ TEST_CASE("BSP lightmap trace") {
     CHECK_FALSE(bsp.trace_lightmap({100, 24, 10}, {100, 24, -10})); // Off the face: blocked by solid.
     CHECK_FALSE(bsp.trace_lightmap({40, 24, 10}, {50, 24, 20}));    // Never reaches the plane.
     CHECK_FALSE(bsp.trace_lightmap({40, 24, -10}, {40, 24, 10}));   // Starts inside solid.
+}
+
+TEST_CASE("BSP draw order: back to front from the eye") {
+    // Node 0 splits at x = 0 (front: x >= 0); its front child, node 1, splits
+    // at y = 0. Leaves: 0 (x < 0), 1 (x >= 0, y >= 0), 2 (x >= 0, y < 0).
+    BspFile bsp;
+    bsp.planes.push_back({{1, 0, 0}, 0});
+    bsp.planes.push_back({{0, 1, 0}, 0});
+    BspNode root;
+    root.plane = 0;
+    root.children = {1, -1};
+    root.num_faces = 1; // Face 0.
+    BspNode inner;
+    inner.plane = 1;
+    inner.children = {-2, -3};
+    inner.first_face = 1;
+    inner.num_faces = 1; // Face 1.
+    bsp.nodes = {root, inner};
+    bsp.leafs.resize(3);
+    bsp.faces.resize(3); // Face 2 lies on no node (as for brush entities).
+    bsp.models.push_back({});
+
+    BspDrawOrder order(bsp);
+    order.update({10, 10, 0}); // In leaf 1.
+    // Farthest first: leaf 0 behind the x plane, then the x plane's faces,
+    // then leaf 2 behind the y plane, the y plane's faces, and the eye's leaf.
+    CHECK(order.leaf_slot(0) < order.node_slot(0));
+    CHECK(order.node_slot(0) < order.leaf_slot(2));
+    CHECK(order.leaf_slot(2) < order.node_slot(1));
+    CHECK(order.node_slot(1) < order.leaf_slot(1));
+    CHECK(order.point_slot({5, 5, 0}) == order.leaf_slot(1));
+
+    order.update({-10, 10, 0}); // In leaf 0: now the x >= 0 half is behind.
+    CHECK(order.leaf_slot(1) < order.node_slot(0));
+    CHECK(order.leaf_slot(2) < order.node_slot(0));
+    CHECK(order.node_slot(0) < order.leaf_slot(0));
+
+    const auto nodes = face_nodes(bsp);
+    CHECK(nodes == std::vector<std::int32_t>{0, 1, -1});
+
+    // A box across the x plane touches leaves 0 and 1 and is drawn in the
+    // nearer one; a box inside leaf 2 touches only it.
+    auto across = leaves_in_box(bsp, {-5, 5, 0}, {5, 10, 1});
+    std::sort(across.begin(), across.end());
+    CHECK(across == std::vector<std::uint32_t>{0, 1});
+    CHECK(leaves_in_box(bsp, {1, -9, 0}, {2, -8, 1}) == std::vector<std::uint32_t>{2});
+    CHECK(order.nearest_slot(across) == order.leaf_slot(0)); // The eye is in leaf 0 now.
+    order.update({10, 10, 0});
+    CHECK(order.nearest_slot(across) == order.leaf_slot(1));
+}
+
+TEST_CASE("Static prop fade: linear in the squared distance") {
+    BspStaticProp prop;
+    prop.fade_min = 1000;
+    prop.fade_max = 2000;
+    CHECK(static_prop_fade(prop, 3000) == 1.0f); // Flag unset: never fades.
+    prop.flags = kStaticPropFades;
+    CHECK(static_prop_fade(prop, 500) == 1.0f);
+    CHECK(static_prop_fade(prop, 1000) == 1.0f);
+    CHECK(static_prop_fade(prop, 2000) == 0.0f);
+    CHECK(static_prop_fade(prop, 2500) == 0.0f);
+    // Halfway in squared distance (1581 units) is half faded; halfway in
+    // distance (1500) is still 7/12 opaque.
+    CHECK(static_prop_fade(prop, std::sqrt(2.5e6f)) == doctest::Approx(0.5f));
+    CHECK(static_prop_fade(prop, 1500) == doctest::Approx(7.0f / 12.0f));
+    prop.fade_min = prop.fade_max; // Pops out at the distance.
+    CHECK(static_prop_fade(prop, 1999) == 1.0f);
+    CHECK(static_prop_fade(prop, 2000) == 0.0f);
 }
 
 TEST_CASE("BSP integration: infodecals land on world faces") {

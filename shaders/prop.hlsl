@@ -24,6 +24,7 @@ static const uint kMultiplyLayers = 64;
 static const uint kAdditive = 128;
 static const uint kEnvmap = 256;
 static const uint kEnvmapMaskShift = 9; // 2 bits, as for the world.
+static const uint kFadeShift = 24;      // 8 bits: 255 - the static prop fade's opacity.
 
 // The fog (2 elements; see color.hlsli), the eye (xyz; w: element where the
 // envmap blocks start), then the material params table: 8 elements per row
@@ -116,5 +117,6 @@ float4 ps_main(VSOutput input) : SV_Target {
                              material_param(7).x);
     }
     const float3 result = (pc.flags & kAdditive) ? encoded * (1.0 - fog) : fogged(encoded, material_params[0], fog);
-    return float4(result, (pc.flags & kTranslucent) ? base.a * tint.a : 1.0);
+    const float fade = 1.0 - (float)(pc.flags >> kFadeShift) / 255.0;
+    return float4(result, ((pc.flags & kTranslucent) ? base.a * tint.a : 1.0) * fade);
 }

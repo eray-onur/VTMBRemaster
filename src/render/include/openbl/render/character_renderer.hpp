@@ -12,6 +12,8 @@
 #include "openbl/render/asset_source.hpp"
 #include "openbl/render/material_system.hpp"
 #include "openbl/render/prop_lighting.hpp"
+#include "openbl/formats/draw_order.hpp"
+#include "openbl/render/translucent.hpp"
 #include "openbl/rhi/rhi.hpp"
 
 #include <algorithm>
@@ -88,8 +90,12 @@ public:
     void update(float time);
     void draw_opaque(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
                      const CharacterDrawSettings& settings);
-    void draw_translucent(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
-                          const CharacterDrawSettings& settings);
+    // The translucent pass in the original's order (render/translucent.hpp):
+    // one item per character with translucent meshes.
+    void collect_translucent(const formats::BspDrawOrder& order, const CharacterDrawSettings& settings,
+                             std::uint32_t source, std::vector<TranslucentItem>& out) const;
+    void begin_translucent(const std::array<float, 16>& view_projection, const CharacterDrawSettings& settings);
+    void draw_translucent_item(rhi::CommandList& cmd, std::uint32_t index);
 
     const CharacterStats& stats() const { return stats_; }
 
@@ -142,13 +148,18 @@ private:
         std::vector<float> cloth_data; // Positions, then normals: float4 per particle; updated by update().
         std::optional<float> cloth_time; // Time of the last cloth update.
         bool envmapped = false;                // Some mesh of its skin has an environment map.
+        bool has_translucent = false;          // Some mesh of its skin is translucent.
         const rhi::Texture* cubemap = nullptr; // Nearest cubemap, for "env_cubemap" materials.
+        std::vector<std::uint32_t> leaves;     // World leaves around it.
     };
 
     const Model* load_model(const std::string& path);
     void update_cloth(Instance& inst, float dt);
     void draw_pass(rhi::CommandList& cmd, const std::array<float, 16>& vp, const CharacterDrawSettings& settings,
                    bool translucent);
+    // Draws one character's opaque or translucent meshes (it places its own shader data).
+    void draw_instance(rhi::CommandList& cmd, const std::array<float, 16>& vp, const CharacterDrawSettings& settings,
+                       const Instance& inst, bool translucent);
 
     rhi::Device& device_;
     MaterialSystem& materials_;
@@ -159,6 +170,9 @@ private:
     std::array<std::array<std::unique_ptr<rhi::Pipeline>, 2>, 3> pipelines_; // [blend][cull]
     std::unordered_map<std::string, std::unique_ptr<Model>> models_;
     std::vector<Instance> instances_;
+    // The translucent pass under way (begin_translucent).
+    std::array<float, 16> pass_view_projection_{};
+    CharacterDrawSettings pass_settings_;
 };
 
 template <typename Fn>

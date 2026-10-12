@@ -258,8 +258,12 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
         stats_.with_cloth += !inst.cloth.empty();
         for (const Mesh& mesh : model->skins[inst.skin]) {
             inst.envmapped = inst.envmapped || mesh.material->envmap;
+            inst.has_translucent = inst.has_translucent || mesh.material->translucent;
         }
         stats_.with_envmap += inst.envmapped;
+        // A person-sized box at the origin, for the leaves it stands in.
+        inst.leaves = formats::leaves_in_box(bsp, {origin[0] - 16, origin[1] - 16, origin[2]},
+                                             {origin[0] + 16, origin[1] + 16, origin[2] + 72});
         if (inst.envmapped) {
             inst.cubemap = materials.nearest_cubemap({origin[0], origin[1], origin[2] + kLightingHeight});
         }
@@ -508,15 +512,22 @@ void CharacterRenderer::update_cloth(Instance& inst, float dt) {
 
 void CharacterRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float, 16>& vp,
                                   const CharacterDrawSettings& settings, bool translucent) {
+    for (const Instance& inst : instances_) {
+        draw_instance(cmd, vp, settings, inst, translucent);
+    }
+}
+
+void CharacterRenderer::draw_instance(rhi::CommandList& cmd, const std::array<float, 16>& vp,
+                                      const CharacterDrawSettings& settings, const Instance& inst, bool translucent) {
     const glm::mat4 view_projection = glm::make_mat4(vp.data());
     std::vector<float> data;
-    for (const Instance& inst : instances_) {
+    {
         bool any = false;
         for (const Mesh& mesh : inst.model->skins[inst.skin]) {
             any = any || mesh.material->translucent == translucent;
         }
         if (!any) {
-            continue;
+            return;
         }
         // Shader data: ambient cube (6 float4), then 3 float4 rows per bone,
         // then the material params of each mesh drawn in this pass.
@@ -617,9 +628,34 @@ void CharacterRenderer::draw_opaque(rhi::CommandList& cmd, const std::array<floa
     draw_pass(cmd, view_projection, settings, false);
 }
 
-void CharacterRenderer::draw_translucent(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
-                                         const CharacterDrawSettings& settings) {
-    draw_pass(cmd, view_projection, settings, true);
+void CharacterRenderer::collect_translucent(const formats::BspDrawOrder& order, const CharacterDrawSettings& settings,
+                                            std::uint32_t source, std::vector<TranslucentItem>& out) const {
+    for (std::size_t i = 0; i < instances_.size(); ++i) {
+        const Instance& inst = instances_[i];
+        if (!inst.has_translucent) {
+            continue;
+        }
+        TranslucentItem item;
+        item.slot = order.nearest_slot(inst.leaves);
+        const float dx = inst.transform[12] - settings.eye[0], dy = inst.transform[13] - settings.eye[1],
+                    dz = inst.transform[14] - settings.eye[2];
+        item.distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+        item.source = source;
+        item.index = static_cast<std::uint32_t>(i);
+        out.push_back(item);
+    }
+}
+
+void CharacterRenderer::begin_translucent(const std::array<float, 16>& view_projection,
+                                          const CharacterDrawSettings& settings) {
+    pass_view_projection_ = view_projection;
+    pass_settings_ = settings;
+}
+
+void CharacterRenderer::draw_translucent_item(rhi::CommandList& cmd, std::uint32_t index) {
+    if (index < instances_.size()) {
+        draw_instance(cmd, pass_view_projection_, pass_settings_, instances_[index], true);
+    }
 }
 
 } // namespace openbl::render

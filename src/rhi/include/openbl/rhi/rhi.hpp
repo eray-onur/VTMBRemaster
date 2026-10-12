@@ -151,6 +151,11 @@ public:
     virtual ~BindGroup() = default;
 };
 
+// Shader data already placed in this frame's memory (see set_shader_data).
+struct ShaderDataRef {
+    std::uint64_t offset = ~std::uint64_t{0};
+};
+
 class CommandList {
 public:
     virtual ~CommandList() = default;
@@ -161,7 +166,10 @@ public:
     virtual void push_constants(const void* data, std::uint32_t size) = 0;
     // Copies `size` bytes (at most kMaxShaderDataSize) into per-frame memory and
     // binds them for the following draws. The bound pipeline must use shader_data.
-    virtual void set_shader_data(const void* data, std::size_t size) = 0;
+    virtual ShaderDataRef set_shader_data(const void* data, std::size_t size) = 0;
+    // Binds data placed earlier in this frame again, without copying it: for
+    // drawing a renderer's items interleaved with other renderers' draws.
+    virtual void bind_shader_data(ShaderDataRef ref) = 0;
     virtual void draw_indexed(std::uint32_t index_count, std::uint32_t first_index = 0, std::int32_t vertex_offset = 0) = 0;
 
     // Draws the following commands into `target` (cleared to `clear_color`)

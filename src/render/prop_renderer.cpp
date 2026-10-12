@@ -55,6 +55,7 @@ constexpr std::uint32_t kMultiplyLayers = 64;
 constexpr std::uint32_t kAdditive = 128;
 constexpr std::uint32_t kEnvmap = 256;
 constexpr std::uint32_t kEnvmapMaskShift = 9;
+constexpr std::uint32_t kFadeShift = 24; // 8 bits: 255 - the fade's opacity.
 
 // Source angles: pitch (down positive) about Y, yaw about Z, roll about X;
 // applied roll, then pitch, then yaw.
@@ -108,7 +109,8 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
         }
     }
     auto add = [&](const std::string& path, const formats::Vec3& origin, const formats::Vec3& angles,
-                   std::size_t skin, const std::optional<formats::Vec3>& lighting_origin) {
+                   std::size_t skin, const std::optional<formats::Vec3>& lighting_origin,
+                   const formats::BspStaticProp* static_prop) {
         const Model* model = load_model(path);
         if (!model) {
             return;
@@ -152,7 +154,24 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
         }
         for (const Mesh& mesh : model->skins[inst.skin]) {
             inst.envmapped = inst.envmapped || mesh.material->envmap;
+            inst.has_translucent = inst.has_translucent || mesh.material->translucent;
         }
+        if (static_prop && (static_prop->flags & formats::kStaticPropFades)) {
+            inst.fade = *static_prop;
+            ++stats_.fading;
+        }
+        // The world-space box around the model's bounds, for the leaves it touches.
+        glm::vec3 lo(INFINITY), hi(-INFINITY);
+        for (int corner = 0; corner < 8; ++corner) {
+            glm::vec3 local = glm::make_vec3(model->center.data());
+            for (int k = 0; k < 3; ++k) {
+                local[k] += ((corner >> k) & 1 ? 1.0f : -1.0f) * model->half_extent[static_cast<std::size_t>(k)];
+            }
+            const glm::vec3 w(m * glm::vec4(local, 1.0f));
+            lo = glm::min(lo, w);
+            hi = glm::max(hi, w);
+        }
+        inst.leaves = formats::leaves_in_box(bsp, {lo.x, lo.y, lo.z}, {hi.x, hi.y, hi.z});
         if (inst.envmapped) {
             inst.cubemap = materials_.nearest_cubemap({c.x, c.y, c.z});
         }
@@ -162,7 +181,7 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
     constexpr std::uint8_t kUseLightingOrigin = 0x2;
     for (const auto& sp : bsp.static_props) {
         add(bsp.static_prop_models[sp.model], sp.origin, sp.angles, static_cast<std::size_t>(std::max(sp.skin, 0)),
-            (sp.flags & kUseLightingOrigin) ? std::optional(sp.lighting_origin) : std::nullopt);
+            (sp.flags & kUseLightingOrigin) ? std::optional(sp.lighting_origin) : std::nullopt, &sp);
     }
     for (const auto& e : bsp.entities) {
         auto cls = e.find("classname");
@@ -182,7 +201,7 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
             skin = static_cast<std::size_t>(std::max(0, std::atoi(s->second.c_str())));
         }
         const auto origin = parse_vec3(e, "origin");
-        add(formats::normalize_game_path(model->second), origin, parse_vec3(e, "angles"), skin, std::nullopt);
+        add(formats::normalize_game_path(model->second), origin, parse_vec3(e, "angles"), skin, std::nullopt, nullptr);
     }
     stats_.instances = instances_.size();
     place_decals(bsp);
@@ -390,12 +409,7 @@ const rhi::Pipeline& PropRenderer::pipeline_for(const RenderMaterial& m) const {
     return *pipelines_[blend][m.no_cull ? 1 : 0];
 }
 
-void PropRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float, 16>& vp, const PropDrawSettings& settings,
-                             bool translucent) {
-    const glm::mat4 view_projection = glm::make_mat4(vp.data());
-    const rhi::Pipeline* bound_pipeline = nullptr;
-    const Model* bound_model = nullptr;
-    PushConstants pc{};
+std::size_t PropRenderer::build_shader_data(const PropDrawSettings& settings) {
     static const std::vector<MaterialParams> kDefaults{MaterialParams{}};
     const std::vector<MaterialParams>& params = settings.material_params ? *settings.material_params : kDefaults;
     // Shader data: the fog (2 float4), the eye (w: where the envmap blocks
@@ -427,85 +441,158 @@ void PropRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float, 16>&
     const auto* first = reinterpret_cast<const float*>(params.data());
     shader_data_.insert(shader_data_.end(), first, first + rows * sizeof(MaterialParams) / sizeof(float));
     shader_data_.insert(shader_data_.end(), blocks.begin(), blocks.end());
-    std::size_t instance_index = 0;
-    for (const Instance& inst : instances_) {
-        const std::uint32_t block = envmap_blocks_[instance_index++];
-        if (inst.skybox != settings.skybox) {
-            continue;
-        }
-        const glm::mat4 mvp = view_projection * glm::make_mat4(inst.transform.data());
-        std::memcpy(pc.mvp, glm::value_ptr(mvp), sizeof(pc.mvp));
-        for (std::size_t k = 0; k < 4; ++k) {
-            pc.model_z[k] = inst.transform[k * 4 + 2]; // Column-major: row 2.
-        }
-        for (std::size_t h = 0; h < 18; ++h) {
-            const std::uint32_t half = detail::to_half(inst.lighting.color[h / 3][h % 3] * settings.light_scale);
-            pc.cube[h / 2] = (h % 2) ? ((pc.cube[h / 2] & 0xFFFFu) | (half << 16)) : half;
-        }
-        for (const Mesh& mesh : inst.model->skins[inst.skin]) {
-            const RenderMaterial& m = *mesh.material;
-            if (m.translucent != translucent) {
-                continue;
-            }
-            const rhi::Pipeline& pipeline = pipeline_for(m);
-            if (&pipeline != bound_pipeline) {
-                cmd.set_pipeline(pipeline);
-                cmd.set_shader_data(shader_data_.data(), shader_data_.size() * sizeof(float));
-                bound_pipeline = &pipeline;
-            }
-            if (inst.model != bound_model) {
-                cmd.set_vertex_buffer(*inst.model->vertices);
-                cmd.set_index_buffer(*inst.model->indices);
-                bound_model = inst.model;
-            }
-            pc.alpha_ref = m.alpha_ref;
-            pc.flags = (m.alpha_test ? kAlphaTest : 0) | ((m.unlit || settings.fullbright) ? kUnlit : 0) |
-                       (m.self_illum ? kSelfIllum : 0) | (m.translucent ? kTranslucent : 0) |
-                       (m.multiply_layers ? kMultiplyLayers : 0) | (m.additive ? kAdditive : 0);
-            pc.params_index = m.params_index < rows ? m.params_index : 0;
-            const rhi::BindGroup* group = mesh.frame_bind_groups.empty()
-                                              ? mesh.bind_group.get()
-                                              : mesh.frame_bind_groups[m.base_frame % mesh.frame_bind_groups.size()].get();
-            if (m.envmap && block != UINT32_MAX) {
-                pc.flags |= kEnvmap | (static_cast<std::uint32_t>(m.envmap_mask_mode) << kEnvmapMaskShift);
-                pc.params_index |= block << 16;
-                if (m.envmap_nearest && inst.cubemap && inst.cubemap != m.envmap) {
-                    auto& g = mesh.cubemap_groups[inst.cubemap];
-                    if (!g) {
-                        const rhi::Texture* textures[] = {m.base, m.base2, inst.cubemap, m.envmap_mask};
-                        g = device_.create_bind_group(*pipelines_[0][0], *sampler_, textures);
-                    }
-                    group = g.get();
-                }
-            }
-            cmd.set_bind_group(*group);
-            cmd.push_constants(&pc, sizeof(pc));
-            cmd.draw_indexed(mesh.index_count, mesh.first_index);
-        }
-        if (!translucent) {
-            continue;
-        }
-        // Decals on this prop: alpha-blended over it, lit like it.
-        for (const Decal& decal : inst.decals) {
-            const RenderMaterial& m = *decal.material;
-            const rhi::Pipeline& pipeline = *pipelines_[1][0];
-            if (&pipeline != bound_pipeline) {
-                cmd.set_pipeline(pipeline);
-                cmd.set_shader_data(shader_data_.data(), shader_data_.size() * sizeof(float));
-                bound_pipeline = &pipeline;
-            }
-            cmd.set_vertex_buffer(*decal.vertices);
-            cmd.set_index_buffer(*decal.indices);
-            bound_model = nullptr;
-            pc.alpha_ref = m.alpha_ref;
-            pc.flags = (m.alpha_test ? kAlphaTest : 0) | ((m.unlit || settings.fullbright) ? kUnlit : 0) |
-                       (m.self_illum ? kSelfIllum : 0) | kTranslucent;
-            pc.params_index = m.params_index < rows ? m.params_index : 0;
-            cmd.set_bind_group(*decal.bind_group);
-            cmd.push_constants(&pc, sizeof(pc));
-            cmd.draw_indexed(decal.index_count, 0);
-        }
+    return rows;
+}
+
+void PropRenderer::draw_instance(rhi::CommandList& cmd, const std::array<float, 16>& vp,
+                                 const PropDrawSettings& settings, std::size_t rows, std::size_t index,
+                                 bool translucent, Bound& bound, const rhi::ShaderDataRef* data) {
+    const Instance& inst = instances_[index];
+    if (inst.skybox != settings.skybox || inst.alpha <= 0.0f) {
+        return;
     }
+    const bool fading = inst.alpha < 1.0f;
+    if (fading && !translucent) {
+        return; // Drawn whole with the translucent things.
+    }
+    const std::uint32_t block = envmap_blocks_[index];
+    auto bind = [&](const rhi::Pipeline& pipeline) {
+        if (&pipeline != bound.pipeline) {
+            cmd.set_pipeline(pipeline);
+            if (data) {
+                cmd.bind_shader_data(*data);
+            } else {
+                cmd.set_shader_data(shader_data_.data(), shader_data_.size() * sizeof(float));
+            }
+            bound.pipeline = &pipeline;
+        }
+    };
+    PushConstants pc{};
+    const glm::mat4 mvp = glm::make_mat4(vp.data()) * glm::make_mat4(inst.transform.data());
+    std::memcpy(pc.mvp, glm::value_ptr(mvp), sizeof(pc.mvp));
+    for (std::size_t k = 0; k < 4; ++k) {
+        pc.model_z[k] = inst.transform[k * 4 + 2]; // Column-major: row 2.
+    }
+    for (std::size_t h = 0; h < 18; ++h) {
+        const std::uint32_t half = detail::to_half(inst.lighting.color[h / 3][h % 3] * settings.light_scale);
+        pc.cube[h / 2] = (h % 2) ? ((pc.cube[h / 2] & 0xFFFFu) | (half << 16)) : half;
+    }
+    const std::uint32_t fade_bits =
+        fading ? (255u - static_cast<std::uint32_t>(inst.alpha * 255.0f)) << kFadeShift : 0u;
+    for (const Mesh& mesh : inst.model->skins[inst.skin]) {
+        const RenderMaterial& m = *mesh.material;
+        if (m.translucent != translucent && !fading) {
+            continue;
+        }
+        // A fading prop's opaque meshes blend by the fade, without writing depth.
+        bind(m.translucent || !fading ? pipeline_for(m) : *pipelines_[1][m.no_cull ? 1 : 0]);
+        if (inst.model != bound.model) {
+            cmd.set_vertex_buffer(*inst.model->vertices);
+            cmd.set_index_buffer(*inst.model->indices);
+            bound.model = inst.model;
+        }
+        pc.alpha_ref = m.alpha_ref;
+        pc.flags = (m.alpha_test ? kAlphaTest : 0) | ((m.unlit || settings.fullbright) ? kUnlit : 0) |
+                   (m.self_illum ? kSelfIllum : 0) | (m.translucent ? kTranslucent : 0) |
+                   (m.multiply_layers ? kMultiplyLayers : 0) | (m.additive ? kAdditive : 0) | fade_bits;
+        pc.params_index = m.params_index < rows ? m.params_index : 0;
+        const rhi::BindGroup* group = mesh.frame_bind_groups.empty()
+                                          ? mesh.bind_group.get()
+                                          : mesh.frame_bind_groups[m.base_frame % mesh.frame_bind_groups.size()].get();
+        if (m.envmap && block != UINT32_MAX) {
+            pc.flags |= kEnvmap | (static_cast<std::uint32_t>(m.envmap_mask_mode) << kEnvmapMaskShift);
+            pc.params_index |= block << 16;
+            if (m.envmap_nearest && inst.cubemap && inst.cubemap != m.envmap) {
+                auto& g = mesh.cubemap_groups[inst.cubemap];
+                if (!g) {
+                    const rhi::Texture* textures[] = {m.base, m.base2, inst.cubemap, m.envmap_mask};
+                    g = device_.create_bind_group(*pipelines_[0][0], *sampler_, textures);
+                }
+                group = g.get();
+            }
+        }
+        cmd.set_bind_group(*group);
+        cmd.push_constants(&pc, sizeof(pc));
+        cmd.draw_indexed(mesh.index_count, mesh.first_index);
+    }
+    if (!translucent) {
+        return;
+    }
+    // Decals on this prop: alpha-blended over it, lit like it.
+    for (const Decal& decal : inst.decals) {
+        const RenderMaterial& m = *decal.material;
+        bind(*pipelines_[1][0]);
+        cmd.set_vertex_buffer(*decal.vertices);
+        cmd.set_index_buffer(*decal.indices);
+        bound.model = nullptr;
+        pc.alpha_ref = m.alpha_ref;
+        pc.flags = (m.alpha_test ? kAlphaTest : 0) | ((m.unlit || settings.fullbright) ? kUnlit : 0) |
+                   (m.self_illum ? kSelfIllum : 0) | kTranslucent | fade_bits;
+        pc.params_index = m.params_index < rows ? m.params_index : 0;
+        cmd.set_bind_group(*decal.bind_group);
+        cmd.push_constants(&pc, sizeof(pc));
+        cmd.draw_indexed(decal.index_count, 0);
+    }
+}
+
+void PropRenderer::update_fades(const std::array<float, 3>& eye) {
+    for (Instance& inst : instances_) {
+        if (!inst.fade) {
+            continue;
+        }
+        // Measured to the prop's origin (engine.dll takes its render origin).
+        const auto& o = inst.fade->origin;
+        const float dx = o[0] - eye[0], dy = o[1] - eye[1], dz = o[2] - eye[2];
+        inst.alpha = formats::static_prop_fade(*inst.fade, std::sqrt(dx * dx + dy * dy + dz * dz));
+    }
+}
+
+void PropRenderer::draw_opaque(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
+                               const PropDrawSettings& settings) {
+    const std::size_t rows = build_shader_data(settings);
+    Bound bound;
+    for (std::size_t i = 0; i < instances_.size(); ++i) {
+        draw_instance(cmd, view_projection, settings, rows, i, false, bound, nullptr);
+    }
+}
+
+void PropRenderer::collect_translucent(const formats::BspDrawOrder& order, const PropDrawSettings& settings,
+                                       std::uint32_t source, std::vector<TranslucentItem>& out) const {
+    for (std::size_t i = 0; i < instances_.size(); ++i) {
+        const Instance& inst = instances_[i];
+        if (inst.skybox != settings.skybox || inst.alpha <= 0.0f ||
+            !(inst.has_translucent || !inst.decals.empty() || inst.alpha < 1.0f)) {
+            continue;
+        }
+        TranslucentItem item;
+        item.slot = order.nearest_slot(inst.leaves);
+        const float dx = inst.transform[12] - settings.eye[0], dy = inst.transform[13] - settings.eye[1],
+                    dz = inst.transform[14] - settings.eye[2];
+        item.distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+        item.source = source;
+        item.index = static_cast<std::uint32_t>(i);
+        out.push_back(item);
+    }
+}
+
+void PropRenderer::begin_translucent(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
+                                     const PropDrawSettings& settings) {
+    pass_.view_projection = view_projection;
+    pass_.settings = settings;
+    pass_.rows = build_shader_data(settings);
+    pass_.bound = {};
+    cmd.set_pipeline(*pipelines_[1][0]);
+    pass_.data = cmd.set_shader_data(shader_data_.data(), shader_data_.size() * sizeof(float));
+}
+
+void PropRenderer::draw_translucent_item(rhi::CommandList& cmd, std::uint32_t index, bool rebind) {
+    if (index >= instances_.size()) {
+        return;
+    }
+    if (rebind) {
+        pass_.bound = {};
+    }
+    draw_instance(cmd, pass_.view_projection, pass_.settings, pass_.rows, index, true, pass_.bound, &pass_.data);
 }
 
 } // namespace openbl::render

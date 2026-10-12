@@ -43,7 +43,7 @@ The renderer talks to a thin rendering hardware interface (RHI) with two backend
 
 - **Objects:** buffers, textures, samplers, pipelines, bind groups and one command list per frame.
 - **Resource layout:** every pipeline uses the same one. Set 0 holds a sampler at binding 0 and N textures at bindings 1..N. That maps to a Vulkan descriptor set or a D3D12 descriptor table.
-- **Per-draw data:** small values go in push constants (root constants in D3D12). Larger blocks, such as bone matrices, go through `CommandList::set_shader_data`. It copies them into a per-frame upload buffer and binds them as a read-only structured buffer at set/space 1, binding 0, using a dynamic offset (a root SRV in D3D12).
+- **Per-draw data:** small values go in push constants (root constants in D3D12). Larger blocks, such as bone matrices, go through `CommandList::set_shader_data`. It copies them into a per-frame upload buffer and binds them as a read-only structured buffer at set/space 1, binding 0, using a dynamic offset (a root SRV in D3D12). It returns a `ShaderDataRef`, and `bind_shader_data` binds that block again later in the frame without copying it, so renderers whose translucent items are drawn interleaved upload their tables once.
 - **Shaders are written in HLSL** (`shaders/`). glslang compiles them to SPIR-V at build time; DXC will produce DXIL for D3D12 from the same source.
 - **Vulkan 1.3 backend:** dynamic rendering, synchronization2, two frames in flight, and memory through VMA. Resources are destroyed only once the GPU has finished every frame that might use them.
 - **Captures:** `request_capture()` and `take_capture()` read back the frame, which the parity tests will build on.

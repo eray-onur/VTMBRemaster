@@ -77,7 +77,9 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Environment maps on the world: cube maps from the map pakfile (RHI cube textures), added after lighting with tint, contrast, saturation and the three mask kinds, as the original's DX9 shader does; road brightness checked on `sm_hub_1`; viewer `--no-envmap`
 - [x] Environment maps on props and characters (`VertexLitGeneric`), nearest cubemap per model; checked on the `sm_hub_1` manhole
 - [x] Environment maps: `$fresnelreflection` (unused; default none), `$envmapmode` (not read by the shaders), sphere maps resampled to cubes, cheap water (`$forcecheap`, distance blend; works in the 3D skybox)
-- [ ] Translucent sorting, prop fade distances
+- [x] Translucent sorting: one queue in the original's BSP order (world surfaces by node or nearest leaf, entities in the nearest leaf they touch, farthest first) across the world, props, characters and sprites ([RENDERING.md](RENDERING.md#translucent-order))
+- [x] Static prop fades, read from `engine.dll`: linear in the squared distance from the main camera, used in every view; viewer `--no-prop-fade`
+- [ ] Translucent order and fades: particles in the queue; compare fades with the running game
 - [x] Sprites (`env_sprite`): render modes, colour and amount, orientation modes, depth-tested glows hidden only when the world blocks their centre (lamp-globe glows drawn, as the original does); viewer `--no-sprites`
 - [x] Sprites: world glows (`rendermode` 9), the fast pulse (`renderfx` 2), and the `PlayerProximity`, `LampBeam` and `LampHalo` fades (formulas read from `client.dll`); glows keep their world size (confirmed in the client code)
 - [x] Sprites checked against the original on `sm_hub_1` with `r_drawsprites` on/off captures: colour mode, additive, lamp-globe glows and the skyline light cones, within about 7% except a faint glow excess close to a lamp and cones at 0.87 ([RENDERING.md](RENDERING.md#sprites-env_sprite))

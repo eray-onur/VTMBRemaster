@@ -117,6 +117,27 @@ Doubling the distance instead fits worse (it overshoots the far values). Whether
 
 Not done: scripts switching sprites on and off (the traffic lights cycle every 40 s through `logic_relay` skins and sprites), and scale animations. `openbl-viewer --no-sprites` hides all sprites.
 
+## Translucent order
+
+The original draws translucent things in BSP order, back to front from the eye, as Source does:
+
+- **World surfaces.** A face lying on a BSP node is drawn between the node's far and near sides. Detail faces lie on no node (7,380 of sm_hub_1's 11,906 world faces); each is drawn in the nearest leaf whose face list holds it.
+- **Entities** (props, characters, sprites, brush entities) are registered in every leaf their bounds touch and drawn in the nearest one. In a leaf, the world surfaces come first, then the entities, farthest first.
+
+OpenBL follows this with one queue per view (`render/translucent.hpp`, `formats/draw_order.hpp`): each renderer lists its translucent items with their BSP slot and distance, and the queue draws them in order. Water comes first, and particles after the queue. Sprite bounds are half the picture's larger side around the origin; props use their model bounds, characters a 32 × 32 × 72 box. With the skyline light cones of `sm_hub_1`, placing sprites by their origin alone put the skybox's translucent building facades over them (0.60 of the original's cone light); with their bounds the cones measure 0.87 as before.
+
+## Static prop fades
+
+7,920 of the 24,409 static props fade out with distance: those with flag bit 0, which every prop with a fade distance has. Read from the original's `engine.dll`: when the map loads, it keeps min², max² and 255 / (max² − min²) per fading prop. Each frame, from the main camera's position (client.dll passes it once per frame, with a factor of 1 unless the player zooms), it takes the squared distance d² to the prop's origin:
+
+- d² ≥ max²: not drawn;
+- d² ≤ min²: drawn normally;
+- otherwise drawn translucent with opacity (max² − d²) / (max² − min²), linear in the *squared* distance.
+
+The opacity is kept on the prop and used in every view, so props in the 3D skybox or seen in a monitor fade by their distance from the player, not from that view's camera. Most props fade between 2,250 and 2,500 units, or 1,500 and 2,000; some `sm_hub_1` building pieces already from 760 to 1,280. No prop entity uses `fademindist`/`fademaxdist` (the six that set them turn the fade off).
+
+OpenBL draws a fading prop whole in the translucent queue: opaque meshes alpha-blended by the opacity without writing depth, translucent ones with their alpha times it. `openbl-viewer --no-prop-fade` keeps every prop solid. Not yet compared with the running game.
+
 ## Monitors (`func_monitor` + `point_camera`)
 
 A `func_monitor` is a brush entity whose screen faces use a material with `$basetexture engine/camerarendertarget` (in the shipped maps always `dev/dev_tvmonitor1a`: the picture times rolling scanlines, additive). Its `target` names a `point_camera`. Bloodlines cameras aim with a `look_dest` point (their angles are always 0), and set the picture's angle with `FOV`. Some cameras are parented to moving props (`parentname`); OpenBL keeps them at their map position for now.

@@ -225,8 +225,14 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
         }
     }
     // Key: material name, the monitor whose picture its faces show (-1: none),
-    // and whether the faces are in the 3D skybox.
-    std::map<std::tuple<std::string, int, bool>, std::vector<FaceRef>> by_material;
+    // whether the faces are in the 3D skybox, and for translucent materials
+    // what places them in the drawing order: the BSP node they lie on, the
+    // face itself (detail faces lie on no node; Source draws each in the
+    // nearest leaf listing it), or their brush entity.
+    enum Owner : int { kUnordered, kNode, kFace, kEntity };
+    std::map<std::tuple<std::string, int, bool, int, std::int64_t>, std::vector<FaceRef>> by_material;
+    const auto nodes_of_face = formats::face_nodes(bsp);
+    std::int64_t entity_number = 0;
     // Water faces at one height (within 2 units) make up one water plane.
     auto water_plane = [&](std::size_t f, const formats::Vec3& origin, bool skybox) {
         const auto mesh = formats::build_face_mesh(bsp, f);
@@ -289,6 +295,7 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
             }
         }
         const auto& model = bsp.models[inst.model];
+        ++entity_number;
         // Brush entities belong to the skybox if their origin is in its area.
         const bool entity_in_skybox = inst.entity && sky_camera_ &&
                                       bsp.leafs[bsp.leaf_at(inst.origin)].area == sky_camera_->area;
@@ -318,7 +325,39 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
                 // The first material decides the plane's water fog.
                 p.fog_material = p.fog_material ? p.fog_material : &mat;
             }
-            by_material[{name, screen, skybox}].push_back({f, inst.origin});
+            int owner = kUnordered;
+            std::int64_t owner_id = 0;
+            if (mat.translucent && !mat.water) {
+                if (inst.entity) {
+                    owner = kEntity;
+                    owner_id = entity_number;
+                } else if (nodes_of_face[f] >= 0) {
+                    owner = kNode;
+                    owner_id = nodes_of_face[f];
+                } else {
+                    owner = kFace;
+                    owner_id = static_cast<std::int64_t>(f);
+                }
+            }
+            by_material[{name, screen, skybox, owner, owner_id}].push_back({f, inst.origin});
+        }
+    }
+
+    std::map<std::size_t, std::vector<std::uint32_t>> leaves_of_face;
+    for (const auto& [key, faces] : by_material) {
+        if (std::get<3>(key) == kFace) {
+            leaves_of_face[static_cast<std::size_t>(std::get<4>(key))];
+        }
+    }
+    for (std::size_t l = 0; l < bsp.leafs.size() && !leaves_of_face.empty(); ++l) {
+        const auto& leaf = bsp.leafs[l];
+        for (std::uint16_t i = 0; i < leaf.num_leaf_faces; ++i) {
+            const std::size_t lf = std::size_t{leaf.first_leaf_face} + i;
+            if (lf < bsp.leaf_faces.size()) {
+                if (auto it = leaves_of_face.find(bsp.leaf_faces[lf]); it != leaves_of_face.end()) {
+                    it->second.push_back(static_cast<std::uint32_t>(l));
+                }
+            }
         }
     }
 
@@ -362,7 +401,11 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
         batch.material = &mat;
         batch.monitor = std::get<1>(key);
         batch.skybox = std::get<2>(key);
+        const int owner = std::get<3>(key);
+        batch.node = owner == kNode ? static_cast<std::int32_t>(std::get<4>(key)) : -1;
+        batch.entity = owner == kEntity;
         batch.first_index = static_cast<std::uint32_t>(indices.size());
+        const std::size_t first_vertex = vertices.size();
         for (const FaceRef& ref : faces) {
             const auto mesh = formats::build_face_mesh(bsp, ref.face);
             const auto base = static_cast<std::uint32_t>(vertices.size());
@@ -386,6 +429,25 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
         }
         batch.index_count = static_cast<std::uint32_t>(indices.size()) - batch.first_index;
         stats_.triangles += batch.index_count / 3;
+        std::array<float, 3> lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+        for (std::size_t v = first_vertex; v < vertices.size(); ++v) {
+            for (std::size_t k = 0; k < 3; ++k) {
+                lo[k] = std::min(lo[k], vertices[v].position[k]);
+                hi[k] = std::max(hi[k], vertices[v].position[k]);
+            }
+        }
+        for (std::size_t k = 0; k < 3; ++k) {
+            batch.center[k] = (lo[k] + hi[k]) * 0.5f;
+        }
+        if (owner == kFace) {
+            const auto it = leaves_of_face.find(static_cast<std::size_t>(std::get<4>(key)));
+            if (it != leaves_of_face.end()) {
+                batch.leaves = it->second;
+            }
+        }
+        if ((owner == kEntity || owner == kFace) && batch.leaves.empty() && !faces.empty()) {
+            batch.leaves = formats::leaves_in_box(bsp, {lo[0], lo[1], lo[2]}, {hi[0], hi[1], hi[2]});
+        }
         (mat.water ? water_ : mat.translucent ? translucent_ : opaque_).push_back(std::move(batch));
     }
 
@@ -660,12 +722,7 @@ const rhi::Pipeline& WorldRenderer::pipeline_for(const RenderMaterial& m) const 
     return *pipelines_[blend][m.no_cull ? 1 : 0];
 }
 
-void WorldRenderer::draw_batches(rhi::CommandList& cmd, const std::vector<Batch>& batches,
-                                 const std::array<float, 16>& vp, const WorldDrawSettings& settings) {
-    const rhi::Pipeline* bound = nullptr;
-    PushConstants pc{};
-    std::memcpy(pc.mvp, vp.data(), sizeof(pc.mvp));
-    pc.light_scale = settings.light_scale;
+std::size_t WorldRenderer::build_shader_data(const WorldDrawSettings& settings) {
     auto values = styles_.values(settings.time);
     if (!settings.light_styles) {
         std::fill(values.begin() + 1, values.end(), 0.0f);
@@ -688,34 +745,48 @@ void WorldRenderer::draw_batches(rhi::CommandList& cmd, const std::vector<Batch>
         const MaterialParams p = settings.material_params && r < rows ? (*settings.material_params)[r] : MaterialParams{};
         std::memcpy(shader_data_.data() + kHeadFloats + r * kRowFloats, &p, sizeof(p));
     }
-    for (const Batch& batch : batches) {
-        if ((batch.monitor >= 0 && !settings.draw_monitors) || batch.skybox != settings.skybox) {
-            continue;
-        }
-        const RenderMaterial& m = *batch.material;
-        const rhi::Pipeline& pipeline = batch.decal ? *decal_pipelines_[m.modulate ? 1 : 0] : pipeline_for(m);
-        if (&pipeline != bound) {
-            cmd.set_pipeline(pipeline);
-            cmd.set_shader_data(shader_data_.data(), shader_data_.size() * sizeof(float));
-            bound = &pipeline;
-        }
-        pc.alpha_ref = m.alpha_ref;
-        pc.flags = (m.alpha_test ? kAlphaTest : 0) | (m.blend_layers ? kBlendLayers : 0) |
-                   ((m.unlit || settings.fullbright) ? kUnlit : 0) | (m.self_illum ? kSelfIllum : 0) |
-                   ((m.translucent || batch.decal) ? kTranslucent : 0) | ((batch.decal && m.modulate) ? kModulate : 0) |
-                   (m.multiply_layers ? kMultiplyLayers : 0) | ((m.additive && !batch.decal) ? kAdditive : 0) |
-                   (m.envmap && settings.envmaps ? kEnvmap | (static_cast<std::uint32_t>(m.envmap_mask_mode) << kEnvmapMaskShift) : 0);
-        pc.params_index = m.params_index < std::max<std::size_t>(rows, 1) ? m.params_index : 0;
-        cmd.set_bind_group(batch.current_bind_group());
-        cmd.push_constants(&pc, sizeof(pc));
-        cmd.draw_indexed(batch.index_count, batch.first_index);
-    }
+    return std::max<std::size_t>(rows, 1);
 }
 
-void WorldRenderer::draw(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
-                         const WorldDrawSettings& settings) {
-    draw_opaque(cmd, view_projection, settings);
-    draw_translucent(cmd, view_projection, settings);
+void WorldRenderer::draw_batch(rhi::CommandList& cmd, const Batch& batch, const std::array<float, 16>& vp,
+                               const WorldDrawSettings& settings, std::size_t rows, const rhi::Pipeline*& bound,
+                               const rhi::ShaderDataRef* data) {
+    if ((batch.monitor >= 0 && !settings.draw_monitors) || batch.skybox != settings.skybox) {
+        return;
+    }
+    const RenderMaterial& m = *batch.material;
+    const rhi::Pipeline& pipeline = batch.decal ? *decal_pipelines_[m.modulate ? 1 : 0] : pipeline_for(m);
+    if (&pipeline != bound) {
+        cmd.set_pipeline(pipeline);
+        if (data) {
+            cmd.bind_shader_data(*data);
+        } else {
+            cmd.set_shader_data(shader_data_.data(), shader_data_.size() * sizeof(float));
+        }
+        bound = &pipeline;
+    }
+    PushConstants pc{};
+    std::memcpy(pc.mvp, vp.data(), sizeof(pc.mvp));
+    pc.light_scale = settings.light_scale;
+    pc.alpha_ref = m.alpha_ref;
+    pc.flags = (m.alpha_test ? kAlphaTest : 0) | (m.blend_layers ? kBlendLayers : 0) |
+               ((m.unlit || settings.fullbright) ? kUnlit : 0) | (m.self_illum ? kSelfIllum : 0) |
+               ((m.translucent || batch.decal) ? kTranslucent : 0) | ((batch.decal && m.modulate) ? kModulate : 0) |
+               (m.multiply_layers ? kMultiplyLayers : 0) | ((m.additive && !batch.decal) ? kAdditive : 0) |
+               (m.envmap && settings.envmaps ? kEnvmap | (static_cast<std::uint32_t>(m.envmap_mask_mode) << kEnvmapMaskShift) : 0);
+    pc.params_index = m.params_index < rows ? m.params_index : 0;
+    cmd.set_bind_group(batch.current_bind_group());
+    cmd.push_constants(&pc, sizeof(pc));
+    cmd.draw_indexed(batch.index_count, batch.first_index);
+}
+
+void WorldRenderer::draw_batches(rhi::CommandList& cmd, const std::vector<Batch>& batches,
+                                 const std::array<float, 16>& vp, const WorldDrawSettings& settings) {
+    const std::size_t rows = build_shader_data(settings);
+    const rhi::Pipeline* bound = nullptr;
+    for (const Batch& batch : batches) {
+        draw_batch(cmd, batch, vp, settings, rows, bound, nullptr);
+    }
 }
 
 void WorldRenderer::draw_opaque(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
@@ -730,8 +801,8 @@ void WorldRenderer::draw_opaque(rhi::CommandList& cmd, const std::array<float, 1
     draw_batches(cmd, decals_, view_projection, settings);
 }
 
-void WorldRenderer::draw_translucent(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
-                                     const WorldDrawSettings& settings) {
+void WorldRenderer::draw_water_surfaces(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
+                                        const WorldDrawSettings& settings) {
     if (!vertices_) {
         return;
     }
@@ -739,7 +810,52 @@ void WorldRenderer::draw_translucent(rhi::CommandList& cmd, const std::array<flo
     cmd.set_vertex_buffer(*vertices_);
     cmd.set_index_buffer(*indices_);
     draw_water(cmd, view_projection, settings);
-    draw_batches(cmd, translucent_, view_projection, settings);
+}
+
+void WorldRenderer::collect_translucent(const formats::BspDrawOrder& order, const WorldDrawSettings& settings,
+                                        std::uint32_t source, std::vector<TranslucentItem>& out) const {
+    const auto& eye = settings.camera_position;
+    for (std::size_t i = 0; i < translucent_.size(); ++i) {
+        const Batch& b = translucent_[i];
+        if (b.skybox != settings.skybox || (b.monitor >= 0 && !settings.draw_monitors)) {
+            continue;
+        }
+        TranslucentItem item;
+        item.slot = b.node >= 0 ? order.node_slot(static_cast<std::size_t>(b.node)) : order.nearest_slot(b.leaves);
+        item.world = !b.entity;
+        const float dx = b.center[0] - eye[0], dy = b.center[1] - eye[1], dz = b.center[2] - eye[2];
+        item.distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+        item.source = source;
+        item.index = static_cast<std::uint32_t>(i);
+        out.push_back(item);
+    }
+}
+
+void WorldRenderer::begin_translucent(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
+                                      const WorldDrawSettings& settings) {
+    pass_.view_projection = view_projection;
+    pass_.settings = settings;
+    pass_.rows = build_shader_data(settings);
+    pass_.bound = nullptr;
+    if (!vertices_) {
+        return;
+    }
+    cmd.set_pipeline(*pipelines_[1][0]);
+    pass_.data = cmd.set_shader_data(shader_data_.data(), shader_data_.size() * sizeof(float));
+}
+
+void WorldRenderer::draw_translucent_item(rhi::CommandList& cmd, std::uint32_t index, bool rebind) {
+    if (!vertices_ || index >= translucent_.size()) {
+        return;
+    }
+    if (rebind) {
+        pass_.bound = nullptr;
+    }
+    if (!pass_.bound) {
+        cmd.set_vertex_buffer(*vertices_);
+        cmd.set_index_buffer(*indices_);
+    }
+    draw_batch(cmd, translucent_[index], pass_.view_projection, pass_.settings, pass_.rows, pass_.bound, &pass_.data);
 }
 
 void WorldRenderer::draw_water(rhi::CommandList& cmd, const std::array<float, 16>& vp,

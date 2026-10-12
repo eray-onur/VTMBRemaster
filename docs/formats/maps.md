@@ -87,6 +87,8 @@ A displacement replaces a quad face with a `(2^power + 1)²` grid of vertices. P
 
 The lump holds a model-name dictionary (`char[128]` each), a leaf list (`u16`), then the props: origin, angles (pitch, yaw, roll), model index, first leaf, leaf count, solid, flags, skin, fade min, fade max, lighting origin. All 24,409 props reference models that exist.
 
+Flags: bit 0 (`0x1`) marks a prop that fades out between fade min and fade max (7,920 props, exactly those with a fade distance; see [RENDERING.md](../RENDERING.md#static-prop-fades)); bit 1 (`0x2`) says to use the lighting origin. Bit 4 (`0x10`, 9,259 props) is not read by OpenBL yet.
+
 ## Materials and the pakfile
 
 TexData names are relative to `materials/`. About a third (3,831) are per-map patched materials, such as `maps/sm_pier_1/…`, that live in the pakfile and not in the game archives. Only 2 of 11,184 names resolve nowhere. All pakfile entries are stored uncompressed. The zip reader also handles deflate.

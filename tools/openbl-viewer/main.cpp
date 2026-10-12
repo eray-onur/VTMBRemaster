@@ -50,7 +50,7 @@ namespace {
 
 constexpr const char* kUsage =
     "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--show TARGETNAME]... [--npc-sequence NAME] [--pose NAME=VALUE]... [--flex CONTROLLER=VALUE]... [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
-    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-envmap] [--no-sprites] [--no-cloth] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
+    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-envmap] [--no-sprites] [--no-prop-fade] [--no-cloth] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
     "                     [--validation] [--no-vsync]";
 
 struct Options {
@@ -72,6 +72,7 @@ struct Options {
     bool water = true; // --no-water: no reflection and refraction passes (water shows its fog colour).
     bool envmaps = true; // --no-envmap: no environment-map reflections.
     bool sprites = true; // --no-sprites: no env_sprite glows and cones.
+    bool prop_fade = true; // --no-prop-fade: static props never fade with distance.
     bool characters = true;
     std::optional<std::filesystem::path> screenshot;
     std::optional<std::filesystem::path> shots;     // Shot list: "name x y z pitch yaw" per line.
@@ -153,6 +154,8 @@ Options parse_args(int argc, char** argv) {
             o.characters_options.cloth = false;
         } else if (a == "--no-sprites") {
             o.sprites = false;
+        } else if (a == "--no-prop-fade") {
+            o.prop_fade = false;
         } else if (a == "--no-envmap") {
             o.envmaps = false;
         } else if (a == "--no-water") {
@@ -351,6 +354,7 @@ public:
         particles_ = std::make_unique<render::ParticleRenderer>(device, *assets_, bsp_, options.shown);
         sprites_ = std::make_unique<render::SpriteRenderer>(device, *materials_, bsp_, options.shown);
         draw_sprites_ = options.sprites;
+        prop_fade_ = options.prop_fade;
         std::cout << "sprites: " << sprites_->stats().sprites << " on, " << sprites_->stats().off << " off, "
                   << sprites_->stats().missing_materials << " with a missing material\n";
         std::cout << "particles: " << particles_->stats().systems << " active effects ("
@@ -415,6 +419,10 @@ public:
             characters_->update(time);
         }
         particles_->update(time);
+        // The static props' fade follows the main camera in every view, as in the original.
+        if (props_ && prop_fade_) {
+            props_->update_fades({camera.position.x, camera.position.y, camera.position.z});
+        }
         // Monitor pictures first: each camera's view into its monitor's render
         // target, without monitor screens (a target is never drawn while sampled).
         for (const render::MonitorView& monitor : world_->monitors()) {
@@ -544,15 +552,8 @@ private:
             if (props_) {
                 props_->draw_opaque(cmd, sm, prop_settings);
             }
-            world_->draw_translucent(cmd, sm, settings_);
-            if (props_) {
-                props_->draw_translucent(cmd, sm, prop_settings);
-            }
+            draw_translucent(cmd, sm, to_array(view), sky_eye, sky_fog, true, sky->scale, prop_settings, nullptr);
             particles_->draw(cmd, sm, right, up, {sky_eye.x, sky_eye.y, sky_eye.z}, sky_fog, true);
-            if (draw_sprites_) {
-                sprites_->draw(cmd, sm, to_array(view), {sky_eye.x, sky_eye.y, sky_eye.z}, settings_.time, sky_fog, true,
-                               sky->scale);
-            }
             cmd.clear_depth();
             settings_.skybox = false;
             prop_settings.skybox = false;
@@ -576,17 +577,61 @@ private:
         if (characters_) {
             characters_->draw_opaque(cmd, m, character_settings);
         }
-        world_->draw_translucent(cmd, m, settings_);
+        draw_translucent(cmd, m, to_array(view), eye, fog, false, 1.0f, prop_settings, &character_settings);
+        particles_->draw(cmd, m, right, up, {eye.x, eye.y, eye.z}, fog, false);
+    }
+
+    // Water, then everything translucent in the original's order: back to
+    // front through the BSP, world surfaces before the entities in each leaf
+    // (render/translucent.hpp). settings_ must already be set for this view.
+    void draw_translucent(rhi::CommandList& cmd, const std::array<float, 16>& m, const std::array<float, 16>& view,
+                          const glm::vec3& eye, const render::Fog& fog, bool skybox, float world_scale,
+                          const render::PropDrawSettings& prop_settings,
+                          const render::CharacterDrawSettings* character_settings) {
+        enum Source : std::uint32_t { kWorld, kProps, kCharacters, kSprites };
+        world_->draw_water_surfaces(cmd, m, settings_);
+        draw_order_.update({eye.x, eye.y, eye.z});
+        translucent_.clear();
+        world_->collect_translucent(draw_order_, settings_, kWorld, translucent_);
         if (props_) {
-            props_->draw_translucent(cmd, m, prop_settings);
+            props_->collect_translucent(draw_order_, prop_settings, kProps, translucent_);
         }
-        if (characters_) {
-            characters_->draw_translucent(cmd, m, character_settings);
+        if (characters_ && character_settings) {
+            characters_->collect_translucent(draw_order_, *character_settings, kCharacters, translucent_);
         }
         if (draw_sprites_) {
-            sprites_->draw(cmd, m, to_array(view), {eye.x, eye.y, eye.z}, settings_.time, fog, false);
+            sprites_->collect_translucent(draw_order_, {eye.x, eye.y, eye.z}, skybox, kSprites, translucent_);
         }
-        particles_->draw(cmd, m, right, up, {eye.x, eye.y, eye.z}, fog, false);
+        render::sort_back_to_front(translucent_);
+        world_->begin_translucent(cmd, m, settings_);
+        if (props_) {
+            props_->begin_translucent(cmd, m, prop_settings);
+        }
+        if (characters_ && character_settings) {
+            characters_->begin_translucent(m, *character_settings);
+        }
+        if (draw_sprites_) {
+            sprites_->begin_translucent(cmd, m, view, {eye.x, eye.y, eye.z}, settings_.time, fog, skybox, world_scale);
+        }
+        std::uint32_t last = UINT32_MAX;
+        for (const render::TranslucentItem& item : translucent_) {
+            const bool rebind = item.source != last;
+            last = item.source;
+            switch (item.source) {
+            case kWorld:
+                world_->draw_translucent_item(cmd, item.index, rebind);
+                break;
+            case kProps:
+                props_->draw_translucent_item(cmd, item.index, rebind);
+                break;
+            case kCharacters:
+                characters_->draw_translucent_item(cmd, item.index);
+                break;
+            case kSprites:
+                sprites_->draw_translucent_item(cmd, item.index, rebind);
+                break;
+            }
+        }
     }
 
     render::WorldDrawSettings settings_;
@@ -604,6 +649,9 @@ private:
     std::unique_ptr<render::ParticleRenderer> particles_;
     std::unique_ptr<render::SpriteRenderer> sprites_;
     bool draw_sprites_ = true; // false: --no-sprites.
+    bool prop_fade_ = true;    // false: --no-prop-fade.
+    formats::BspDrawOrder draw_order_{bsp_};
+    std::vector<render::TranslucentItem> translucent_;
 };
 
 int run(const Options& options) {
