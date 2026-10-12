@@ -28,6 +28,8 @@ openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/water.hlsl vert vs
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/water.hlsl frag ps_main openbl_water_ps)
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/skinned.hlsl vert vs_main openbl_skinned_vs)
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/skinned.hlsl frag ps_main openbl_skinned_ps)
+openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/shadow.hlsl vert vs_main openbl_shadow_vs)
+openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/shadow.hlsl frag ps_main openbl_shadow_ps)
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/particle.hlsl vert vs_main openbl_particle_vs)
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/particle.hlsl frag ps_main openbl_particle_ps)
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/rope.hlsl vert vs_main openbl_rope_vs)

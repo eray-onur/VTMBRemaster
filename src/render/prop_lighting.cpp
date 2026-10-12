@@ -206,6 +206,7 @@ ModelLighting PropLighting::sample(const Vec3& point, const std::array<std::arra
     for (const Candidate& c : visible) {
         fold(out.folded, axes, c.to_light, c.arriving);
         if (c.light.type != LocalLight::Type::None && locals < out.lights.size()) {
+            out.arriving[locals] = c.arriving;
             out.lights[locals++] = c.light;
         } else {
             fold(out.cube, axes, c.to_light, c.arriving);

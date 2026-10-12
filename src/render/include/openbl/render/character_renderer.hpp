@@ -55,6 +55,7 @@ struct CharacterStats {
     std::size_t without_sequence = 0; // Shown in their bind pose.
     std::size_t with_cloth = 0;       // Instances simulating cloth (hair, skirts, coats).
     std::size_t with_envmap = 0;      // Instances with an environment-mapped material.
+    std::size_t with_shadow = 0;      // Instances casting a shadow (lit strongly enough by one light).
 };
 
 struct CharacterOptions {
@@ -69,6 +70,8 @@ struct CharacterOptions {
     std::vector<std::pair<std::string, float>> flex_controllers;
     // Simulate cloth (hair, skirts, coats); false: cloth vertices are skinned like the rest.
     bool cloth = true;
+    // Shadows on the world from each character's brightest light (docs/RENDERING.md#character-shadows).
+    bool shadows = true;
 };
 
 struct CharacterDrawSettings {
@@ -102,6 +105,16 @@ public:
                              std::uint32_t source, std::vector<TranslucentItem>& out) const;
     void begin_translucent(const std::array<float, 16>& view_projection, const CharacterDrawSettings& settings);
     void draw_translucent_item(rhi::CommandList& cmd, std::uint32_t index);
+
+    // Shadows (docs/RENDERING.md#character-shadows). Draws the silhouettes
+    // of the characters whose shadows `settings.visibility` (the main view)
+    // can see into their render targets. Call after update(), before
+    // anything is drawn to the window.
+    void draw_shadow_textures(rhi::CommandList& cmd, const CharacterDrawSettings& settings);
+    // Projects those shadows onto the world: after the world's opaque
+    // surfaces and decals, before props and characters cover them.
+    void draw_shadows(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
+                      const CharacterDrawSettings& settings);
 
     const CharacterStats& stats() const { return stats_; }
 
@@ -142,6 +155,20 @@ private:
         std::unique_ptr<rhi::Buffer> indices;
         std::vector<std::vector<Mesh>> skins;
     };
+    // A character's shadow: its silhouette seen from the light, projected
+    // onto the world triangles around it.
+    struct Shadow {
+        std::array<float, 16> view_projection{}; // Into the silhouette (orthographic, along the shadow).
+        std::array<float, 16> push{};           // shadow.hlsl's projection rows, distance row and extents.
+        std::unique_ptr<rhi::RenderTarget> target;
+        std::unique_ptr<rhi::BindGroup> bind_group;
+        std::unique_ptr<rhi::Buffer> vertices; // Receiver triangles (world positions).
+        std::unique_ptr<rhi::Buffer> indices;
+        std::uint32_t index_count = 0;
+        std::vector<std::uint32_t> leaves; // Around the receivers, for culling.
+        formats::Vec3 mins{}, maxs{};
+        bool ready = false; // Its silhouette was drawn this frame.
+    };
     struct Instance {
         const Model* model = nullptr;
         std::size_t skin = 0;
@@ -158,6 +185,7 @@ private:
         const rhi::Texture* cubemap = nullptr; // Nearest cubemap, for "env_cubemap" materials.
         std::vector<std::uint32_t> leaves;     // World leaves around it.
         formats::Vec3 mins{}, maxs{};          // A box around it, for culling.
+        std::unique_ptr<Shadow> shadow;        // Null: casts none.
     };
 
     const Model* load_model(const std::string& path);
@@ -165,8 +193,10 @@ private:
     void draw_pass(rhi::CommandList& cmd, const std::array<float, 16>& vp, const CharacterDrawSettings& settings,
                    bool translucent);
     // Draws one character's opaque or translucent meshes (it places its own shader data).
+    // `shadow_build`: its opaque meshes as a silhouette (shadow textures).
     void draw_instance(rhi::CommandList& cmd, const std::array<float, 16>& vp, const CharacterDrawSettings& settings,
-                       const Instance& inst, bool translucent);
+                       const Instance& inst, bool translucent, bool shadow_build = false);
+    void create_shadow(Instance& inst, const formats::BspFile& bsp, const formats::Vec3& origin);
 
     rhi::Device& device_;
     MaterialSystem& materials_;
@@ -175,6 +205,8 @@ private:
     CharacterStats stats_;
     std::unique_ptr<rhi::Sampler> sampler_;
     std::array<std::array<std::unique_ptr<rhi::Pipeline>, 2>, 3> pipelines_; // [blend][cull]
+    std::unique_ptr<rhi::Pipeline> shadow_pipeline_;
+    std::unique_ptr<rhi::Sampler> shadow_sampler_;
     std::unordered_map<std::string, std::unique_ptr<Model>> models_;
     std::vector<Instance> instances_;
     // The translucent pass under way (begin_translucent).

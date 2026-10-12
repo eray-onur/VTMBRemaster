@@ -9,6 +9,9 @@
 
 #include "mesh_util.hpp"
 #include "model_materials.hpp"
+#include "openbl/formats/draw_order.hpp"
+#include "openbl_shadow_ps.h"
+#include "openbl_shadow_vs.h"
 #include "openbl_skinned_ps.h"
 #include "openbl_skinned_vs.h"
 
@@ -90,9 +93,114 @@ constexpr std::uint32_t kEnvmap = 256;
 constexpr std::uint32_t kEnvmapMaskShift = 9;
 constexpr std::uint32_t kBump = 2048;
 constexpr std::uint32_t kDetail = 8192; // $detail.
+constexpr std::uint32_t kShadowBuild = 16384;
 
 // Height above an NPC's origin at which its lighting is sampled (roughly chest height).
 constexpr float kLightingHeight = 40.0f;
+
+// Shadows (docs/RENDERING.md#character-shadows). A character casts one, away
+// from its brightest light, if that light arrives with at least this
+// luminance (in lightmap units). In the original, sm_hub_1's barrel fire
+// casts the shadow of a bum it reaches with 0.55 and the street lights those
+// of characters below them (2 to 8); in the sp_tutorial_1 office, where no
+// light reaches the player with more than about 0.1, there is none.
+constexpr float kShadowMinLight = 0.25f;
+constexpr float kShadowRadius = 44.0f;     // Half the silhouette's square, in world units.
+constexpr float kShadowFade = 150.0f;      // How far past the character the shadow fades out.
+constexpr std::uint32_t kShadowSize = 128; // Silhouette texels per side.
+constexpr float kShadowLift = 0.25f;       // Receivers are drawn this far off the surface.
+constexpr float kCharacterCentre = 36.0f;  // Above the origin; the standing box is 32 x 32 x 72.
+constexpr float kShadowMaxTilt = 0.349066f; // From straight down, in radians (20 degrees).
+
+struct ShadowPushConstants {
+    float mvp[16];
+    float rows[16]; // shadow_u, shadow_v, along, extent (shaders/shadow.hlsl).
+};
+
+float luminance(const std::array<float, 3>& c) {
+    return 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2];
+}
+
+// World triangles a shadow can fall on: those of the world faces in the
+// leaves overlapping the box, and of displacements, that are drawn lit and
+// opaque and face against `direction`. Lifted off their surfaces so they draw
+// over them.
+std::vector<float> shadow_receivers(const formats::BspFile& bsp, MaterialSystem& materials, const formats::Vec3& mins,
+                                    const formats::Vec3& maxs, const formats::Vec3& direction) {
+    constexpr std::int32_t kSurfSky = 0x4, kSurfWarp = 0x8, kSurfTrans = 0x10, kSurfNoDraw = 0x80;
+    std::vector<std::size_t> faces;
+    for (const std::uint32_t leaf : formats::leaves_in_box(bsp, mins, maxs)) {
+        const auto& l = bsp.leafs[leaf];
+        for (std::uint32_t i = 0; i < l.num_leaf_faces; ++i) {
+            const std::size_t k = std::size_t{l.first_leaf_face} + i;
+            if (k < bsp.leaf_faces.size()) {
+                faces.push_back(bsp.leaf_faces[k]);
+            }
+        }
+    }
+    for (std::size_t f = 0; f < bsp.faces.size(); ++f) {
+        if (bsp.faces[f].dispinfo >= 0) {
+            faces.push_back(f);
+        }
+    }
+    std::sort(faces.begin(), faces.end());
+    faces.erase(std::unique(faces.begin(), faces.end()), faces.end());
+    std::vector<float> out;
+    for (const std::size_t f : faces) {
+        if (f >= bsp.faces.size()) {
+            continue;
+        }
+        const formats::BspFace& face = bsp.faces[f];
+        if (face.texinfo >= bsp.texinfos.size() || face.plane >= bsp.planes.size()) {
+            continue;
+        }
+        const formats::BspTexInfo& ti = bsp.texinfos[face.texinfo];
+        if ((ti.flags & (kSurfSky | kSurfWarp | kSurfTrans | kSurfNoDraw)) != 0 || ti.texdata < 0 ||
+            static_cast<std::size_t>(ti.texdata) >= bsp.texdatas.size()) {
+            continue;
+        }
+        const RenderMaterial& m = materials.material(bsp.texdatas[static_cast<std::size_t>(ti.texdata)].material);
+        if (m.skip || m.translucent || m.water || m.unlit || m.alpha_test) {
+            continue;
+        }
+        formats::Vec3 plane_normal = bsp.planes[face.plane].normal;
+        if (face.side != 0) {
+            plane_normal = {-plane_normal[0], -plane_normal[1], -plane_normal[2]};
+        }
+        const formats::BspFaceMesh mesh = formats::build_face_mesh(bsp, f);
+        for (std::size_t t = 0; t + 2 < mesh.indices.size(); t += 3) {
+            const auto& a = mesh.positions[mesh.indices[t]];
+            const auto& b = mesh.positions[mesh.indices[t + 1]];
+            const auto& c = mesh.positions[mesh.indices[t + 2]];
+            bool overlaps = true;
+            for (std::size_t k = 0; k < 3; ++k) {
+                const float lo = std::min({a[k], b[k], c[k]}), hi = std::max({a[k], b[k], c[k]});
+                overlaps = overlaps && hi >= mins[k] && lo <= maxs[k];
+            }
+            if (!overlaps) {
+                continue;
+            }
+            const glm::vec3 ga(a[0], a[1], a[2]), gb(b[0], b[1], b[2]), gc(c[0], c[1], c[2]);
+            glm::vec3 n = glm::cross(gb - ga, gc - ga);
+            const float len = glm::length(n);
+            if (len < 1e-6f) {
+                continue;
+            }
+            n /= len;
+            if (glm::dot(n, glm::vec3(plane_normal[0], plane_normal[1], plane_normal[2])) < 0.0f) {
+                n = -n;
+            }
+            if (glm::dot(n, glm::vec3(direction[0], direction[1], direction[2])) > -0.05f) {
+                continue; // Facing away from the light, or edge-on.
+            }
+            for (const glm::vec3& p : {ga, gb, gc}) {
+                const glm::vec3 lifted = p + n * kShadowLift;
+                out.insert(out.end(), {lifted.x, lifted.y, lifted.z});
+            }
+        }
+    }
+    return out;
+}
 
 formats::Vec3 parse_vec3(const formats::BspEntity& e, const char* key) {
     formats::Vec3 v{};
@@ -148,6 +256,23 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
         }
     }
     sampler_ = device.create_sampler({});
+
+    rhi::PipelineDesc sd;
+    sd.vertex.spirv = openbl_shadow_vs;
+    sd.pixel.spirv = openbl_shadow_ps;
+    sd.vertex_stride = 3 * sizeof(float);
+    sd.attributes = {{0, rhi::Format::RGB32_Float, 0}};
+    sd.texture_count = 1;
+    sd.push_constant_size = sizeof(ShadowPushConstants);
+    sd.shader_data = true;
+    sd.cull = rhi::CullMode::None;
+    sd.depth_write = false;
+    sd.blend = rhi::BlendMode::Modulate;
+    shadow_pipeline_ = device.create_pipeline(sd);
+    rhi::SamplerDesc clamped;
+    clamped.address = rhi::AddressMode::Clamp;
+    clamped.max_anisotropy = 1.0f;
+    shadow_sampler_ = device.create_sampler(clamped);
 
     const PropLighting lighting(bsp);
     std::uint32_t seed = 12345;
@@ -279,12 +404,133 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
         if (inst.envmapped) {
             inst.cubemap = materials.nearest_cubemap({origin[0], origin[1], origin[2] + kLightingHeight});
         }
+        if (options.shadows) {
+            create_shadow(inst, bsp, origin);
+            stats_.with_shadow += inst.shadow != nullptr;
+        }
         instances_.push_back(std::move(inst));
     }
     stats_.instances = instances_.size();
 }
 
 CharacterRenderer::~CharacterRenderer() = default;
+
+void CharacterRenderer::create_shadow(Instance& inst, const formats::BspFile& bsp, const formats::Vec3& origin) {
+    const LocalLight& light = inst.lighting.lights[0];
+    if (light.type == LocalLight::Type::None || luminance(inst.lighting.arriving[0]) < kShadowMinLight) {
+        return;
+    }
+    // Away from the light, but always downwards: from the light's position
+    // through the character's centre (or the way a directional light
+    // shines), tilted from straight down by at most kShadowMaxTilt. In the
+    // original a light below the centre (sm_hub_1's barrel fire) still casts
+    // a short shadow on the ground beside the feet, and one overhead casts it
+    // under them.
+    const glm::vec3 centre(origin[0], origin[1], origin[2] + kCharacterCentre);
+    const glm::vec3 to_character = light.type == LocalLight::Type::Directional
+                                       ? glm::vec3(light.direction[0], light.direction[1], light.direction[2])
+                                       : centre - glm::vec3(light.position[0], light.position[1], light.position[2]);
+    const glm::vec2 across(to_character.x, to_character.y);
+    const float tilt = std::min(std::atan2(glm::length(across), std::max(-to_character.z, 0.0f)), kShadowMaxTilt);
+    const glm::vec2 away = glm::length(across) > 1e-3f ? glm::normalize(across) : glm::vec2(0.0f);
+    const glm::vec3 d(away.x * std::sin(tilt), away.y * std::sin(tilt), -std::cos(tilt));
+    const glm::vec3 up = std::abs(d.z) < 0.99f ? glm::vec3(0, 0, 1) : glm::vec3(1, 0, 0);
+    const glm::mat4 view = glm::lookAt(centre - d * 256.0f, centre, up);
+    glm::mat4 projection = glm::ortho(-kShadowRadius, kShadowRadius, -kShadowRadius, kShadowRadius, 1.0f, 512.0f);
+    projection[1][1] *= -1.0f; // As the other views (Vulkan clip space has +Y down).
+    const glm::mat4 vp = projection * view;
+
+    auto shadow = std::make_unique<Shadow>();
+    std::memcpy(shadow->view_projection.data(), glm::value_ptr(vp), sizeof(shadow->view_projection));
+    // The standing box's half-depth along the shadow: where the shadow starts to fade.
+    const float half_depth = 16.0f * (std::abs(d.x) + std::abs(d.y)) + kCharacterCentre * std::abs(d.z);
+    for (int k = 0; k < 4; ++k) {
+        shadow->push[static_cast<std::size_t>(k)] = vp[k][0];     // Clip x row.
+        shadow->push[4 + static_cast<std::size_t>(k)] = vp[k][1]; // Clip y row.
+    }
+    shadow->push[8] = d.x;
+    shadow->push[9] = d.y;
+    shadow->push[10] = d.z;
+    shadow->push[11] = -glm::dot(d, centre);
+    shadow->push[12] = half_depth;
+    shadow->push[13] = kShadowFade;
+    shadow->push[14] = 1.0f / static_cast<float>(kShadowSize);
+
+    // The volume the shadow can reach: the silhouette's square, swept from the
+    // character to where it has faded.
+    const glm::vec3 end = centre + d * (half_depth + kShadowFade);
+    for (std::size_t k = 0; k < 3; ++k) {
+        const auto i = static_cast<glm::length_t>(k);
+        shadow->mins[k] = std::min(centre[i], end[i]) - kShadowRadius;
+        shadow->maxs[k] = std::max(centre[i], end[i]) + kShadowRadius;
+    }
+    const std::vector<float> receivers = shadow_receivers(bsp, materials_, shadow->mins, shadow->maxs, {d.x, d.y, d.z});
+    if (receivers.empty()) {
+        return;
+    }
+    std::vector<std::uint32_t> indices(receivers.size() / 3);
+    for (std::size_t i = 0; i < indices.size(); ++i) {
+        indices[i] = static_cast<std::uint32_t>(i);
+    }
+    shadow->index_count = static_cast<std::uint32_t>(indices.size());
+    shadow->vertices = device_.create_buffer({receivers.size() * sizeof(float), rhi::BufferUsage::Vertex},
+                                             std::as_bytes(std::span(receivers)));
+    shadow->indices = device_.create_buffer({indices.size() * sizeof(std::uint32_t), rhi::BufferUsage::Index},
+                                            std::as_bytes(std::span(indices)));
+    shadow->leaves = formats::leaves_in_box(bsp, shadow->mins, shadow->maxs);
+    shadow->target = device_.create_render_target(kShadowSize, kShadowSize);
+    const rhi::Texture* textures[] = {&shadow->target->texture()};
+    shadow->bind_group = device_.create_bind_group(*shadow_pipeline_, *shadow_sampler_, textures);
+    inst.shadow = std::move(shadow);
+}
+
+void CharacterRenderer::draw_shadow_textures(rhi::CommandList& cmd, const CharacterDrawSettings& settings) {
+    CharacterDrawSettings silhouette = settings;
+    silhouette.envmaps = false;
+    silhouette.bumpmaps = false;
+    silhouette.visibility = nullptr;
+    const float clear[4] = {0, 0, 0, 0};
+    for (Instance& inst : instances_) {
+        if (!inst.shadow) {
+            continue;
+        }
+        Shadow& s = *inst.shadow;
+        s.ready = !settings.visibility || settings.visibility->object(s.leaves, s.mins, s.maxs);
+        if (!s.ready) {
+            continue;
+        }
+        cmd.begin_render_target(*s.target, clear);
+        draw_instance(cmd, s.view_projection, silhouette, inst, false, true);
+        cmd.end_render_target();
+    }
+}
+
+void CharacterRenderer::draw_shadows(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
+                                     const CharacterDrawSettings& settings) {
+    bool bound = false;
+    for (const Instance& inst : instances_) {
+        if (!inst.shadow || !inst.shadow->ready) {
+            continue;
+        }
+        const Shadow& s = *inst.shadow;
+        if (settings.visibility && !settings.visibility->object(s.leaves, s.mins, s.maxs)) {
+            continue;
+        }
+        if (!bound) {
+            cmd.set_pipeline(*shadow_pipeline_);
+            const auto fog = settings.fog.rows();
+            cmd.set_shader_data(fog.data(), fog.size() * sizeof(float));
+            bound = true;
+        }
+        ShadowPushConstants pc{};
+        std::memcpy(pc.mvp, view_projection.data(), sizeof(pc.mvp));
+        std::memcpy(pc.rows, s.push.data(), sizeof(pc.rows));
+        cmd.set_bind_group(*s.bind_group);
+        cmd.set_vertex_buffer(*s.vertices);
+        cmd.set_index_buffer(*s.indices);
+        cmd.push_constants(&pc, sizeof(pc));
+        cmd.draw_indexed(s.index_count);    }
+}
 
 const CharacterRenderer::Model* CharacterRenderer::load_model(const std::string& path) {
     if (auto it = models_.find(path); it != models_.end()) {
@@ -542,7 +788,8 @@ void CharacterRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float,
 }
 
 void CharacterRenderer::draw_instance(rhi::CommandList& cmd, const std::array<float, 16>& vp,
-                                      const CharacterDrawSettings& settings, const Instance& inst, bool translucent) {
+                                      const CharacterDrawSettings& settings, const Instance& inst, bool translucent,
+                                      bool shadow_build) {
     const glm::mat4 view_projection = glm::make_mat4(vp.data());
     std::vector<float> data;
     {
@@ -625,7 +872,9 @@ void CharacterRenderer::draw_instance(rhi::CommandList& cmd, const std::array<fl
                 continue;
             }
             const std::size_t blend_mode = !m.translucent ? 0 : (m.additive ? 2 : 1);
-            const rhi::Pipeline& pipeline = *pipelines_[blend_mode][m.no_cull ? 1 : 0];
+            // Silhouettes: opaque and two-sided (the original's ShadowBuild material is $nocull).
+            const rhi::Pipeline& pipeline =
+                shadow_build ? *pipelines_[0][1] : *pipelines_[blend_mode][m.no_cull ? 1 : 0];
             if (&pipeline != bound) {
                 cmd.set_pipeline(pipeline);
                 cmd.set_vertex_buffer(*inst.model->vertices);
@@ -638,6 +887,9 @@ void CharacterRenderer::draw_instance(rhi::CommandList& cmd, const std::array<fl
                        (m.self_illum ? kSelfIllum : 0) | (m.translucent ? kTranslucent : 0) | (m.eyes ? kEyes : 0) |
                        (m.additive ? kAdditive : 0) | (m.bumpmap && settings.bumpmaps ? kBump : 0) |
                        (m.detail ? kDetail : 0);
+            if (shadow_build) {
+                pc.flags = (m.alpha_test ? kAlphaTest : 0) | kShadowBuild;
+            }
             const rhi::BindGroup* group = mesh.frame_bind_groups.empty()
                                               ? mesh.bind_group.get()
                                               : mesh.frame_bind_groups[m.base_frame % mesh.frame_bind_groups.size()].get();

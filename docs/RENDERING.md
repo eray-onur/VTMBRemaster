@@ -206,6 +206,29 @@ The `dprp` game lump ([formats/maps.md](formats/maps.md#detail-props-dprp-v2-dpl
 
 Not known: the original's draw distance and fade for detail props. OpenBL draws them at any distance. The cost is within measurement noise (about 2 ms per frame with or without them on `sp_observatory_1` and `hw_cemetery_1` at 1600 × 900). `openbl-viewer --no-detail-props` hides them.
 
+## Character shadows
+
+Bloodlines replaces Source's single top-down shadow with its own settings: `cl_v_shadows` (0 none, 1 "Simple", 3 "Soft"; the shipped `config.cfg` has 3) and `cl_v_shadow_count`, "the number of shadows drawn per character". The materials are Source's render-to-texture ones: `engine/shadowbuild` draws a model's silhouette (`ShadowBuild`, `$nocull`), and `engine/rendershadow` projects it, with the `Shadow` shader's lerp(1, shadow colour, shadow alpha) multiplied into what is behind it. Its DX8 help text adds `$falloffamount` 0.9, "amount to brighten the shadow at max dist".
+
+**Observed in the original** (GOG 1.2 without the Unofficial Patch, windowed, each view grabbed with `cl_v_shadows` 3 and 0 and divided pixel by pixel):
+
+- **Casters**: characters only, one shadow each. NPCs cast; so does the player in third person, unless in noclip.
+- **Receivers**: the world only. The console reports that `engine/rendermodelshadow`'s `ShadowModel` proxy fails to initialise, so no shadow falls on a model.
+- **The light**: the brightest light at the character. Beside `sm_hub_1`'s barrel fire (`light_spot` at 772 −2321 −83, intensity 1000) the bums' shadows point away from the fire. With the player stepped away from it along y = −2320, the shadow follows the street light at 585 −2345 15 (intensity 2000) once that light is stronger: pointing towards the fire at 100 and 140 units from it, under the feet directly below the street light, and west once past it. In the `sp_tutorial_1` office, whose lamps reach the player only weakly, there is no shadow at all.
+- **Shape**: a short, soft-edged silhouette at the feet, about shoulder-wide and a little longer, offset away from the light. Even the fire, lower than the bums' chests, puts the shadow on the ground beside the feet, so the projection is not from the light's position.
+- **Strength**: the core keeps 0.28 / 0.37 / 0.41 of the encoded colour (R / G / B; two bums, about 150 units from the camera, where `sm_hub_1`'s fog has not started), a bluish shadow colour of about (73, 96, 106). The darker floor behind the barrel gave 0.24 / 0.30 / 0.33, the same hue.
+- **Count**: at runtime `cl_v_shadow_count` reads 1 (default 2). Setting it to 2 or more, or `cl_v_shadows` to 1 or 2, while a map is running removes the shadows instead of adding more, so only one shadow per character has been seen.
+
+**OpenBL** (`CharacterRenderer`, `shaders/shadow.hlsl`):
+
+- **The light** is the brightest of the character's local lights ([Models](#models-vertexlitgeneric)) at its lighting origin, if it arrives with a luminance of at least 0.25 in lightmap units. The left bum at the fire (0.55) casts one, as in the original; the office lamps reach the player with less than about 0.1. The cut-off is fitted to these two cases only.
+- **Direction**: from the light through the character's centre (36 units up), or along a directional light, turned to point down and tilted from vertical by at most 20°. 45° and 30° gave long streaks; 20° gives the original's compact blob (5,800 shadow pixels against its 4,500 for the same bum and camera).
+- **Silhouette**: each frame, for the shadows the main view can see, the character's opaque meshes are drawn two-sided (alpha-tested ones clipped) into its own 128 × 128 render target with an orthographic projection along that direction, 88 units square.
+- **Receivers**: the world's faces in the leaves the shadow can reach, and displacements, that are opaque, lit and face the light. Their triangles are gathered once when the map loads (characters do not move yet) and drawn after the world's opaque surfaces and decals, before props and characters cover them. Each pixel takes the silhouette's coverage (nine taps for the soft edge) times 1 − 0.9 t, where t runs from 0 at the far side of the character's box to 1 at 150 units past it, and multiplies by lerp(1, (0.285, 0.375, 0.415), coverage) on encoded values, fading to neutral in fog. Measured on the fire bum, OpenBL's shadow keeps 0.35 / 0.43 / 0.47 (median) against the original's 0.28 / 0.37 / 0.40; the difference is mostly OpenBL's softer rim.
+- The cost is within noise: 2.61 against 2.59 ms per frame on `sm_hub_1`'s street at 1600 × 900.
+
+Not done: "Simple" blob shadows and more than one shadow per character (neither seen working in the original), how the original picks the light exactly, shadows of moving characters (Phase 2), and props. `openbl-viewer --no-shadows` turns them off.
+
 ## Visibility
 
 Each view draws only what it can see (`formats::ViewVisibility`). That takes two tests:

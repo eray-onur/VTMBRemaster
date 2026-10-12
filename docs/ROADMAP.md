@@ -98,7 +98,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Detail props: compare with the running game (unlit grass modulated by its stored light; draw distance and fade)
 - [x] Ropes and cables (`keyframe_rope`, `move_rope`): chains at rest drawn as camera-facing strips with the `Cable` shader's lighting and normal-map shading; sag fitted against an `sm_hub_1` capture ([RENDERING.md](RENDERING.md#ropes-and-cables)); viewer `--no-ropes`
 - [ ] Ropes: compare a single-span rope with the running game (whole-chain slack or a fixed fraction); `Type`, ropes moving between keyframes
-- [ ] Model shadows (the `Shadow` and `ShadowModel` proxies; projected shadow textures)
+- [x] Character shadows, as observed in the original (`cl_v_shadows` on and off): one per character away from its brightest light when strong enough, a silhouette drawn into a render target and projected onto the world only, bluish shadow colour and falloff measured on `sm_hub_1` ([RENDERING.md](RENDERING.md#character-shadows)); viewer `--no-shadows`
+- [ ] Character shadows: how the original picks the light and tilts the shadow (fitted on two scenes), shadows of moving characters
 - [ ] Cheap water: compare with the original (the open sea around `la_dane_1`)
 - [x] Parity tooling: viewer shot lists (`--shots`, `--fov`, `--size`), `openbl-cli image compare` (see docs/PARITY.md)
 - [x] Lightmap brightness measured against original-game captures: base × luxel in linear terms (scale 1.0, was 2.3); capture method verified; `--fov` follows the game's 4:3-horizontal convention ([PARITY.md](PARITY.md))

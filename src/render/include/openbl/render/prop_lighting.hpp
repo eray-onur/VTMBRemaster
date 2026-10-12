@@ -49,6 +49,10 @@ struct LocalLight {
 struct ModelLighting {
     AmbientCube cube;                 // Model space; without the local lights.
     std::array<LocalLight, 2> lights; // Brightest first; unused ones have Type::None.
+    // Each local light as it arrives at the sample point (after attenuation
+    // and the spot cone), linear: what picks the brightest, and the light a
+    // character's shadow falls away from.
+    std::array<std::array<float, 3>, 2> arriving{};
     AmbientCube folded;               // The cube with the local lights folded in too.
 };
 

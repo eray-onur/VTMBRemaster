@@ -32,6 +32,7 @@ static const uint kEnvmap = 256;
 static const uint kEnvmapMaskShift = 9; // 2 bits, as for the world.
 static const uint kBump = 2048;         // $bumpmap: light and reflect about the bumped normal.
 static const uint kDetail = 8192;       // $detail, at the untransformed coordinates times $detailscale.
+static const uint kShadowBuild = 16384; // The silhouette for the character's shadow: alpha 1 where covered.
 
 // Iris size as a fraction of the eye mesh's UV square, measured on the
 // original (the iris spans about 0.58 of the eye opening; docs/RENDERING.md).
@@ -165,6 +166,9 @@ float4 ps_main(VSOutput input) : SV_Target {
     }
     if (pc.flags & kAlphaTest) {
         clip(base.a - pc.alpha_ref);
+    }
+    if (pc.flags & kShadowBuild) {
+        return float4(0.0, 0.0, 0.0, 1.0);
     }
     float3 light = input.light;
     float4 bump = float4(0.0, 0.0, 1.0, 1.0);

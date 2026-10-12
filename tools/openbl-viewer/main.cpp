@@ -53,7 +53,7 @@ namespace {
 
 constexpr const char* kUsage =
     "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--show TARGETNAME]... [--npc-sequence NAME] [--pose NAME=VALUE]... [--flex CONTROLLER=VALUE]... [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
-    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-envmap] [--no-bump] [--no-sprites] [--no-ropes] [--no-detail-props] [--no-cull] [--no-prop-fade] [--no-cloth] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
+    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-envmap] [--no-bump] [--no-sprites] [--no-ropes] [--no-detail-props] [--no-cull] [--no-prop-fade] [--no-cloth] [--no-shadows] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
     "                     [--validation] [--no-vsync]";
 
 struct Options {
@@ -159,6 +159,8 @@ Options parse_args(int argc, char** argv) {
             o.fog = false;
         } else if (a == "--no-cloth") {
             o.characters_options.cloth = false;
+        } else if (a == "--no-shadows") {
+            o.characters_options.shadows = false;
         } else if (a == "--no-sprites") {
             o.sprites = false;
         } else if (a == "--no-ropes") {
@@ -365,7 +367,8 @@ public:
             const auto& c = characters_->stats();
             std::cout << "characters: " << c.instances << " instances of " << c.models << " models ("
                       << c.missing_models << " missing), " << c.without_sequence << " without an idle sequence, "
-                      << c.with_cloth << " with cloth, " << c.with_envmap << " with envmaps\n";
+                      << c.with_cloth << " with cloth, " << c.with_envmap << " with envmaps, " << c.with_shadow
+                      << " with shadows\n";
         }
         particles_ = std::make_unique<render::ParticleRenderer>(device, *assets_, bsp_, options.shown);
         sprites_ = std::make_unique<render::SpriteRenderer>(device, *materials_, bsp_, options.shown);
@@ -457,6 +460,13 @@ public:
         // The static props' fade follows the main camera in every view, as in the original.
         if (props_ && prop_fade_) {
             props_->update_fades({camera.position.x, camera.position.y, camera.position.z});
+        }
+        // Character shadows' silhouettes, for the shadows the main view can see.
+        if (characters_) {
+            render::CharacterDrawSettings shadow_settings{settings_.light_scale, settings_.fullbright,
+                                                          &materials_->params()};
+            shadow_settings.visibility = main_visibility_.get();
+            characters_->draw_shadow_textures(cmd, shadow_settings);
         }
         // Monitor pictures first: each camera's view into its monitor's render
         // target, without monitor screens (a target is never drawn while sampled).
@@ -617,6 +627,9 @@ private:
         character_settings.envmaps = settings_.envmaps;
         character_settings.bumpmaps = settings_.bumpmaps;
         world_->draw_opaque(cmd, m, settings_);
+        if (characters_) {
+            characters_->draw_shadows(cmd, m, character_settings); // On the world only, under props and characters.
+        }
         if (props_) {
             props_->draw_opaque(cmd, m, prop_settings);
         }
