@@ -70,6 +70,9 @@ struct RenderMaterial {
     // original multiplies encoded render-target colour by them.
     bool water = false;
     const rhi::Texture* bumpmap = nullptr;    // $bumpmap of LightmappedGeneric, WorldVertexTransition, VertexLitGeneric, Cable (linear).
+    // $detail: raw (encoded) texels multiplied in at 2x, at the untransformed
+    // base coordinates times $detailscale (docs/RENDERING.md). Null if none.
+    const rhi::Texture* detail = nullptr;
     const rhi::Texture* normal_map = nullptr; // $normalmap, linear; a flat normal if missing.
     const rhi::Texture* dudv = nullptr;       // $bumpmap: signed offsets, biased (0.5 = none).
     bool reflect = false;                     // Has $reflecttexture.
@@ -113,7 +116,7 @@ struct MaterialParams {
     std::array<float, 4> transform2_u{1, 0, 0, 0}; // $texture2transform (UnlitTwoTexture).
     std::array<float, 4> transform2_v{0, 1, 0, 0};
     std::array<float, 4> envmap_tint{1, 1, 1, 0};   // $envmaptint (encoded, as authored); w: $envmapcontrast.
-    std::array<float, 4> envmap_tone{1, 0, 0, 0};   // x: $envmapsaturation.
+    std::array<float, 4> envmap_tone{1, 4, 0, 0};   // x: $envmapsaturation; y: $detailscale.
 };
 static_assert(sizeof(MaterialParams) == 128);
 

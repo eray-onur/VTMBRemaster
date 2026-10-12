@@ -113,3 +113,9 @@ float3 linear_to_srgb(float3 c) {
     c = saturate(c);
     return lerp(1.055 * pow(c, 1.0 / 2.4) - 0.055, c * 12.92, step(c, 0.0031308));
 }
+
+// $detail: the original multiplies the encoded colour by 2 x the detail
+// texel (a mid-grey detail leaves it unchanged), on encoded values.
+float3 apply_detail(float3 encoded, float3 detail_texel) {
+    return saturate(encoded * 2.0 * detail_texel);
+}

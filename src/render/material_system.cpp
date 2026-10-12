@@ -290,6 +290,9 @@ MaterialParams params_from(const formats::MaterialProxies& vars) {
     if (const auto* s = vars.var("$envmapsaturation"); s && !s->is_matrix) {
         p.envmap_tone[0] = s->v[0];
     }
+    if (const auto* s = vars.var("$detailscale"); s && !s->is_matrix) {
+        p.envmap_tone[1] = s->v[0];
+    }
     return p;
 }
 
@@ -514,6 +517,11 @@ RenderMaterial MaterialSystem::load(const std::string& name, std::optional<forma
         if (auto path = mat->texture_path("$bumpmap")) {
             out.bumpmap = texture(*path, false);
         }
+    }
+    // Detail textures. In the shipped data only shader tests and the cracked
+    // breakable glass use them; the shaders support them on every surface.
+    if (auto path = mat->texture_path("$detail")) {
+        out.detail = texture(*path, false);
     }
     out.water = out.shader == "water" || out.shader == "waterwarp";
     if (out.water) {

@@ -89,6 +89,7 @@ constexpr std::uint32_t kAdditive = 128;
 constexpr std::uint32_t kEnvmap = 256;
 constexpr std::uint32_t kEnvmapMaskShift = 9;
 constexpr std::uint32_t kBump = 2048;
+constexpr std::uint32_t kDetail = 8192; // $detail.
 
 // Height above an NPC's origin at which its lighting is sampled (roughly chest height).
 constexpr float kLightingHeight = 40.0f;
@@ -134,7 +135,7 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
                      {5, rhi::Format::R32_Float, 44},
                      {6, rhi::Format::R32_Float, 48},
                      {7, rhi::Format::RGBA32_Float, 52}};
-    pd.texture_count = 5; // Base, iris, envmap (cube), envmap mask, bump map.
+    pd.texture_count = 6; // Base, iris, envmap (cube), envmap mask, bump map, detail.
     pd.push_constant_size = sizeof(PushConstants);
     pd.shader_data = true;
     const rhi::BlendMode blends[] = {rhi::BlendMode::Opaque, rhi::BlendMode::Alpha, rhi::BlendMode::Additive};
@@ -448,10 +449,12 @@ const CharacterRenderer::Model* CharacterRenderer::load_model(const std::string&
                         const rhi::Texture* envmap = mm.envmap ? mm.envmap : materials_.black_cube();
                         const rhi::Texture* mask = mm.envmap_mask ? mm.envmap_mask : materials_.white();
                         const rhi::Texture* bump = mm.bumpmap ? mm.bumpmap : materials_.white();
-                        const rhi::Texture* textures[] = {mm.base, mm.base2, envmap, mask, bump};
+                        const rhi::Texture* detail_map = mm.detail ? mm.detail : materials_.white();
+                        const rhi::Texture* textures[] = {mm.base, mm.base2, envmap, mask, bump, detail_map};
                         mesh.bind_group = device_.create_bind_group(*pipelines_[0][0], *sampler_, textures);
                         for (const rhi::Texture* frame : mm.base_frames) {
-                            const rhi::Texture* frame_textures[] = {frame, mm.eyes ? mm.base2 : frame, envmap, mask, bump};
+                            const rhi::Texture* frame_textures[] = {frame, mm.eyes ? mm.base2 : frame, envmap, mask, bump,
+                                                                    detail_map};
                             mesh.frame_bind_groups.push_back(
                                 device_.create_bind_group(*pipelines_[0][0], *sampler_, frame_textures));
                         }
@@ -633,7 +636,8 @@ void CharacterRenderer::draw_instance(rhi::CommandList& cmd, const std::array<fl
             pc.alpha_ref = m.alpha_ref;
             pc.flags = (m.alpha_test ? kAlphaTest : 0) | ((m.unlit || settings.fullbright) ? kUnlit : 0) |
                        (m.self_illum ? kSelfIllum : 0) | (m.translucent ? kTranslucent : 0) | (m.eyes ? kEyes : 0) |
-                       (m.additive ? kAdditive : 0) | (m.bumpmap && settings.bumpmaps ? kBump : 0);
+                       (m.additive ? kAdditive : 0) | (m.bumpmap && settings.bumpmaps ? kBump : 0) |
+                       (m.detail ? kDetail : 0);
             const rhi::BindGroup* group = mesh.frame_bind_groups.empty()
                                               ? mesh.bind_group.get()
                                               : mesh.frame_bind_groups[m.base_frame % mesh.frame_bind_groups.size()].get();
@@ -643,7 +647,8 @@ void CharacterRenderer::draw_instance(rhi::CommandList& cmd, const std::array<fl
                     auto& g = mesh.cubemap_groups[inst.cubemap];
                     if (!g) {
                         const rhi::Texture* textures[] = {m.base, m.base2, inst.cubemap, m.envmap_mask,
-                                                          m.bumpmap ? m.bumpmap : materials_.white()};
+                                                          m.bumpmap ? m.bumpmap : materials_.white(),
+                                                          m.detail ? m.detail : materials_.white()};
                         g = device_.create_bind_group(*pipelines_[0][0], *sampler_, textures);
                     }
                     group = g.get();

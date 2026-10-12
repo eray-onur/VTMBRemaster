@@ -58,6 +58,7 @@ constexpr std::uint32_t kEnvmap = 256;
 constexpr std::uint32_t kEnvmapMaskShift = 9;
 constexpr std::uint32_t kBump = 2048;
 constexpr std::uint32_t kLights = 4096; // The instance's block holds its local lights.
+constexpr std::uint32_t kDetail = 8192; // $detail.
 constexpr std::uint32_t kFadeShift = 24; // 8 bits: 255 - the fade's opacity.
 
 // Source angles: pitch (down positive) about Y, yaw about Z, roll about X;
@@ -91,7 +92,7 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
                      {1, rhi::Format::RG32_Float, 12},
                      {2, rhi::Format::RGB32_Float, 20},
                      {3, rhi::Format::RGBA32_Float, 32}};
-    pd.texture_count = 5; // Base, second layer, envmap (cube), envmap mask, bump map.
+    pd.texture_count = 6; // Base, second layer, envmap (cube), envmap mask, bump map, detail.
     pd.push_constant_size = sizeof(PushConstants);
     pd.shader_data = true; // Material params table.
     pd.front_counter_clockwise = false;
@@ -282,8 +283,8 @@ void PropRenderer::place_decals(const formats::BspFile& bsp) {
                                               std::as_bytes(std::span(best_decal->indices)));
         decal.index_count = static_cast<std::uint32_t>(best_decal->indices.size());
         decal.material = &draw_mat;
-        const rhi::Texture* textures[] = {draw_mat.base, draw_mat.base2, materials_.black_cube(), materials_.white(),
-                                          materials_.white()};
+        const rhi::Texture* textures[] = {draw_mat.base,     draw_mat.base2,    materials_.black_cube(),
+                                          materials_.white(), materials_.white(), materials_.white()};
         decal.bind_group = device_.create_bind_group(*pipelines_[0][0], *sampler_, textures);
         best->decals.push_back(std::move(decal));
         ++stats_.decals;
@@ -395,11 +396,12 @@ const PropRenderer::Model* PropRenderer::load_model(const std::string& path) {
                         const rhi::Texture* envmap = mm.envmap ? mm.envmap : materials_.black_cube();
                         const rhi::Texture* mask = mm.envmap_mask ? mm.envmap_mask : materials_.white();
                         const rhi::Texture* bump = mm.bumpmap ? mm.bumpmap : materials_.white();
-                        const rhi::Texture* textures[] = {mm.base, mm.base2, envmap, mask, bump};
+                        const rhi::Texture* detail_map = mm.detail ? mm.detail : materials_.white();
+                        const rhi::Texture* textures[] = {mm.base, mm.base2, envmap, mask, bump, detail_map};
                         mesh.bind_group = device_.create_bind_group(*pipelines_[0][0], *sampler_, textures);
                         for (const rhi::Texture* frame : mm.base_frames) {
                             const rhi::Texture* frame_textures[] = {frame, mm.multiply_layers ? mm.base2 : frame, envmap, mask,
-                                                                    bump};
+                                                                    bump,  detail_map};
                             mesh.frame_bind_groups.push_back(
                                 device_.create_bind_group(*pipelines_[0][0], *sampler_, frame_textures));
                         }
@@ -520,7 +522,7 @@ void PropRenderer::draw_instance(rhi::CommandList& cmd, const std::array<float, 
         pc.flags = (m.alpha_test ? kAlphaTest : 0) | ((m.unlit || settings.fullbright) ? kUnlit : 0) |
                    (m.self_illum ? kSelfIllum : 0) | (m.translucent ? kTranslucent : 0) |
                    (m.multiply_layers ? kMultiplyLayers : 0) | (m.additive ? kAdditive : 0) |
-                   (m.bumpmap && settings.bumpmaps ? kBump : 0) | light_bits | fade_bits;
+                   (m.bumpmap && settings.bumpmaps ? kBump : 0) | (m.detail ? kDetail : 0) | light_bits | fade_bits;
         pc.params_index = (m.params_index < rows ? m.params_index : 0) | block_bits;
         const rhi::BindGroup* group = mesh.frame_bind_groups.empty()
                                           ? mesh.bind_group.get()
@@ -531,7 +533,8 @@ void PropRenderer::draw_instance(rhi::CommandList& cmd, const std::array<float, 
                 auto& g = mesh.cubemap_groups[inst.cubemap];
                 if (!g) {
                     const rhi::Texture* textures[] = {m.base, m.base2, inst.cubemap, m.envmap_mask,
-                                                      m.bumpmap ? m.bumpmap : materials_.white()};
+                                                      m.bumpmap ? m.bumpmap : materials_.white(),
+                                                      m.detail ? m.detail : materials_.white()};
                     g = device_.create_bind_group(*pipelines_[0][0], *sampler_, textures);
                 }
                 group = g.get();

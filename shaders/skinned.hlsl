@@ -31,6 +31,7 @@ static const uint kAdditive = 128;
 static const uint kEnvmap = 256;
 static const uint kEnvmapMaskShift = 9; // 2 bits, as for the world.
 static const uint kBump = 2048;         // $bumpmap: light and reflect about the bumped normal.
+static const uint kDetail = 8192;       // $detail, at the untransformed coordinates times $detailscale.
 
 // Iris size as a fraction of the eye mesh's UV square, measured on the
 // original (the iris spans about 0.58 of the eye opening; docs/RENDERING.md).
@@ -60,6 +61,7 @@ struct VSOutput {
     [[vk::location(5)]] float3 model_normal : TEXCOORD3; // Skinned; for bump-mapped materials.
     [[vk::location(6)]] float4 model_tangent : TANGENT;
     [[vk::location(7)]] float3 model_position : TEXCOORD4; // Skinned; for bump-mapped materials.
+    [[vk::location(8)]] float2 detail_uv : TEXCOORD5;
 };
 
 // The model-space ambient cube's light for a unit normal.
@@ -138,6 +140,7 @@ VSOutput vs_main(VSInput input) {
     const float4 tu = shader_data[pc.params_row];
     const float4 tv = shader_data[pc.params_row + 1];
     output.uv = float2(dot(tu.xyz, float3(input.uv, 1.0)), dot(tv.xyz, float3(input.uv, 1.0)));
+    output.detail_uv = input.uv * shader_data[pc.params_row + 7].y;
     output.light = model_light(position, normalize(normal));
     return output;
 }
@@ -148,6 +151,7 @@ VSOutput vs_main(VSInput input) {
 [[vk::binding(3, 0)]] TextureCube envmap;
 [[vk::binding(4, 0)]] Texture2D envmap_mask; // Raw values.
 [[vk::binding(5, 0)]] Texture2D bumpmap;     // Tangent-space normal map, raw values.
+[[vk::binding(6, 0)]] Texture2D detail;      // Raw values.
 
 float4 ps_main(VSOutput input) : SV_Target {
     float4 base = base_texture.Sample(texture_sampler, input.uv);
@@ -178,6 +182,9 @@ float4 ps_main(VSOutput input) : SV_Target {
     const float4 fog_color = shader_data[kFogStart];
     const float fog = fog_amount(input.depth_z.x, input.depth_z.y, fog_color, shader_data[kFogStart + 1]);
     float3 encoded = linear_to_srgb(color);
+    if (pc.flags & kDetail) {
+        encoded = apply_detail(encoded, detail.Sample(texture_sampler, input.detail_uv).rgb);
+    }
     if ((pc.flags & kEnvmap) && pc.envmap_block != 0 && (pc.flags & kBump)) {
         // About the bumped normal, masked by the normal map's alpha before the
         // tint and contrast, as for bump-mapped world surfaces.

@@ -80,6 +80,7 @@ constexpr std::uint32_t kAdditive = 128;
 constexpr std::uint32_t kEnvmap = 256;
 constexpr std::uint32_t kEnvmapMaskShift = 9; // 2 bits: RenderMaterial::EnvmapMask.
 constexpr std::uint32_t kBump = 2048;         // A normal map lit by the directional lightmaps.
+constexpr std::uint32_t kDetail = 8192;       // $detail.
 
 // Source polygons are wound clockwise seen from the front, and stay clockwise
 // in Vulkan framebuffer space with our Y-flipped projection (verified visually
@@ -629,7 +630,7 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
                      {7, rhi::Format::R32_Float, 52},
                      {8, rhi::Format::RGB32_Float, 56},
                      {9, rhi::Format::RGB32_Float, 68}};
-    pd.texture_count = 6; // Base, second base, lightmap, envmap (cube), envmap mask, bump map.
+    pd.texture_count = 7; // Base, second base, lightmap, envmap (cube), envmap mask, bump map, detail.
     pd.push_constant_size = sizeof(PushConstants);
     pd.shader_data = true;
     pd.front_counter_clockwise = kFrontCounterClockwise;
@@ -672,20 +673,23 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
     auto envmap_or = [&](const RenderMaterial& m) { return m.envmap ? m.envmap : materials.black_cube(); };
     auto mask_or = [&](const RenderMaterial& m) { return m.envmap_mask ? m.envmap_mask : materials.white(); };
     auto bump_or = [&](const RenderMaterial& m) { return m.bumpmap ? m.bumpmap : materials.white(); };
+    auto detail_or = [&](const RenderMaterial& m) { return m.detail ? m.detail : materials.white(); };
     sampler_ = device.create_sampler({});
     for (auto* list : {&opaque_, &translucent_}) {
         for (Batch& batch : *list) {
             const RenderMaterial& m = *batch.material;
             const rhi::Texture* base =
                 batch.monitor >= 0 ? &monitors_[static_cast<std::size_t>(batch.monitor)].target->texture() : m.base;
-            const rhi::Texture* textures[] = {base, m.base2, lightmap_.get(), envmap_or(m), mask_or(m), bump_or(m)};
+            const rhi::Texture* textures[] = {base,         m.base2,    lightmap_.get(), envmap_or(m),
+                                              mask_or(m),   bump_or(m), detail_or(m)};
             batch.bind_group = device.create_bind_group(*pipelines_[0][0], *sampler_, textures);
             if (batch.monitor >= 0) {
                 continue; // The picture is the render target, not texture frames.
             }
             for (const rhi::Texture* frame : m.base_frames) {
                 const rhi::Texture* frame_textures[] = {frame, (m.blend_layers || m.multiply_layers) ? m.base2 : frame,
-                                                        lightmap_.get(), envmap_or(m), mask_or(m), bump_or(m)};
+                                                        lightmap_.get(), envmap_or(m), mask_or(m), bump_or(m),
+                                                        detail_or(m)};
                 batch.frame_bind_groups.push_back(device.create_bind_group(*pipelines_[0][0], *sampler_, frame_textures));
             }
         }
@@ -697,7 +701,7 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
     for (Batch& batch : decals_) {
         const rhi::Texture* textures[] = {batch.material->base, batch.material->base2, lightmap_.get(),
                                           envmap_or(*batch.material), mask_or(*batch.material),
-                                          bump_or(*batch.material)};
+                                          bump_or(*batch.material), detail_or(*batch.material)};
         batch.bind_group = device.create_bind_group(*decal_pipelines_[0], *decal_sampler_, textures);
     }
 }
@@ -881,7 +885,7 @@ void WorldRenderer::draw_batch(rhi::CommandList& cmd, const Batch& batch, const 
                ((m.translucent || batch.decal) ? kTranslucent : 0) | ((batch.decal && m.modulate) ? kModulate : 0) |
                (m.multiply_layers ? kMultiplyLayers : 0) | ((m.additive && !batch.decal) ? kAdditive : 0) |
                (m.envmap && settings.envmaps ? kEnvmap | (static_cast<std::uint32_t>(m.envmap_mask_mode) << kEnvmapMaskShift) : 0) |
-               (m.bumpmap && settings.bumpmaps && !batch.decal ? kBump : 0);
+               (m.bumpmap && settings.bumpmaps && !batch.decal ? kBump : 0) | (m.detail && !m.modulate ? kDetail : 0);
     pc.params_index = m.params_index < rows ? m.params_index : 0;
     cmd.set_bind_group(batch.current_bind_group());
     cmd.push_constants(&pc, sizeof(pc));

@@ -25,6 +25,7 @@ static const uint kEnvmapMaskShift = 9;
 // $bumpmap: lit by the face's three directional lightmaps (where it has them)
 // and bending the envmap reflection.
 static const uint kBump = 2048;
+static const uint kDetail = 8192; // $detail, at the untransformed coordinates times $detailscale.
 
 struct VSInput {
     [[vk::location(0)]] float3 position : POSITION;
@@ -60,7 +61,7 @@ struct VSOutput {
 // elements; see color.hlsli), the eye position, then the material params
 // table: 8 elements per row (MaterialParams: texture transform u and v rows,
 // colour and alpha, self-illumination tint, second-texture transform u and v
-// rows, envmap tint and contrast, envmap saturation).
+// rows, envmap tint and contrast, envmap saturation and detail scale).
 [[vk::binding(0, 1)]] StructuredBuffer<float4> style_values;
 static const uint kFogStart = 16;
 static const uint kEye = 18;
@@ -102,6 +103,7 @@ VSOutput vs_main(VSInput input) {
 [[vk::binding(4, 0)]] TextureCube envmap;
 [[vk::binding(5, 0)]] Texture2D envmap_mask; // Raw values (not sRGB-decoded).
 [[vk::binding(6, 0)]] Texture2D bumpmap;     // Tangent-space normal map, raw values.
+[[vk::binding(7, 0)]] Texture2D detail;      // Raw values.
 
 // The original's bump basis (lightmappedgeneric_ps20): three directions in
 // tangent space, one per directional lightmap.
@@ -178,6 +180,9 @@ float4 ps_main(VSOutput input) : SV_Target {
         color = lerp(color, base.rgb * material_param(3).rgb, base.a);
     }
     float3 encoded = linear_to_srgb(color);
+    if (pc.flags & kDetail) {
+        encoded = apply_detail(encoded, detail.Sample(texture_sampler, input.bump_uv * material_param(7).y).rgb);
+    }
     // The environment map is added after lighting (so dark rooms still shine),
     // reflected about the surface normal.
     if ((pc.flags & kEnvmap) && (pc.flags & kBump)) {

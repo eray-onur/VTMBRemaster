@@ -93,7 +93,7 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Bump-mapped envmap reflections (tangent frame from the texture axes, normal-map alpha mask) and bump-mapped `WorldVertexTransition` blends ([RENDERING.md](RENDERING.md#bump-mapped-lightmaps))
 - [x] Normal maps on models: the ambient cube per pixel about the bumped normal, bumped envmap reflections; MDL tangents ([RENDERING.md](RENDERING.md#normal-maps-on-models))
 - [ ] Bump maps: compare with the original (Warrens, temple, `sp_soc_3` tunnels, the temple's gold Buddha)
-- [ ] Detail textures (`$detail`, multiplied in at 2×)
+- [x] Detail textures (`$detail`, multiplied in at 2× on encoded colour; world, props, characters). No shipped map uses one: only shader tests and the cracked breakable glass ([RENDERING.md](RENDERING.md#world-surfaces-lightmappedgeneric))
 - [x] Detail props: the `dprp` models baked into world-space buffers per material with their stored light, culled by cluster ([RENDERING.md](RENDERING.md#detail-props)); viewer `--no-detail-props`
 - [ ] Detail props: compare with the running game (unlit grass modulated by its stored light; draw distance and fade)
 - [x] Ropes and cables (`keyframe_rope`, `move_rope`): chains at rest drawn as camera-facing strips with the `Cable` shader's lighting and normal-map shading; sag fitted against an `sm_hub_1` capture ([RENDERING.md](RENDERING.md#ropes-and-cables)); viewer `--no-ropes`
