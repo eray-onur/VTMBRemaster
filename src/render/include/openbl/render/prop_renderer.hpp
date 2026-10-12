@@ -32,6 +32,7 @@ struct PropStats {
     std::size_t decals = 0;             // infodecals placed on props (those the world could not place).
     std::size_t unplaced_decals = 0;    // infodecals on neither the world nor a prop.
     std::size_t fading = 0;             // Static props with a distance fade.
+    std::size_t styled_lighting = 0;    // Lit by lights with a style, rebuilt when it changes.
 };
 
 struct PropDrawSettings {
@@ -59,6 +60,9 @@ public:
     // it once per frame from the main camera and uses it in every view (the
     // 3D skybox, reflections and monitors included).
     void update_fades(const std::array<float, 3>& eye);
+    // This frame's light styles (LightStyles::values): props lit by styled
+    // lights choose their lights again when one changes, as the original does.
+    void update_lighting(const std::array<float, LightStyles::kCount>& styles);
 
     // Props that are fading are left out here and drawn whole as translucent items.
     void draw_opaque(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
@@ -109,6 +113,7 @@ private:
         std::size_t skin = 0;
         std::array<float, 16> transform{}; // Column-major model matrix.
         ModelLighting lighting;            // Model space.
+        std::unique_ptr<StyledLighting> styled; // Set when styled lights reach it.
         std::vector<Decal> decals;
         bool skybox = false;               // In the 3D skybox's area.
         bool envmapped = false;            // Some mesh of its skin has an environment map.

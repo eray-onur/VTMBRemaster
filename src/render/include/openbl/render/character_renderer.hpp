@@ -56,6 +56,7 @@ struct CharacterStats {
     std::size_t with_cloth = 0;       // Instances simulating cloth (hair, skirts, coats).
     std::size_t with_envmap = 0;      // Instances with an environment-mapped material.
     std::size_t with_shadow = 0;      // Instances casting a shadow (lit strongly enough by one light).
+    std::size_t styled_lighting = 0;  // Lit by lights with a style, rebuilt when it changes.
 };
 
 struct CharacterOptions {
@@ -97,6 +98,9 @@ public:
     // `visible`: the main view's visibility; characters outside its PVS are
     // not animated (their cloth catches up when they come back). Null: all.
     void update(float time, const formats::ViewVisibility* visible = nullptr);
+    // This frame's light styles (LightStyles::values): characters lit by
+    // styled lights choose their lights again when one changes.
+    void update_lighting(const std::array<float, LightStyles::kCount>& styles);
     void draw_opaque(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
                      const CharacterDrawSettings& settings);
     // The translucent pass in the original's order (render/translucent.hpp):
@@ -178,6 +182,7 @@ private:
         std::size_t skin = 0;
         std::array<float, 16> transform{};
         ModelLighting lighting;
+        std::unique_ptr<StyledLighting> styled; // Set when styled lights reach it.
         std::optional<anim::AnimationPlayer> player; // Empty: bind pose.
         std::vector<float> flex_deltas; // Per flex slot: position and normal offsets (2 float4); empty when no flex is active.
         std::vector<formats::MdlMatrix> skinning;    // Updated by update().

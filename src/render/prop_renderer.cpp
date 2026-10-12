@@ -152,7 +152,12 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
         const glm::vec3 c = lighting_origin ? glm::vec3(glm::make_vec3(lighting_origin->data()))
                                             : glm::vec3(m * glm::vec4(glm::make_vec3(model->center.data()), 1.0f));
         if (!solid(c)) {
-            inst.lighting = lighting.sample({c.x, c.y, c.z}, rotation);
+            LightingInputs inputs = lighting.gather({c.x, c.y, c.z}, rotation);
+            inst.lighting = resolve(inputs, lighting.default_styles());
+            if (inputs.styled()) {
+                inst.styled = std::make_unique<StyledLighting>(StyledLighting{std::move(inputs), lighting.default_styles()});
+                ++stats_.styled_lighting;
+            }
         } else {
             // Embedded in the world (e.g. a building wrapped around a brush
             // block): light each side of the cube from just outside that side
@@ -572,6 +577,14 @@ void PropRenderer::update_fades(const std::array<float, 3>& eye) {
         const auto& o = inst.fade->origin;
         const float dx = o[0] - eye[0], dy = o[1] - eye[1], dz = o[2] - eye[2];
         inst.alpha = formats::static_prop_fade(*inst.fade, std::sqrt(dx * dx + dy * dy + dz * dz));
+    }
+}
+
+void PropRenderer::update_lighting(const std::array<float, LightStyles::kCount>& styles) {
+    for (Instance& inst : instances_) {
+        if (inst.styled) {
+            inst.styled->update(styles, inst.lighting);
+        }
     }
 }
 

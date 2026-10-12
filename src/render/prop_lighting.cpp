@@ -85,6 +85,9 @@ std::array<float, kLocalLightFloats> pack_local_lights(const ModelLighting& ligh
 }
 
 PropLighting::PropLighting(const formats::BspFile& bsp) : bsp_(bsp), styles_(bsp) {
+    for (std::size_t i = 0; i < LightStyles::kCount; ++i) {
+        default_styles_[i] = styles_.default_value(i);
+    }
     // Evenly spread directions (Fibonacci sphere).
     const float golden = 3.14159265f * (3.0f - std::sqrt(5.0f));
     for (std::size_t i = 0; i < kAmbientRays; ++i) {
@@ -95,40 +98,96 @@ PropLighting::PropLighting(const formats::BspFile& bsp) : bsp_(bsp), styles_(bsp
     }
 }
 
-ModelLighting PropLighting::sample(const Vec3& point, const std::array<std::array<float, 3>, 3>& rotation) const {
-    ModelLighting out;
-    // Model-space axis k in world space is column k of the rotation.
-    std::array<Vec3, 3> axes{};
-    for (std::size_t k = 0; k < 3; ++k) {
-        axes[k] = {rotation[0][k], rotation[1][k], rotation[2][k]};
-    }
+bool LightingInputs::styled() const {
+    return std::any_of(candidates.begin(), candidates.end(), [](const Candidate& c) { return c.style != 0; });
+}
 
-    // Every light that reaches the point: what it brings there (after the
-    // spot cone, before n.l), and how bright it counts when the local lights
-    // are chosen.
-    struct Candidate {
-        LocalLight light;
-        Vec3 to_light{};
-        std::array<float, 3> arriving{};
-        float brightness = 0;
-        bool sun = false;
+ModelLighting resolve(const LightingInputs& inputs, const std::array<float, LightStyles::kCount>& styles) {
+    ModelLighting out;
+    out.cube = inputs.indirect;
+    out.folded = inputs.indirect;
+    struct Lit {
+        const LightingInputs::Candidate* c;
+        float value;
+        float brightness;
     };
-    std::vector<Candidate> visible;
+    std::vector<Lit> lit;
+    lit.reserve(inputs.candidates.size());
+    for (const auto& c : inputs.candidates) {
+        const float value =
+            c.style >= 0 && static_cast<std::size_t>(c.style) < styles.size() ? styles[static_cast<std::size_t>(c.style)] : 0.0f;
+        if (value <= 0 || (!c.sun && c.strongest * value <= kWorldLightMin)) {
+            continue;
+        }
+        lit.push_back({&c, value, c.brightness * value});
+    }
+    // The two brightest become local lights. The rest are folded into the
+    // cube; the sun never is (it lights a model only as a local light).
+    std::stable_sort(lit.begin(), lit.end(), [](const Lit& a, const Lit& b) { return a.brightness > b.brightness; });
+    std::size_t locals = 0;
+    for (const Lit& l : lit) {
+        std::array<float, 3> arriving = l.c->arriving;
+        for (float& v : arriving) {
+            v *= l.value;
+        }
+        if (locals < out.lights.size() && l.brightness >= kWorldLightMin) {
+            LocalLight light = l.c->light;
+            for (float& v : light.color) {
+                v *= l.value;
+            }
+            out.arriving[locals] = arriving;
+            out.lights[locals++] = light;
+            fold(out.folded, inputs.axes, l.c->to_light, arriving);
+        } else if (!l.c->sun) {
+            fold(out.cube, inputs.axes, l.c->to_light, arriving);
+            fold(out.folded, inputs.axes, l.c->to_light, arriving);
+        }
+    }
+    return out;
+}
+
+bool StyledLighting::update(const std::array<float, LightStyles::kCount>& styles, ModelLighting& lighting) {
+    const bool changed = std::any_of(inputs.candidates.begin(), inputs.candidates.end(), [&](const auto& c) {
+        return c.style >= 0 && static_cast<std::size_t>(c.style) < styles.size() &&
+               styles[static_cast<std::size_t>(c.style)] != used[static_cast<std::size_t>(c.style)];
+    });
+    if (!changed) {
+        return false;
+    }
+    lighting = resolve(inputs, styles);
+    used = styles;
+    return true;
+}
+
+ModelLighting PropLighting::sample(const Vec3& point, const std::array<std::array<float, 3>, 3>& rotation) const {
+    return resolve(gather(point, rotation), default_styles_);
+}
+
+LightingInputs PropLighting::gather(const Vec3& point, const std::array<std::array<float, 3>, 3>& rotation) const {
+    LightingInputs out;
+    // Model-space axis k in world space is column k of the rotation.
+    for (std::size_t k = 0; k < 3; ++k) {
+        out.axes[k] = {rotation[0][k], rotation[1][k], rotation[2][k]};
+    }
+    const auto& axes = out.axes;
+
+    // Every light that can reach the point: what it brings there at full
+    // brightness (after the spot cone, before n.l), and how bright it counts
+    // when the local lights are chosen. Lights whose style starts dark are
+    // kept too, for when it changes.
     std::array<float, 3> sky_ambient{};
     bool sun_seen = false;
     for (const auto& light : bsp_.world_lights) {
-        const float style = light.style >= 0 ? styles_.default_value(static_cast<std::size_t>(light.style)) : 0.0f;
-        if (style <= 0) {
-            continue;
-        }
         if (light.type == BspLightType::SkyAmbient) {
+            const float style = light.style >= 0 ? styles_.default_value(static_cast<std::size_t>(light.style)) : 0.0f;
             for (std::size_t ch = 0; ch < 3; ++ch) {
                 sky_ambient[ch] += light.intensity[ch] * style;
             }
             continue;
         }
-        Candidate c;
-        c.light.color = {light.intensity[0] * style, light.intensity[1] * style, light.intensity[2] * style};
+        LightingInputs::Candidate c;
+        c.style = light.style;
+        c.light.color = light.intensity;
         if (light.type == BspLightType::Sky) {
             // The sun: a directional light where the sky is seen against it.
             // Only the first counts.
@@ -149,7 +208,7 @@ ModelLighting PropLighting::sample(const Vec3& point, const std::array<std::arra
             c.light.direction = light.normal;
             c.arriving = c.light.color;
             c.brightness = luminance(c.light.color);
-            visible.push_back(c);
+            out.candidates.push_back(c);
             continue;
         }
         if (light.type != BspLightType::Point && light.type != BspLightType::Spot &&
@@ -173,7 +232,10 @@ ModelLighting PropLighting::sample(const Vec3& point, const std::array<std::arra
                     : std::array<float, 3>{light.constant_attn, light.linear_attn, light.quadratic_attn};
         const float r = std::max(dist, 1.0f);
         const float scale = 1.0f / std::max(terms[0] + terms[1] * r + terms[2] * r * r, 1.0f);
-        if (std::max({c.light.color[0], c.light.color[1], c.light.color[2]}) * scale <= kWorldLightMin) {
+        c.strongest = std::max({c.light.color[0], c.light.color[1], c.light.color[2]}) * scale;
+        // The style can make a light brighter than its intensity ('z' is
+        // 25/12), so only lights too faint even then are dropped here.
+        if (c.strongest * (25.0f / 12.0f) <= kWorldLightMin) {
             continue;
         }
         // The line of sight stops just short of the light, which often sits
@@ -234,23 +296,7 @@ ModelLighting PropLighting::sample(const Vec3& point, const std::array<std::arra
                 c.light.range = disc > 0 ? std::max((std::sqrt(disc) - terms[1]) / (2.0f * terms[2]), 0.0f) : 0.0f;
             }
         }
-        visible.push_back(c);
-    }
-
-    // The two brightest become local lights. The rest are folded into the
-    // cube; the sun never is (it lights a model only as a local light).
-    std::stable_sort(visible.begin(), visible.end(),
-                     [](const Candidate& a, const Candidate& b) { return a.brightness > b.brightness; });
-    std::size_t locals = 0;
-    for (const Candidate& c : visible) {
-        if (locals < out.lights.size() && c.brightness >= kWorldLightMin) {
-            out.arriving[locals] = c.arriving;
-            out.lights[locals++] = c.light;
-            fold(out.folded, axes, c.to_light, c.arriving);
-        } else if (!c.sun) {
-            fold(out.cube, axes, c.to_light, c.arriving);
-            fold(out.folded, axes, c.to_light, c.arriving);
-        }
+        out.candidates.push_back(c);
     }
 
     // Indirect light: the lightmaps of the surfaces seen from the point, each
@@ -286,9 +332,7 @@ ModelLighting PropLighting::sample(const Vec3& point, const std::array<std::arra
     }
     for (std::size_t f = 0; f < 6; ++f) {
         for (std::size_t ch = 0; ch < 3; ++ch) {
-            const float indirect = weight[f] > 0 ? sum[f][ch] / weight[f] : 0.0f;
-            out.cube.color[f][ch] += indirect;
-            out.folded.color[f][ch] += indirect;
+            out.indirect.color[f][ch] = weight[f] > 0 ? sum[f][ch] / weight[f] : 0.0f;
         }
     }
     return out;

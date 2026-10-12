@@ -351,6 +351,7 @@ public:
         }
         const auto start = std::chrono::steady_clock::now();
         bsp_ = formats::parse_bsp(*data);
+        light_styles_.emplace(bsp_);
         pak_ = std::make_unique<formats::ZipArchive>(bsp_.pakfile);
         assets_ = std::make_unique<render::AssetSource>(gfs, pak_.get());
         materials_ = std::make_unique<render::MaterialSystem>(device, *assets_);
@@ -371,7 +372,7 @@ public:
             std::cout << "characters: " << c.instances << " instances of " << c.models << " models ("
                       << c.missing_models << " missing), " << c.without_sequence << " without an idle sequence, "
                       << c.with_cloth << " with cloth, " << c.with_envmap << " with envmaps, " << c.with_shadow
-                      << " with shadows\n";
+                      << " with shadows, " << c.styled_lighting << " lit by styled lights\n";
         }
         particles_ = std::make_unique<render::ParticleRenderer>(device, *assets_, bsp_, options.shown);
         sprites_ = std::make_unique<render::SpriteRenderer>(device, *materials_, bsp_, options.shown);
@@ -424,7 +425,8 @@ public:
             const auto& p = props_->stats();
             std::cout << "props: " << p.instances << " instances of " << p.models << " models ("
                       << p.missing_models << " missing, " << p.triangles << " triangles), "
-                      << p.generated_normals << " models with generated normals; " << bsp_.world_lights.size()
+                      << p.generated_normals << " models with generated normals, " << p.styled_lighting
+                      << " lit by styled lights; " << bsp_.world_lights.size()
                       << " world lights; " << p.decals << " decals on props, " << p.unplaced_decals
                       << " decals placed nowhere\n";
         }
@@ -465,6 +467,17 @@ public:
         }
         if (characters_) {
             characters_->update(time, main_visibility_.get());
+        }
+        // Models lit by styled lights follow them (as the world's lightmaps do).
+        auto styles = light_styles_->values(time);
+        if (!settings_.light_styles) {
+            std::fill(styles.begin() + 1, styles.end(), 0.0f);
+        }
+        if (props_) {
+            props_->update_lighting(styles);
+        }
+        if (characters_) {
+            characters_->update_lighting(styles);
         }
         particles_->update(time, {camera.position.x, camera.position.y, camera.position.z});
         // The static props' fade follows the main camera in every view, as in the original.
@@ -791,6 +804,7 @@ private:
     bool draw_sprites_ = true; // false: --no-sprites.
     bool prop_fade_ = true;    // false: --no-prop-fade.
     formats::BspDrawOrder draw_order_{bsp_};
+    std::optional<render::LightStyles> light_styles_; // Set once the map is parsed.
     std::vector<render::TranslucentItem> translucent_;
 };
 

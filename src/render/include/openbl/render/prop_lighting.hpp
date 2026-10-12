@@ -19,6 +19,9 @@
 // times its texture's reflectivity, and the sky's ambient light where the sky
 // is seen, gathered with rays (bounce light is not stored in the world light
 // list).
+// Lights with a style take part at the style's current brightness: the
+// original rebuilds a model's lighting when one of its styles changes, so the
+// choice is split into gathering (once) and resolving (per style change).
 // In the same units as the world: lit colour = base x light in linear terms.
 
 #include "openbl/formats/bsp.hpp"
@@ -61,6 +64,40 @@ struct ModelLighting {
     AmbientCube folded;               // The cube with the local lights folded in too.
 };
 
+// Everything a model's lighting is chosen from, before light styles are
+// applied: the indirect light, and every light that reaches the point with
+// what it would bring at full brightness.
+struct LightingInputs {
+    struct Candidate {
+        LocalLight light;                 // Colour: the light's intensity, without its style.
+        formats::Vec3 to_light{};         // Unit, world space (the sun: towards it).
+        std::array<float, 3> arriving{};  // At the point, after attenuation and spot cone.
+        float brightness = 0;             // Luminance x attenuation, without the cone: what ranks it.
+        float strongest = 0;              // Brightest channel x attenuation: under r_worldlightmin it is left out.
+        std::int32_t style = 0;
+        bool sun = false;
+    };
+    std::array<formats::Vec3, 3> axes{};  // Model axes in world space (the cube's directions).
+    AmbientCube indirect;                 // Model space.
+    std::vector<Candidate> candidates;
+
+    // True if some candidate has a light style other than 0.
+    bool styled() const;
+};
+
+// The lighting with each light at its style's brightness `styles[style]`.
+ModelLighting resolve(const LightingInputs& inputs, const std::array<float, LightStyles::kCount>& styles);
+
+// A model lit by styled lights: its inputs, kept to rebuild its lighting when
+// one of those styles changes brightness.
+struct StyledLighting {
+    LightingInputs inputs;
+    std::array<float, LightStyles::kCount> used{}; // The style values `lighting` was last resolved with.
+
+    // Resolves again into `lighting` if a style it depends on changed; true if it did.
+    bool update(const std::array<float, LightStyles::kCount>& styles, ModelLighting& lighting);
+};
+
 // Floats per instance for the shaders: pack_local_lights' 8 float4.
 constexpr std::size_t kLocalLightFloats = 32;
 
@@ -80,7 +117,10 @@ public:
 
     // `rotation` is the model-to-world rotation (row-major 3x3); the cube is
     // returned in model space so shaders can use object-space normals.
+    LightingInputs gather(const formats::Vec3& point, const std::array<std::array<float, 3>, 3>& rotation) const;
+    // Gathered and resolved with every style at its default brightness.
     ModelLighting sample(const formats::Vec3& point, const std::array<std::array<float, 3>, 3>& rotation) const;
+    const std::array<float, LightStyles::kCount>& default_styles() const { return default_styles_; }
 
 private:
     // Summed light styles (at their default brightness) at a traced point.
@@ -88,6 +128,7 @@ private:
 
     const formats::BspFile& bsp_;
     LightStyles styles_;
+    std::array<float, LightStyles::kCount> default_styles_{};
     std::vector<formats::Vec3> directions_;
 };
 

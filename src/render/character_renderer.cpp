@@ -313,7 +313,12 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
                 rotation[static_cast<std::size_t>(r)][static_cast<std::size_t>(k)] = m[k][r];
             }
         }
-        inst.lighting = lighting.sample({origin[0], origin[1], origin[2] + kLightingHeight}, rotation);
+        LightingInputs inputs = lighting.gather({origin[0], origin[1], origin[2] + kLightingHeight}, rotation);
+        inst.lighting = resolve(inputs, lighting.default_styles());
+        if (inputs.styled()) {
+            inst.styled = std::make_unique<StyledLighting>(StyledLighting{std::move(inputs), lighting.default_styles()});
+            ++stats_.styled_lighting;
+        }
 
         // The requested sequence, else the idle: the first ACT_IDLE sequence,
         // else any sequence named like an idle.
@@ -719,6 +724,14 @@ const CharacterRenderer::Model* CharacterRenderer::load_model(const std::string&
         ++stats_.missing_models;
     }
     return models_.emplace(path, std::move(model)).first->second.get();
+}
+
+void CharacterRenderer::update_lighting(const std::array<float, LightStyles::kCount>& styles) {
+    for (Instance& inst : instances_) {
+        if (inst.styled) {
+            inst.styled->update(styles, inst.lighting);
+        }
+    }
 }
 
 void CharacterRenderer::update(float time, const formats::ViewVisibility* visible) {
