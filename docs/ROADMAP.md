@@ -124,7 +124,7 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Monitors: confirm the camera `FOV` convention, picture brightness and render-target size; cameras parented to moving props
 - [x] Particle simulation and rendering: active `env_particle` effects, emitters, curves, motion, premultiplied sprites ([PARTICLES.md](PARTICLES.md))
 - [x] Particles: collisions (splash and flat decal particles where drops land), precipitation following the viewer under open sky (`attach_type` 11, `bounds`), `ramp_scale`, `func_particle` volumes ([PARTICLES.md](PARTICLES.md))
-- [ ] Particles: calibrate units and colour scale on more captures (one done: barrel fire), compare rain with the original, bouncing (`self`) and `vdecal` collisions, refraction, script-started effects, fire light
+- [ ] Particles: calibrate units and colour scale on more captures (one done: barrel fire), rain streaks 1.6× as bright as the original's (count and length match), bouncing (`self`) and `vdecal` collisions, refraction, script-started effects, fire light
 - [x] Decals: faces just behind the decal, displacements, and props (`$modelmaterial`); 4,520 of 4,609 on the world plus a few on props
 - [x] Decals: the original's placement rule read from `engine.dll` (within 4 units of a face's plane; displacements by bounds overlap); the remaining ~85 float too far from any surface for the original to draw them either; displacements now follow the original ([formats/maps.md](formats/maps.md#decals-infodecal))
 - [ ] Decals: `DecalModulate` on props; confirm orientation against the original

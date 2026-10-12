@@ -178,8 +178,39 @@ const rhi::Texture* ParticleRenderer::sprite(const std::string& name) {
         if (auto data = assets_.read("particles/" + key + ".tga")) {
             try {
                 const auto image = formats::decode_tga(*data);
-                const std::span<const std::byte> mip = std::as_bytes(std::span(image.rgba));
-                tex = device_.create_texture({image.width, image.height, 1, rhi::Format::RGBA8_UNorm}, std::span(&mip, 1));
+                // A full mip chain (2 x 2 box filter on encoded values), as the
+                // engine builds: small, distant sprites such as the rain's thin
+                // droplet average down instead of sampling their bright core.
+                std::vector<std::vector<std::uint8_t>> levels{image.rgba};
+                std::uint32_t w = image.width, h = image.height;
+                while (w > 1 || h > 1) {
+                    const std::uint32_t nw = std::max(1u, w / 2), nh = std::max(1u, h / 2);
+                    const auto& src = levels.back();
+                    std::vector<std::uint8_t> dst(std::size_t{nw} * nh * 4);
+                    for (std::uint32_t y = 0; y < nh; ++y) {
+                        for (std::uint32_t x = 0; x < nw; ++x) {
+                            for (std::uint32_t c = 0; c < 4; ++c) {
+                                std::uint32_t sum = 0;
+                                for (std::uint32_t k = 0; k < 4; ++k) {
+                                    const std::uint32_t sx = std::min(w - 1, x * 2 + (k & 1));
+                                    const std::uint32_t sy = std::min(h - 1, y * 2 + (k >> 1));
+                                    sum += src[(std::size_t{sy} * w + sx) * 4 + c];
+                                }
+                                dst[(std::size_t{y} * nw + x) * 4 + c] = static_cast<std::uint8_t>((sum + 2) / 4);
+                            }
+                        }
+                    }
+                    levels.push_back(std::move(dst));
+                    w = nw;
+                    h = nh;
+                }
+                std::vector<std::span<const std::byte>> mips;
+                for (const auto& level : levels) {
+                    mips.push_back(std::as_bytes(std::span(level)));
+                }
+                tex = device_.create_texture({image.width, image.height, static_cast<std::uint32_t>(mips.size()),
+                                              rhi::Format::RGBA8_UNorm},
+                                             mips);
             } catch (const formats::FormatError& e) {
                 std::fprintf(stderr, "particle sprite %s: %s\n", key.c_str(), e.what());
             }
@@ -288,12 +319,17 @@ void ParticleRenderer::draw_translucent_item(rhi::CommandList& cmd, std::uint32_
         const rhi::Texture* tex = sprite(*quads[start].sprite);
         std::size_t end = start;
         data_.clear();
+        // Sprites keep their shape: the larger side spans the particle's size
+        // (the rain's 5 x 25 droplet is a thin streak, as in the original).
+        const float tw = static_cast<float>(tex->desc().width), th = static_cast<float>(tex->desc().height);
+        const float aspect_w = tw < th ? tw / th : 1.0f, aspect_h = th < tw ? th / tw : 1.0f;
         while (end < quads.size() && end - start < kMaxPerDraw && sprite(*quads[end].sprite) == tex) {
             const auto& q = quads[end];
             // Orientation: 0 facing the camera, 1 along the motion, 2 flat on a surface.
             const bool flat = q.normal[0] != 0 || q.normal[1] != 0 || q.normal[2] != 0;
             const auto& axis = flat ? q.normal : q.velocity;
-            data_.insert(data_.end(), {q.position[0], q.position[1], q.position[2], q.width, q.height, q.rotation,
+            data_.insert(data_.end(), {q.position[0], q.position[1], q.position[2], q.width * aspect_w,
+                                       q.height * aspect_h, q.rotation,
                                        flat ? 2.0f : q.align ? 1.0f : 0.0f, 0.0f, q.color[0], q.color[1], q.color[2],
                                        q.mask, axis[0], axis[1], axis[2], 0.0f});
             ++end;

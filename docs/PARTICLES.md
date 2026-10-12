@@ -10,7 +10,7 @@ How OpenBL runs the effects described in [formats/particles.md](formats/particle
 
 - **`ramp_scale`** multiplies every emission rate. Santa Monica's rain (`sm_hub_1`, `sm_hub_2`, `sm_oceanhouse_2`) starts at 0: a `logic_timer` fades `GlobalWetness` in 3 to 5 minutes into the map (`FadeGlobalWetness`, Phase 2), so at first the original shows no rain there. `sm_pier_1` and `sp_endsequences_b` start at 1.
 - **`func_particle`** (fire walls in `la_malkavian_4`/`_5` and `sp_endsequences_a`, `la_bradbury_3`'s blood rain, and the scripted rain boxes): the root's children start at random points in the brush's bounds (relative to the entity's origin), plus their spawn offsets.
-- **Precipitation.** Rain emitters are `env_particle`s with `attach_type` 11 (the player) and `bounds` (256 or 512). The effect follows the viewer, and its children marked `precipitation` start at random points up to `bounds` away horizontally and up to `bounds` above the viewer, only where open sky lies straight above (so it does not rain indoors). A drop ends where it crosses the first surface below its start. The box's shape is a guess; the template only says precipitation spawns "in a box around the player".
+- **Precipitation.** Rain emitters are `env_particle`s with `attach_type` 11 (the player) and `bounds` (256 or 512). The effect follows the viewer, and its children marked `precipitation` start at random points up to `bounds` away horizontally and up to `bounds` above the viewer, only where open sky lies straight above (so it does not rain indoors). A drop ends where it crosses the first surface below its start. The box's shape is a guess (the template only says precipitation spawns "in a box around the player"), but with `bounds` as its half-width it reproduces the original's streak count; see "Calibration" below.
 
 ## Simulation
 
@@ -28,7 +28,7 @@ A definition with a `collide` block ends where it meets the world (lightmapped f
 
 ## Drawing
 
-Each particle with a `sprite` (`particles/<sprite>.tga`) is a quad facing the camera, `size` × `width` by `size` × `height` units, rolled by `rotation`; `movealign` stretches it along its motion instead, and collision decals lie flat on their surface. It is drawn with premultiplied blending. Each effect is one item in the translucent queue ([RENDERING.md](RENDERING.md#translucent-order)), placed by the leaves its particles reach, with its particles back to front:
+Each particle with a `sprite` (`particles/<sprite>.tga`) is a quad facing the camera, `size` × `width` by `size` × `height` units, rolled by `rotation`; `movealign` stretches it along its motion instead, and collision decals lie flat on their surface. The sprite keeps its shape: its larger side spans the size and the other is scaled down (36 of the 309 sprites are not square, such as the rain's 5 × 25 `DropletFast` and the 32 × 64 flames). Sprites get a full mip chain (2 × 2 box filter), so small, distant particles average out instead of sampling their brightest texels. It is drawn with premultiplied blending. Each effect is one item in the translucent queue ([RENDERING.md](RENDERING.md#translucent-order)), placed by the leaves its particles reach, with its particles back to front:
 
 - **added light** = the sprite's colour × (`red`, `green`, `blue`) / 255 × `color` / 255, on gamma-encoded values (the sprites are already dark where transparent, so their alpha is not applied again);
 - **darkening** = sprite alpha × `mask` / 255: the background is scaled by one minus that (smoke darkens what is behind it).
@@ -51,10 +51,23 @@ Capture: the barrel fire among the bums in `sm_hub_1` (`BarrelFireEmitter`, came
 
 With the template's semantics and gamma-space blending the flames sit in the right place at the right size, the base of the column matches and the core reaches about 0.85 of the original's brightness (from 0.6 with linear blending). The haze above the fire is now too bright (about 0.1 against 0.04), probably the large smoke sprites' added light; more captured effects should show whether smoke is drawn differently.
 
+**Rain** (`sm_pier_1`, camera 3700.13 −699.87 −166, pitch −3.93 game / 3.93 OpenBL, yaw 346.65; 15 frames of the original against renders at 10, 11 and 12 s). Streaks are found against a rain-free background (the median frame; an OpenBL render at time 0) in the sky above the pier (rows 20–330, columns 120–1030), as connected pixels at least 5 levels brighter:
+
+| | Streaks per frame | Mean length (px) | Mean peak (levels) |
+|---|---|---|---|
+| Original | 179 | 4.1 | 14.7 |
+| OpenBL, square quads (first version) | — | — | blobs, not streaks |
+| Sprite aspect kept | 183 | 3.6 | 28.1 |
+| ... and mipmapped sprites | 202 | 4.0 | 23.2 |
+| Box half-width `bounds` / 2 | 113 | 8.2 | 22.1 |
+| Box half-width `bounds` / 4 | 42 | 16.6 | 17.0 |
+
+So `bounds` is the box's half-width, and the drops are thin because the sprite keeps its shape. OpenBL's streaks are still about 1.6 times as bright at their peak; side by side the difference is hard to see.
+
 ## Not done yet
 
 - Calibration on more effects (steam, smoke, water drops): the smoke above the barrel fire is too bright.
 - Bursts on later frames, `distance` emission, `depth_offset`, `no_z_test`, `flat`, `sortfront`, `lighting` (scaled by scene lighting).
 - `collide`'s `self` (bounce, gravity, friction) and `vdecal` decals; collisions with displacements and props; `refract` and `normal` (refracting effects).
-- Rain compared with the original (box size, density, how drops look in motion).
+- Rain: the 1.6× brighter streak peaks; the splashes and ripple rings not compared yet.
 - The light that fire effects cast (the original lights the bums around the barrel; probably a separate dynamic light).
