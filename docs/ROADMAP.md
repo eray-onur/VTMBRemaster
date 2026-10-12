@@ -105,7 +105,7 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Cheap water: compare with the original (the open sea around `la_dane_1`)
 - [x] Parity tooling: viewer shot lists (`--shots`, `--fov`, `--size`), `openbl-cli image compare` (see docs/PARITY.md)
 - [x] Lightmap brightness measured against original-game captures: base × luxel in linear terms (scale 1.0, was 2.3); capture method verified; `--fov` follows the game's 4:3-horizontal convention ([PARITY.md](PARITY.md))
-- [ ] The ceiling fan in `sp_tutorial_1` is drawn without its ceiling rod (seen in the parity captures)
+- [x] Tool materials: faces hidden by their texinfo flags and by brush-entity class (triggers, dust motes, particle volumes) instead of by the `tools/` prefix; draws the `tools/black` ceiling-fan rod in `sp_tutorial_1` ([RENDERING.md](RENDERING.md#world-surfaces-lightmappedgeneric))
 - [x] Gamma-space blending: plain 8-bit targets, shaders encode sRGB, so translucent surfaces, decals and particles blend on encoded values like the original
 - [ ] Pure gamma 2.2 shading (the original multiplies in gamma 2.2; OpenBL's sRGB decode is up to ~15% darker in dark tones)
 - [x] Static models in maps

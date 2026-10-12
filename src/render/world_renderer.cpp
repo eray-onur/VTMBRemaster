@@ -175,11 +175,24 @@ formats::Vec3 entity_vec3(const formats::BspEntity& e, const char* key) {
     return v;
 }
 
+// Brush entities the engine never draws: triggers hide themselves (EF_NODRAW),
+// and dust motes, particle volumes and inspection brushes only use their
+// brushes as volumes. Their faces are mostly tool materials, but not all (760
+// faces of trigger_hurt in the shipped maps have a plain texture).
+bool entity_drawn(const formats::BspEntity& e) {
+    const auto it = e.find("classname");
+    if (it == e.end()) {
+        return true;
+    }
+    const std::string& c = it->second;
+    return !c.starts_with("trigger_") && c != "func_dustmotes" && c != "func_particle" && c != "inspection_brush";
+}
+
 std::vector<ModelInstance> model_instances(const BspFile& bsp) {
     std::vector<ModelInstance> out{{0, {}, nullptr}};
     for (const auto& e : bsp.entities) {
         auto model = e.find("model");
-        if (model == e.end() || model->second.size() < 2 || model->second[0] != '*') {
+        if (model == e.end() || model->second.size() < 2 || model->second[0] != '*' || !entity_drawn(e)) {
             continue;
         }
         const std::size_t index = std::strtoul(model->second.c_str() + 1, nullptr, 10);

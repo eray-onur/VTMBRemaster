@@ -571,13 +571,14 @@ RenderMaterial MaterialSystem::load(const std::string& name, std::optional<forma
         out.cheap_end = number("$cheapwaterenddistance");
         out.force_cheap = flag(*mat, "$forcecheap");
     }
-    // Tool materials are compiled into the map but never drawn.
+    // Tool materials are compiled into the map but never drawn. Other materials
+    // in tools/ are ordinary surfaces: tools/black makes the ceiling-fan rod in
+    // sp_tutorial_1 and blacks out openings in 31 maps.
     for (const char* tool : {"%compilenodraw", "%compiletrigger", "%compileclip", "%compileplayerclip",
                              "%compilenpcclip", "%compileinvisible", "%compilehint", "%compileskip",
                              "%compileareaportal", "%compileorigin", "%compilefog"}) {
         out.skip = out.skip || flag(*mat, tool);
     }
-    out.skip = out.skip || name.starts_with("tools/");
     return out;
 }
 
