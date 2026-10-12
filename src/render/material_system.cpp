@@ -455,6 +455,14 @@ RenderMaterial MaterialSystem::load(const std::string& name, std::optional<forma
     if (auto scale = mat->param("$decalscale")) {
         out.decal_scale = static_cast<float>(std::atof(std::string(*scale).c_str()));
     }
+    if (out.shader == "cable") {
+        if (auto v = mat->param("$minlight")) {
+            out.min_light = static_cast<float>(std::atof(std::string(*v).c_str()));
+        }
+        if (auto v = mat->param("$maxlight")) {
+            out.max_light = static_cast<float>(std::atof(std::string(*v).c_str()));
+        }
+    }
     if (out.shader == "sprite") {
         if (auto o = mat->param("$spriteorientation")) {
             const std::string v = formats::normalize_game_path(*o);
@@ -500,9 +508,9 @@ RenderMaterial MaterialSystem::load(const std::string& name, std::optional<forma
     // where it has them, and bending envmap reflections
     // (docs/RENDERING.md#bump-mapped-lightmaps). A WorldVertexTransition's
     // one normal map serves both layers. Models light their ambient cube per
-    // pixel with it.
+    // pixel with it. Cables shade across their width with it.
     if (out.shader == "lightmappedgeneric" || out.shader == "worldvertextransition" ||
-        out.shader == "vertexlitgeneric") {
+        out.shader == "vertexlitgeneric" || out.shader == "cable") {
         if (auto path = mat->texture_path("$bumpmap")) {
             out.bumpmap = texture(*path, false);
         }

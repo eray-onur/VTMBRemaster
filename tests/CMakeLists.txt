@@ -22,6 +22,7 @@ add_executable(openbl_tests
     test_path.cpp
     test_phy.cpp
     test_pickle.cpp
+    test_rope.cpp
     test_sav.cpp
     test_vpk.cpp
     test_game_filesystem.cpp

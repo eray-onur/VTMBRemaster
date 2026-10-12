@@ -19,6 +19,7 @@
 #include "openbl/render/texture_upload.hpp"
 #include "openbl/render/prop_renderer.hpp"
 #include "openbl/render/sky_renderer.hpp"
+#include "openbl/render/rope_renderer.hpp"
 #include "openbl/render/sprite_renderer.hpp"
 #include "openbl/render/world_renderer.hpp"
 #include "openbl/rhi/vulkan.hpp"
@@ -50,7 +51,7 @@ namespace {
 
 constexpr const char* kUsage =
     "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--show TARGETNAME]... [--npc-sequence NAME] [--pose NAME=VALUE]... [--flex CONTROLLER=VALUE]... [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
-    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-envmap] [--no-bump] [--no-sprites] [--no-prop-fade] [--no-cloth] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
+    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-envmap] [--no-bump] [--no-sprites] [--no-ropes] [--no-prop-fade] [--no-cloth] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
     "                     [--validation] [--no-vsync]";
 
 struct Options {
@@ -73,6 +74,7 @@ struct Options {
     bool envmaps = true; // --no-envmap: no environment-map reflections.
     bool bumpmaps = true; // --no-bump: normal maps ignored (world: flat lightmap; models: vertex lighting).
     bool sprites = true; // --no-sprites: no env_sprite glows and cones.
+    bool ropes = true;   // --no-ropes: no keyframe_rope / move_rope cables.
     bool prop_fade = true; // --no-prop-fade: static props never fade with distance.
     bool characters = true;
     std::optional<std::filesystem::path> screenshot;
@@ -155,6 +157,8 @@ Options parse_args(int argc, char** argv) {
             o.characters_options.cloth = false;
         } else if (a == "--no-sprites") {
             o.sprites = false;
+        } else if (a == "--no-ropes") {
+            o.ropes = false;
         } else if (a == "--no-prop-fade") {
             o.prop_fade = false;
         } else if (a == "--no-envmap") {
@@ -358,6 +362,11 @@ public:
         particles_ = std::make_unique<render::ParticleRenderer>(device, *assets_, bsp_, options.shown);
         sprites_ = std::make_unique<render::SpriteRenderer>(device, *materials_, bsp_, options.shown);
         draw_sprites_ = options.sprites;
+        if (options.ropes) {
+            ropes_ = std::make_unique<render::RopeRenderer>(device, *materials_, bsp_);
+            std::cout << "ropes: " << ropes_->stats().ropes << " (" << ropes_->stats().missing_materials
+                      << " with a missing material)\n";
+        }
         prop_fade_ = options.prop_fade;
         std::cout << "sprites: " << sprites_->stats().sprites << " on, " << sprites_->stats().off << " off, "
                   << sprites_->stats().missing_materials << " with a missing material\n";
@@ -555,6 +564,9 @@ private:
             if (props_) {
                 props_->draw_opaque(cmd, sm, prop_settings);
             }
+            if (ropes_) {
+                ropes_->draw_opaque(cmd, sm, {sky_eye.x, sky_eye.y, sky_eye.z}, sky_fog, true);
+            }
             draw_translucent(cmd, sm, to_array(view), sky_eye, sky_fog, true, sky->scale, prop_settings, nullptr);
             cmd.clear_depth();
             settings_.skybox = false;
@@ -580,6 +592,9 @@ private:
         }
         if (characters_) {
             characters_->draw_opaque(cmd, m, character_settings);
+        }
+        if (ropes_) {
+            ropes_->draw_opaque(cmd, m, {eye.x, eye.y, eye.z}, fog, false);
         }
         draw_translucent(cmd, m, to_array(view), eye, fog, false, 1.0f, prop_settings, &character_settings);
     }
@@ -658,6 +673,7 @@ private:
     std::unique_ptr<render::CharacterRenderer> characters_;
     std::unique_ptr<render::ParticleRenderer> particles_;
     std::unique_ptr<render::SpriteRenderer> sprites_;
+    std::unique_ptr<render::RopeRenderer> ropes_;
     bool draw_sprites_ = true; // false: --no-sprites.
     bool prop_fade_ = true;    // false: --no-prop-fade.
     formats::BspDrawOrder draw_order_{bsp_};

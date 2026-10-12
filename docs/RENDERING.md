@@ -171,6 +171,20 @@ Doubling the distance instead fits worse (it overshoots the far values). Whether
 
 Not done: scripts switching sprites on and off (the traffic lights cycle every 40 s through `logic_relay` skins and sprites), and scale animations. `openbl-viewer --no-sprites` hides all sprites.
 
+## Ropes and cables
+
+`keyframe_rope` and `move_rope` entities (2,448 over all maps; 99 in `sm_hub_1`, making 76 ropes). Each one with a `NextKey` hangs a rope from its own origin to that entity's, with its own `Width`, `Slack`, `Subdiv`, `TextureScale` and `RopeMaterial`. Chains of keyframes (telephone lines from pole to pole) are one rope per span.
+
+**The `Cable` shader** (8 materials; `vsh/cable.vcs` and `psh/cable.vcs`, read from the shipped files). The engine supplies two colours per vertex: the lighting where the rope is, and a light direction expressed in a frame built from the rope's direction and the strip's side direction. The pixel shader multiplies the base texture by that lighting and by the normal map dotted with the light direction, plus a constant. The base texture's u runs across the rope and v along it, and the normal maps (`cable/cablenormalmap`, 16 × 4) shade it as a round cable. The lighting is clamped to `$minlight` and `$maxlight`; the clamping happens in engine code, so its exact form is not known. Some rope materials are `UnlitGeneric` instead (Christmas lights, alpha-tested).
+
+**OpenBL**:
+
+- **Shape**: a chain of `Subdiv` + 2 nodes (`Subdiv` 0 to 8) with equal links, hanging at rest under gravity (`anim::rope_rest_nodes`, solved by relaxation), drawn as a Catmull-Rom curve through the nodes, about one point every 12 units.
+- **Slack**: the chain's length is the straight distance plus **0.15 × `Slack`**. With the whole `Slack`, the telephone cables on `sm_hub_1` (spans of about 800 to 1,000 units, `Slack` 70 to 80) hang about 170 units below their poles: into the traffic-light view (station `j1` in [Sprites](#sprites-env_sprite)), where the original shows no cables, and in deep curves across station `c1`, where the original's run nearly straight to the pole. Fitted on `c1`'s capture (the original's cables isolated by its `r_drawsprites` on/off pair, which also hides cables): the original's lines are a median 3.6 pixels from OpenBL's at 0.15, and 5–10 pixels at 0.1 or 0.2. The cables in view there belong to five-span chains, so spreading one `Slack` over a whole chain (0.2 per span) would fit about as well; no capture yet shows a single-span rope.
+- **Strip**: `Width` units wide, turned about the rope's direction to face the camera. v advances by 4 texels per unit at `TextureScale` 1, and larger scales stretch the texture (the Valve Developer Community's `move_rope` page). Chains, caution tape and Christmas lights then come out about 1.3 times longer than square.
+- **Light**: at each node, the mean of the six faces of the prop-lighting ambient cube with all lights folded in ([Models](#models-vertexlitgeneric)), encoded (^(1/2.2)) and clamped per channel to `$minlight`–`$maxlight`, interpolated along the rope. The normal map's light direction is taken as the strip's facing, so the shading term is the normal map's z. The engine's light direction and constant are not known. Unlit materials take the base texture alone.
+- `Type`, `Collide`, `Barbed`, and ropes moving between keyframes are not modelled. Ropes are not culled. `openbl-viewer --no-ropes` hides them.
+
 ## Translucent order
 
 The original draws translucent things in BSP order, back to front from the eye, as Source does:

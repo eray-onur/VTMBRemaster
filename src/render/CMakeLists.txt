@@ -5,6 +5,7 @@ add_library(openbl_render
     particle_renderer.cpp
     prop_lighting.cpp
     prop_renderer.cpp
+    rope_renderer.cpp
     sky_renderer.cpp
     sprite_renderer.cpp
     texture_upload.cpp
@@ -26,5 +27,7 @@ openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/skinned.hlsl vert 
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/skinned.hlsl frag ps_main openbl_skinned_ps)
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/particle.hlsl vert vs_main openbl_particle_vs)
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/particle.hlsl frag ps_main openbl_particle_ps)
+openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/rope.hlsl vert vs_main openbl_rope_vs)
+openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/rope.hlsl frag ps_main openbl_rope_ps)
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/sprite.hlsl vert vs_main openbl_sprite_vs)
 openbl_add_shader(openbl_render ${PROJECT_SOURCE_DIR}/shaders/sprite.hlsl frag ps_main openbl_sprite_ps)

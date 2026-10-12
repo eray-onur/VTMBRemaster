@@ -39,6 +39,10 @@ struct RenderMaterial {
     bool modulate = false;    // DecalModulate: multiplies what is behind it by 2 x the texture.
     bool missing = false;    // The .vmt could not be found or parsed.
     bool camera_feed = false; // $basetexture is the camera render target (func_monitor screens).
+    // Cable shader: the range its lighting is clamped to, as encoded values
+    // ($minlight, $maxlight; docs/RENDERING.md#ropes-and-cables).
+    float min_light = 0.0f;
+    float max_light = 1.0f;
 
     // Sprite shader: how the quad faces the camera ($spriteorientation) and
     // the point of the picture placed at the entity's origin ($spriteorigin, 0-1).
@@ -65,7 +69,7 @@ struct RenderMaterial {
     // Water shader parameters. Colours are as authored (gamma-encoded): the
     // original multiplies encoded render-target colour by them.
     bool water = false;
-    const rhi::Texture* bumpmap = nullptr;    // $bumpmap of LightmappedGeneric, WorldVertexTransition, VertexLitGeneric (linear).
+    const rhi::Texture* bumpmap = nullptr;    // $bumpmap of LightmappedGeneric, WorldVertexTransition, VertexLitGeneric, Cable (linear).
     const rhi::Texture* normal_map = nullptr; // $normalmap, linear; a flat normal if missing.
     const rhi::Texture* dudv = nullptr;       // $bumpmap: signed offsets, biased (0.5 = none).
     bool reflect = false;                     // Has $reflecttexture.
