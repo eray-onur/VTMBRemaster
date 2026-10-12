@@ -67,7 +67,7 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Prop lighting: per-vertex ambient cube from visible style-0 world lights (BSP line-of-sight test)
 - [x] Prop lighting: indirect light gathered from the surrounding lightmaps (162 traced rays), fitted to original-game captures
 - [x] Model lighting from the original's shaders (`vertexlit_and_unlit_generic_vs20`): two local lights per model, evaluated per vertex (per pixel with a normal map) with Lambert, attenuation and spot cones; the rest in the ambient cube; the sun where the sky is seen, and sky ambient light in the gathered indirect light ([RENDERING.md](RENDERING.md#models-vertexlitgeneric))
-- [ ] Prop lighting: confirm in more rooms and outdoors; static props' baked per-vertex lighting (the engine bakes it at load, `CModelRender::CreateStaticPropColorData`; its light set needs a capture near several strong lights); lights with styles other than 0
+- [ ] Prop lighting: confirm in more rooms and outdoors; static props' baked per-vertex lighting (the engine bakes it at load, `CModelRender::CreateStaticPropColorData`; on `sm_pier_1`'s arcade front the original is 1.4–1.5× brighter than OpenBL, and neither a per-vertex nor a single-point bake of all lights fits it better; [RENDERING.md](RENDERING.md#models-vertexlitgeneric)); lights with styles other than 0
 - [ ] Model lighting: compare near strong lights with the running game (`sm_hub_1`: the NPCs at the burning barrel, lamp posts, the 3D skybox's parking structure)
 - [x] Light styles: all lightmap styles drawn, weighted per style (animated Quake patterns at 10 letters/s; switchable styles 32+ on unless all their lights start dark); props include styled world lights
 - [ ] Light styles: toggling switchable lights at runtime (needs entity I/O, Phase 2)
@@ -90,7 +90,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Sprites: scripts switching sprites on and off (traffic lights; needs entity I/O, Phase 2); scale animations
 - [x] Visibility culling: PVS and frustum per view for world batches (faces grouped by cluster), props, characters, sprites and particles; characters out of the main PVS not animated; 4–5× faster frames on `sm_hub_1` ([RENDERING.md](RENDERING.md#visibility)); viewer `--no-cull`
 - [x] Visibility: area portals (`func_areaportal` with `StartOpen` 0, mostly behind doors, closed; windows open), translucent world faces and decals culled; viewer `--no-area-portals` ([RENDERING.md](RENDERING.md#visibility))
-- [ ] Visibility: portals opening and closing with doors (Phase 2), `func_areaportalwindow` fade distances; a faint culled/unculled difference on one `sm_warehouse_1` view
+- [x] Area portal windows: the `func_areaportalwindow`'s target brush fades with the viewer's distance (`FadeStartDist`, `FadeDist`, `TranslucencyLimit`), as in Source; `sm_pier_1`'s arcade doorway checked against a capture ([RENDERING.md](RENDERING.md#visibility))
+- [ ] Visibility: portals opening and closing with doors (Phase 2), window portals closing beyond `FadeDist`; a faint culled/unculled difference on one `sm_warehouse_1` view
 - [x] Bump-mapped world surfaces: `$bumpmap` faces lit from their three directional lightmaps with the original's basis and weighted average ([RENDERING.md](RENDERING.md#bump-mapped-lightmaps)); viewer `--no-bump`
 - [x] Bump-mapped envmap reflections (tangent frame from the texture axes, normal-map alpha mask) and bump-mapped `WorldVertexTransition` blends ([RENDERING.md](RENDERING.md#bump-mapped-lightmaps))
 - [x] Normal maps on models: the ambient cube per pixel about the bumped normal, bumped envmap reflections; MDL tangents ([RENDERING.md](RENDERING.md#normal-maps-on-models))

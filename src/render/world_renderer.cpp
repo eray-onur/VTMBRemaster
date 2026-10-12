@@ -51,8 +51,10 @@ struct PushConstants {
     float light_scale;
     std::uint32_t flags;
     std::uint32_t params_index;
+    float opacity; // Scales the output alpha (area portal windows); 1 otherwise.
+    float pad[3];
 };
-static_assert(sizeof(PushConstants) == 80);
+static_assert(sizeof(PushConstants) == 96);
 
 struct WaterPushConstants {
     float refract[4]; // Tint (encoded), amount.
@@ -82,6 +84,7 @@ constexpr std::uint32_t kEnvmap = 256;
 constexpr std::uint32_t kEnvmapMaskShift = 9; // 2 bits: RenderMaterial::EnvmapMask.
 constexpr std::uint32_t kBump = 2048;         // A normal map lit by the directional lightmaps.
 constexpr std::uint32_t kDetail = 8192;       // $detail.
+constexpr std::uint32_t kOpacityOnly = 16384; // Alpha is the opacity alone (an opaque material fading).
 
 // Source polygons are wound clockwise seen from the front, and stay clockwise
 // in Vulkan framebuffer space with our Y-flipped projection (verified visually
@@ -256,11 +259,21 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
     // breaks), so they are not drawn. Monitors (func_monitor) show their
     // point_camera's view.
     std::map<std::string, const formats::BspEntity*> cameras;
+    // func_areaportalwindow: the brush it fades (its "target"), by targetname.
+    std::map<std::string, Batch::PortalFade> portal_windows;
     for (const auto& e : bsp.entities) {
         if (entity_value(e, "classname") == "point_camera") {
             cameras[entity_value(e, "targetname")] = &e;
         }
+        if (entity_value(e, "classname") == "func_areaportalwindow" && !entity_value(e, "target").empty()) {
+            Batch::PortalFade fade;
+            fade.start = static_cast<float>(std::atof(entity_value(e, "FadeStartDist").c_str()));
+            fade.end = static_cast<float>(std::atof(entity_value(e, "FadeDist").c_str()));
+            fade.limit = static_cast<float>(std::atof(entity_value(e, "TranslucencyLimit").c_str()));
+            portal_windows[entity_value(e, "target")] = fade;
+        }
     }
+    std::map<std::int64_t, Batch::PortalFade> fades_by_entity;
     // Key: material name, the monitor whose picture its faces show (-1: none),
     // whether the faces are in the 3D skybox, and for translucent materials
     // what places them in the drawing order: the BSP node they lie on, the
@@ -333,6 +346,11 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
         }
         const auto& model = bsp.models[inst.model];
         ++entity_number;
+        const bool portal_window =
+            inst.entity && portal_windows.contains(entity_value(*inst.entity, "targetname"));
+        if (portal_window) {
+            fades_by_entity[entity_number] = portal_windows[entity_value(*inst.entity, "targetname")];
+        }
         // Brush entities belong to the skybox if their origin is in its area.
         const bool entity_in_skybox = inst.entity && sky_camera_ &&
                                       bsp.leafs[bsp.leaf_at(inst.origin)].area == sky_camera_->area;
@@ -364,7 +382,7 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
             }
             int owner = kUnordered;
             std::int64_t owner_id = 0;
-            if (mat.translucent && !mat.water) {
+            if ((mat.translucent || portal_window) && !mat.water) {
                 if (inst.entity) {
                     owner = kEntity;
                     owner_id = entity_number;
@@ -566,7 +584,12 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
             !faces.empty()) {
             batch.leaves = formats::leaves_in_box(bsp, {lo[0], lo[1], lo[2]}, {hi[0], hi[1], hi[2]});
         }
-        (mat.water ? water_ : mat.translucent ? translucent_ : opaque_).push_back(std::move(batch));
+        if (owner == kEntity) {
+            if (const auto it = fades_by_entity.find(std::get<4>(key)); it != fades_by_entity.end()) {
+                batch.portal_fade = it->second;
+            }
+        }
+        (mat.water ? water_ : (mat.translucent || batch.portal_fade) ? translucent_ : opaque_).push_back(std::move(batch));
     }
 
     // infodecals: the base texture's size times $decalscale, projected onto
@@ -938,7 +961,25 @@ void WorldRenderer::draw_batch(rhi::CommandList& cmd, const Batch& batch, const 
         return;
     }
     const RenderMaterial& m = *batch.material;
-    const rhi::Pipeline& pipeline = batch.decal ? *decal_pipelines_[m.modulate ? 1 : 0] : pipeline_for(m);
+    // An area portal window's brush: by the viewer's distance to its bounds.
+    float opacity = 1.0f;
+    if (batch.portal_fade) {
+        float d2 = 0;
+        for (std::size_t k = 0; k < 3; ++k) {
+            const float d = std::max({batch.mins[k] - settings.camera_position[k], 0.0f,
+                                      settings.camera_position[k] - batch.maxs[k]});
+            d2 += d * d;
+        }
+        const auto& f = *batch.portal_fade;
+        const float t = f.end > f.start ? std::clamp((std::sqrt(d2) - f.start) / (f.end - f.start), 0.0f, 1.0f) : 1.0f;
+        opacity = f.limit + (1.0f - f.limit) * t;
+        if (opacity <= 0.0f) {
+            return;
+        }
+    }
+    const rhi::Pipeline& pipeline = batch.decal                ? *decal_pipelines_[m.modulate ? 1 : 0]
+                                    : batch.portal_fade && !m.translucent ? *pipelines_[1][m.no_cull ? 1 : 0]
+                                                                         : pipeline_for(m);
     if (&pipeline != bound) {
         cmd.set_pipeline(pipeline);
         if (data) {
@@ -959,6 +1000,10 @@ void WorldRenderer::draw_batch(rhi::CommandList& cmd, const Batch& batch, const 
                (m.envmap && settings.envmaps ? kEnvmap | (static_cast<std::uint32_t>(m.envmap_mask_mode) << kEnvmapMaskShift) : 0) |
                (m.bumpmap && settings.bumpmaps && !batch.decal ? kBump : 0) | (m.detail && !m.modulate ? kDetail : 0);
     pc.params_index = m.params_index < rows ? m.params_index : 0;
+    pc.opacity = opacity;
+    if (batch.portal_fade) {
+        pc.flags |= kTranslucent | (m.translucent ? 0u : kOpacityOnly);
+    }
     cmd.set_bind_group(batch.current_bind_group());
     cmd.push_constants(&pc, sizeof(pc));
     const formats::ViewVisibility* vis = settings.visibility;

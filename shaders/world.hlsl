@@ -8,6 +8,8 @@ struct PushConstants {
     float light_scale;
     uint flags;
     uint params_index; // Row of the material params table (after the light styles).
+    float opacity;     // Scales the output alpha (area portal windows); 1 otherwise.
+    float3 pad;
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -25,6 +27,7 @@ static const uint kEnvmapMaskShift = 9;
 // $bumpmap: lit by the face's three directional lightmaps (where it has them)
 // and bending the envmap reflection.
 static const uint kBump = 2048;
+static const uint kOpacityOnly = 16384; // Alpha is the opacity alone (an opaque material fading).
 static const uint kDetail = 8192; // $detail, at the untransformed coordinates times $detailscale.
 
 struct VSInput {
@@ -200,5 +203,7 @@ float4 ps_main(VSOutput input) : SV_Target {
     }
     // Additive surfaces fade out in fog; the rest blend towards its colour.
     const float3 result = (pc.flags & kAdditive) ? encoded * (1.0 - fog) : fogged(encoded, fog_color, fog);
-    return float4(result, (pc.flags & kTranslucent) ? base.a * tint.a : 1.0);
+    // Opaque materials drawn translucent (area portal windows) fade by opacity alone.
+    const float alpha = (pc.flags & kOpacityOnly) ? 1.0 : base.a * tint.a;
+    return float4(result, (pc.flags & kTranslucent) ? alpha * pc.opacity : 1.0);
 }

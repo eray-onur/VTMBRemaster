@@ -159,6 +159,13 @@ private:
         bool entity = false;
         std::array<float, 3> center{};
         formats::Vec3 mins{}, maxs{}; // Bounds of its faces (translucent batches are culled by them and `leaves`).
+        // The brush of a func_areaportalwindow (its "target"): drawn by the
+        // window, fading in with the viewer's distance from FadeStartDist
+        // (TranslucencyLimit) to FadeDist (opaque), as in Source.
+        struct PortalFade {
+            float start = 0, end = 0, limit = 0;
+        };
+        std::optional<PortalFade> portal_fade;
         // Opaque batches and decals: their faces grouped by the clusters they lie in,
         // each group with its bounds, so a view draws only the groups in its
         // PVS and frustum (docs/RENDERING.md#visibility).
