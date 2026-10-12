@@ -50,8 +50,9 @@ struct PushConstants {
     std::uint32_t cloth_base;  // Shader-data element of cloth particle 0's position; 0: no cloth.
     std::uint32_t cloth_count; // Particles; their normals follow the positions.
     std::uint32_t envmap_block; // Shader-data element of the eye, then the model-to-world rows; 0: none.
+    std::uint32_t lights_block; // Shader-data element of the two local lights (8 float4); 0: none.
 };
-static_assert(sizeof(PushConstants) == 108);
+static_assert(sizeof(PushConstants) == 112);
 
 // A bind-pose vertex moved by the current skinning matrices.
 anim::Vec3 skin(const std::vector<formats::MdlMatrix>& skinning, const formats::MdlVertex& v) {
@@ -186,7 +187,11 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
                 rotation[static_cast<std::size_t>(r)][static_cast<std::size_t>(k)] = m[k][r];
             }
         }
-        inst.lighting = lighting.sample({origin[0], origin[1], origin[2] + kLightingHeight}, rotation);
+        const auto& hull_min = model->mdl->hull_min;
+        const auto& hull_max = model->mdl->hull_max;
+        const std::array<formats::Vec3, 2> bounds{{{origin[0] + hull_min[0], origin[1] + hull_min[1], origin[2] + hull_min[2]},
+                                                   {origin[0] + hull_max[0], origin[1] + hull_max[1], origin[2] + hull_max[2]}}};
+        inst.lighting = lighting.sample({origin[0], origin[1], origin[2] + kLightingHeight}, rotation, bounds);
 
         // The requested sequence, else the idle: the first ACT_IDLE sequence,
         // else any sequence named like an idle.
@@ -543,7 +548,7 @@ void CharacterRenderer::draw_instance(rhi::CommandList& cmd, const std::array<fl
         std::copy(fog.begin(), fog.end(), data.begin() + 24);
         for (std::size_t f = 0; f < 6; ++f) {
             for (std::size_t c = 0; c < 3; ++c) {
-                data[f * 4 + c] = inst.lighting.color[f][c] * settings.light_scale;
+                data[f * 4 + c] = inst.lighting.cube.color[f][c] * settings.light_scale;
             }
         }
         for (std::size_t b = 0; b < inst.skinning.size(); ++b) {
@@ -567,6 +572,17 @@ void CharacterRenderer::draw_instance(rhi::CommandList& cmd, const std::array<fl
         }
         PushConstants pc{};
         pc.flex_base = flex_base;
+        if ((data.size() + kLocalLightFloats) * sizeof(float) <= rhi::kMaxShaderDataSize) {
+            pc.lights_block = static_cast<std::uint32_t>(data.size() / 4);
+            const auto lights = pack_local_lights(inst.lighting, inst.transform, settings.light_scale);
+            data.insert(data.end(), lights.begin(), lights.end());
+        } else {
+            for (std::size_t f = 0; f < 6; ++f) {
+                for (std::size_t c = 0; c < 3; ++c) {
+                    data[f * 4 + c] = inst.lighting.folded.color[f][c] * settings.light_scale;
+                }
+            }
+        }
         if (!inst.cloth_data.empty() &&
             (data.size() + inst.cloth_data.size()) * sizeof(float) <= rhi::kMaxShaderDataSize) {
             pc.cloth_base = static_cast<std::uint32_t>(data.size() / 4);

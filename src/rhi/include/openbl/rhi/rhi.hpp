@@ -122,7 +122,8 @@ enum class BlendMode : std::uint8_t { Opaque, Alpha, Additive, Modulate, Premult
 // as a read-only structured buffer at set/space 1, binding 0, in all stages.
 
 // Largest block accepted by CommandList::set_shader_data.
-constexpr std::size_t kMaxShaderDataSize = 64 * 1024;
+// Props need about 150 KB on the biggest map (a block of lights per instance).
+constexpr std::size_t kMaxShaderDataSize = 256 * 1024;
 struct PipelineDesc {
     ShaderCode vertex;
     ShaderCode pixel;

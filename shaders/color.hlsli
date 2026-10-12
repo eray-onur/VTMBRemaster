@@ -84,6 +84,31 @@ float3 bumped_normal(float3 texel, float3 normal, float4 tangent) {
     return dot(bumped, bumped) > 1e-8 ? normalize(bumped) : n;
 }
 
+// One of a model's two local lights (4 float4, packed by pack_local_lights in
+// prop_lighting.hpp) at a model-space point with unit normal `n`, as the
+// original's model vertex shaders light it: colour x max(n.l, 0) /
+// (constant + linear d + quadratic d^2), times saturate(cos x scale - outer x
+// scale)^exponent for spots. Plain Lambert: half-Lambert is a per-material
+// switch that no shipped material sets. The shaders' range term is left out
+// (docs/RENDERING.md).
+float3 local_light(float4 r0, float4 r1, float4 r2, float4 r3, float3 position, float3 n) {
+    if (r1.w < 0.5) {
+        return float3(0, 0, 0);
+    }
+    if (r1.w < 1.5) { // Directional: r0 is the direction to the light.
+        return r1.rgb * max(dot(n, r0.xyz), 0.0);
+    }
+    float3 to_light = r0.xyz - position;
+    const float d2 = dot(to_light, to_light);
+    to_light /= max(sqrt(d2), 1e-3);
+    const float d = max(sqrt(d2), 1.0);
+    float scale = 1.0 / max(dot(r2.xyz, float3(1.0, d, d * d)), 1.0);
+    if (r1.w > 2.5) {
+        scale *= pow(saturate(dot(r3.xyz, -to_light) + r3.w), r2.w);
+    }
+    return r1.rgb * scale * max(dot(n, to_light), 0.0);
+}
+
 float3 linear_to_srgb(float3 c) {
     c = saturate(c);
     return lerp(1.055 * pow(c, 1.0 / 2.4) - 0.055, c * 12.92, step(c, 0.0031308));

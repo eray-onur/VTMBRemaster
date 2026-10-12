@@ -1,18 +1,19 @@
 // Studio models (props), lit per vertex from a Source-style ambient cube:
 // six colours for +X, -X, +Y, -Y, +Z, -Z in model space, blended by the
-// squared components of the vertex normal. With a $bumpmap the cube is
-// evaluated per pixel with the bumped normal instead.
+// squared components of the vertex normal, plus up to two local lights
+// (local_light in color.hlsli). With a $bumpmap both are evaluated per pixel
+// with the bumped normal instead.
 
 #include "color.hlsli"
 
 struct PushConstants {
     float4x4 mvp;
-    uint4 cube_a;   // 18 half-floats: rgb for +X, -X, +Y, -Y, +Z, -Z ...
+    uint4 cube_a;   // 18 half-floats: rgb for +X, -X, +Y, -Y, +Z, -Z (with kLights: without the local lights) ...
     uint4 cube_b;
     uint cube_c;
     float alpha_ref;
     uint flags;
-    uint params_index; // Row of the material params table; bits 16-31: the instance's envmap block.
+    uint params_index; // Row of the material params table; bits 16-31: the instance's block.
     float4 model_z;    // Model-to-world z row (world z = dot(model_z, (position, 1))), for water fog.
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
@@ -26,15 +27,17 @@ static const uint kAdditive = 128;
 static const uint kEnvmap = 256;
 static const uint kEnvmapMaskShift = 9; // 2 bits, as for the world.
 static const uint kBump = 2048;         // $bumpmap: light and reflect about the bumped normal.
+static const uint kLights = 4096;       // The instance's block holds its local lights.
 static const uint kFadeShift = 24;      // 8 bits: 255 - the static prop fade's opacity.
 
 // The fog (2 elements; see color.hlsli), the eye (xyz; w: element where the
-// envmap blocks start), then the material params table: 8 elements per row
-// (MaterialParams), then one envmap block per instance that needs one: its
-// model-to-world rows (3 elements).
+// instance blocks start), then the material params table: 8 elements per row
+// (MaterialParams), then one block per instance: its local lights (8
+// elements), then its model-to-world rows (3 elements).
 [[vk::binding(0, 1)]] StructuredBuffer<float4> material_params;
 static const uint kEye = 2;
 static const uint kParamsStart = 3;
+static const uint kBlockSize = 11;
 
 float4 material_param(uint k) {
     return material_params[kParamsStart + (pc.params_index & 0xFFFF) * 8 + k];
@@ -57,6 +60,7 @@ struct VSOutput {
     [[vk::location(5)]] float3 world_normal : NORMAL;
     [[vk::location(6)]] float3 model_normal : TEXCOORD4; // For bump-mapped materials.
     [[vk::location(7)]] float4 model_tangent : TANGENT;
+    [[vk::location(8)]] float3 model_position : TEXCOORD5; // For bump-mapped materials.
 };
 
 float cube_half(uint i) {
@@ -76,10 +80,27 @@ float3 cube_light(float3 n) {
     return n2.x * cube_color(n.x >= 0 ? 0 : 1) + n2.y * cube_color(n.y >= 0 ? 2 : 3) + n2.z * cube_color(n.z >= 0 ? 4 : 5);
 }
 
+uint instance_block() {
+    return (uint)material_params[kEye].w + (pc.params_index >> 16) * kBlockSize;
+}
+
 // The instance's model-to-world rows (envmapped instances only).
 float3x4 model_to_world() {
-    const uint block = (uint)material_params[kEye].w + (pc.params_index >> 16) * 3;
+    const uint block = instance_block() + 8;
     return float3x4(material_params[block], material_params[block + 1], material_params[block + 2]);
+}
+
+// The ambient cube and the local lights at a model-space point, unit normal.
+float3 model_light(float3 position, float3 n) {
+    float3 light = cube_light(n);
+    if (pc.flags & kLights) {
+        const uint b = instance_block();
+        [unroll] for (uint i = 0; i < 2; ++i) {
+            light += local_light(material_params[b + i * 4], material_params[b + i * 4 + 1],
+                                 material_params[b + i * 4 + 2], material_params[b + i * 4 + 3], position, n);
+        }
+    }
+    return light;
 }
 
 VSOutput vs_main(VSInput input) {
@@ -95,11 +116,12 @@ VSOutput vs_main(VSInput input) {
     }
     output.model_normal = input.normal;
     output.model_tangent = input.tangent;
+    output.model_position = input.position;
     const float4 tu = material_param(0);
     const float4 tv = material_param(1);
     output.uv = float2(dot(tu.xyz, float3(input.uv, 1.0)), dot(tv.xyz, float3(input.uv, 1.0)));
     output.uv2 = float2(dot(material_param(4).xyz, float3(input.uv, 1.0)), dot(material_param(5).xyz, float3(input.uv, 1.0)));
-    output.light = cube_light(normalize(input.normal));
+    output.light = model_light(input.position, normalize(input.normal));
     return output;
 }
 
@@ -124,7 +146,7 @@ float4 ps_main(VSOutput input) : SV_Target {
     if (pc.flags & kBump) {
         bump = bumpmap.Sample(texture_sampler, input.uv);
         bumped = bumped_normal(bump.xyz * 2.0 - 1.0, input.model_normal, input.model_tangent);
-        light = cube_light(bumped);
+        light = model_light(input.model_position, bumped);
     }
     const float4 tint = material_param(2); // $color, $alpha.
     float3 color = base.rgb * tint.rgb * ((pc.flags & kUnlit) ? float3(1, 1, 1) : light);

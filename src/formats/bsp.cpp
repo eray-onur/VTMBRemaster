@@ -967,7 +967,7 @@ bool face_contains(const BspFile& bsp, const BspFace& face, const Vec3& p) {
     return face.num_edges >= 3 && (inside_pos || inside_neg);
 }
 
-enum class SurfaceTrace { Miss, Hit, Blocked };
+enum class SurfaceTrace { Miss, Hit, Blocked, Sky };
 
 SurfaceTrace trace_surface(const BspFile& bsp, std::int32_t node, const Vec3& a, const Vec3& b, int depth,
                            BspSurfaceHit& hit) {
@@ -994,12 +994,15 @@ SurfaceTrace trace_surface(const BspFile& bsp, std::int32_t node, const Vec3& a,
     for (std::size_t i = 0; i < n.num_faces; ++i) {
         const std::size_t f = static_cast<std::size_t>(n.first_face) + i;
         const BspFace& face = bsp.faces[f];
-        if (face.side != near_side || face.light_offset < 0 || face.style_count() == 0 || face.dispinfo >= 0 ||
-            face.texinfo >= bsp.texinfos.size()) {
+        if (face.side != near_side || face.dispinfo >= 0 || face.texinfo >= bsp.texinfos.size()) {
             continue;
         }
         const BspTexInfo& ti = bsp.texinfos[face.texinfo];
-        if ((ti.flags & (surf_flags::Sky | surf_flags::Sky2D | surf_flags::NoDraw)) || !face_contains(bsp, face, mid)) {
+        if ((ti.flags & (surf_flags::Sky | surf_flags::Sky2D)) && face_contains(bsp, face, mid)) {
+            return SurfaceTrace::Sky;
+        }
+        if (face.light_offset < 0 || face.style_count() == 0 ||
+            (ti.flags & (surf_flags::Sky | surf_flags::Sky2D | surf_flags::NoDraw)) || !face_contains(bsp, face, mid)) {
             continue;
         }
         const auto uv = lightmap_uv(face, ti, mid);
@@ -1021,10 +1024,14 @@ bool BspFile::segment_blocked(const Vec3& a, const Vec3& b, std::int32_t mask) c
     return trace_node(*this, models[0].head_node, a, b, mask, 0);
 }
 
-std::optional<BspSurfaceHit> BspFile::trace_lightmap(const Vec3& a, const Vec3& b) const {
+std::optional<BspSurfaceHit> BspFile::trace_lightmap(const Vec3& a, const Vec3& b, bool* sky) const {
     BspSurfaceHit hit;
-    if (nodes.empty() || models.empty() ||
-        trace_surface(*this, models[0].head_node, a, b, 0, hit) != SurfaceTrace::Hit) {
+    const SurfaceTrace r =
+        nodes.empty() || models.empty() ? SurfaceTrace::Miss : trace_surface(*this, models[0].head_node, a, b, 0, hit);
+    if (sky) {
+        *sky = r == SurfaceTrace::Sky;
+    }
+    if (r != SurfaceTrace::Hit) {
         return std::nullopt;
     }
     return hit;

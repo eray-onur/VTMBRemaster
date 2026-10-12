@@ -57,6 +57,7 @@ constexpr std::uint32_t kAdditive = 128;
 constexpr std::uint32_t kEnvmap = 256;
 constexpr std::uint32_t kEnvmapMaskShift = 9;
 constexpr std::uint32_t kBump = 2048;
+constexpr std::uint32_t kLights = 4096; // The instance's block holds its local lights.
 constexpr std::uint32_t kFadeShift = 24; // 8 bits: 255 - the fade's opacity.
 
 // Source angles: pitch (down positive) about Y, yaw about Z, roll about X;
@@ -132,40 +133,7 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
                 rotation[static_cast<std::size_t>(r)][static_cast<std::size_t>(k)] = m[k][r];
             }
         }
-        auto solid = [&](const glm::vec3& p) {
-            return (bsp.leafs[bsp.leaf_at({p.x, p.y, p.z})].contents & formats::contents::Solid) != 0;
-        };
-        // Sample at the model's centre (or its explicit lighting origin).
-        const glm::vec3 c = lighting_origin ? glm::vec3(glm::make_vec3(lighting_origin->data()))
-                                            : glm::vec3(m * glm::vec4(glm::make_vec3(model->center.data()), 1.0f));
-        if (!solid(c)) {
-            inst.lighting = lighting.sample({c.x, c.y, c.z}, rotation);
-        } else {
-            // Embedded in the world (e.g. a building wrapped around a brush
-            // block): light each side of the cube from just outside that side
-            // of the model's bounds, where the lit surroundings are visible.
-            const AmbientCube fallback = lighting.sample({origin[0], origin[1], origin[2] + 16.0f}, rotation);
-            inst.lighting = fallback;
-            for (std::size_t face = 0; face < 6; ++face) {
-                glm::vec3 local = glm::make_vec3(model->center.data());
-                const std::size_t axis = face / 2;
-                const float sign = (face % 2) ? -1.0f : 1.0f;
-                local[static_cast<int>(axis)] += sign * (model->half_extent[axis] + 8.0f);
-                const glm::vec3 p(m * glm::vec4(local, 1.0f));
-                if (!solid(p)) {
-                    inst.lighting.color[face] = lighting.sample({p.x, p.y, p.z}, rotation).color[face];
-                }
-            }
-        }
-        for (const Mesh& mesh : model->skins[inst.skin]) {
-            inst.envmapped = inst.envmapped || mesh.material->envmap;
-            inst.has_translucent = inst.has_translucent || mesh.material->translucent;
-        }
-        if (static_prop && (static_prop->flags & formats::kStaticPropFades)) {
-            inst.fade = *static_prop;
-            ++stats_.fading;
-        }
-        // The world-space box around the model's bounds, for the leaves it touches.
+        // The world-space box around the model's bounds.
         glm::vec3 lo(INFINITY), hi(-INFINITY);
         for (int corner = 0; corner < 8; ++corner) {
             glm::vec3 local = glm::make_vec3(model->center.data());
@@ -175,6 +143,41 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
             const glm::vec3 w(m * glm::vec4(local, 1.0f));
             lo = glm::min(lo, w);
             hi = glm::max(hi, w);
+        }
+        const std::array<formats::Vec3, 2> bounds{{{lo.x, lo.y, lo.z}, {hi.x, hi.y, hi.z}}};
+        auto solid = [&](const glm::vec3& p) {
+            return (bsp.leafs[bsp.leaf_at({p.x, p.y, p.z})].contents & formats::contents::Solid) != 0;
+        };
+        // Sample at the model's centre (or its explicit lighting origin).
+        const glm::vec3 c = lighting_origin ? glm::vec3(glm::make_vec3(lighting_origin->data()))
+                                            : glm::vec3(m * glm::vec4(glm::make_vec3(model->center.data()), 1.0f));
+        if (!solid(c)) {
+            inst.lighting = lighting.sample({c.x, c.y, c.z}, rotation, bounds);
+        } else {
+            // Embedded in the world (e.g. a building wrapped around a brush
+            // block): light each side of the cube from just outside that side
+            // of the model's bounds, where the lit surroundings are visible.
+            // All lights are folded into the cube, as the samples differ per side.
+            inst.lighting.cube = lighting.sample({origin[0], origin[1], origin[2] + 16.0f}, rotation, bounds).folded;
+            for (std::size_t face = 0; face < 6; ++face) {
+                glm::vec3 local = glm::make_vec3(model->center.data());
+                const std::size_t axis = face / 2;
+                const float sign = (face % 2) ? -1.0f : 1.0f;
+                local[static_cast<int>(axis)] += sign * (model->half_extent[axis] + 8.0f);
+                const glm::vec3 p(m * glm::vec4(local, 1.0f));
+                if (!solid(p)) {
+                    inst.lighting.cube.color[face] = lighting.sample({p.x, p.y, p.z}, rotation, bounds).folded.color[face];
+                }
+            }
+            inst.lighting.folded = inst.lighting.cube;
+        }
+        for (const Mesh& mesh : model->skins[inst.skin]) {
+            inst.envmapped = inst.envmapped || mesh.material->envmap;
+            inst.has_translucent = inst.has_translucent || mesh.material->translucent;
+        }
+        if (static_prop && (static_prop->flags & formats::kStaticPropFades)) {
+            inst.fade = *static_prop;
+            ++stats_.fading;
         }
         inst.leaves = formats::leaves_in_box(bsp, {lo.x, lo.y, lo.z}, {hi.x, hi.y, hi.z});
         if (inst.envmapped) {
@@ -422,35 +425,40 @@ const rhi::Pipeline& PropRenderer::pipeline_for(const RenderMaterial& m) const {
 std::size_t PropRenderer::build_shader_data(const PropDrawSettings& settings) {
     static const std::vector<MaterialParams> kDefaults{MaterialParams{}};
     const std::vector<MaterialParams>& params = settings.material_params ? *settings.material_params : kDefaults;
-    // Shader data: the fog (2 float4), the eye (w: where the envmap blocks
-    // start), the material params table, then each envmapped instance's
+    // Shader data: the fog (2 float4), the eye (w: where the instance blocks
+    // start), the material params table, then a block per instance drawn in
+    // this pass while room is left: its local lights (8 float4) and its
     // model-to-world rows (3 float4).
-    const auto fog = settings.fog.rows();
-    envmap_blocks_.assign(instances_.size(), UINT32_MAX);
-    std::vector<float> blocks;
-    for (std::size_t i = 0; i < instances_.size(); ++i) {
-        const Instance& inst = instances_[i];
-        if (!settings.envmaps || !inst.envmapped || inst.skybox != settings.skybox || blocks.size() / 12 >= 0xFFFF) {
-            continue;
-        }
-        envmap_blocks_[i] = static_cast<std::uint32_t>(blocks.size() / 12);
-        for (std::size_t r = 0; r < 3; ++r) {
-            for (std::size_t c = 0; c < 4; ++c) {
-                blocks.push_back(inst.transform[c * 4 + r]); // Column-major.
-            }
-        }
-    }
     constexpr std::size_t kHeadFloats = 12;
-    const std::size_t room = rhi::kMaxShaderDataSize / sizeof(float) - kHeadFloats - blocks.size();
-    const std::size_t rows =
-        std::min({params.size(), room / (sizeof(MaterialParams) / sizeof(float)), std::size_t{0xFFFF}});
+    constexpr std::size_t kBlockFloats = kLocalLightFloats + 12;
+    constexpr std::size_t kRowFloats = sizeof(MaterialParams) / sizeof(float);
+    const std::size_t capacity = rhi::kMaxShaderDataSize / sizeof(float) - kHeadFloats;
+    const std::size_t rows = std::min({params.size(), capacity / kRowFloats, std::size_t{0xFFFF}});
+    const auto fog = settings.fog.rows();
     shader_data_.assign(fog.begin(), fog.end());
-    const std::size_t blocks_start = kHeadFloats / 4 + rows * sizeof(MaterialParams) / 16;
+    const std::size_t blocks_start = kHeadFloats / 4 + rows * kRowFloats / 4;
     shader_data_.insert(shader_data_.end(),
                         {settings.eye[0], settings.eye[1], settings.eye[2], static_cast<float>(blocks_start)});
     const auto* first = reinterpret_cast<const float*>(params.data());
-    shader_data_.insert(shader_data_.end(), first, first + rows * sizeof(MaterialParams) / sizeof(float));
-    shader_data_.insert(shader_data_.end(), blocks.begin(), blocks.end());
+    shader_data_.insert(shader_data_.end(), first, first + rows * kRowFloats);
+
+    instance_blocks_.assign(instances_.size(), UINT32_MAX);
+    std::uint32_t blocks = 0;
+    for (std::size_t i = 0; i < instances_.size(); ++i) {
+        const Instance& inst = instances_[i];
+        if (inst.skybox != settings.skybox || blocks >= 0xFFFF ||
+            (shader_data_.size() + kBlockFloats) * sizeof(float) > rhi::kMaxShaderDataSize) {
+            continue;
+        }
+        instance_blocks_[i] = blocks++;
+        const auto lights = pack_local_lights(inst.lighting, inst.transform, settings.light_scale);
+        shader_data_.insert(shader_data_.end(), lights.begin(), lights.end());
+        for (std::size_t r = 0; r < 3; ++r) {
+            for (std::size_t c = 0; c < 4; ++c) {
+                shader_data_.push_back(inst.transform[c * 4 + r]); // Column-major.
+            }
+        }
+    }
     return rows;
 }
 
@@ -465,7 +473,7 @@ void PropRenderer::draw_instance(rhi::CommandList& cmd, const std::array<float, 
     if (fading && !translucent) {
         return; // Drawn whole with the translucent things.
     }
-    const std::uint32_t block = envmap_blocks_[index];
+    const std::uint32_t block = instance_blocks_[index];
     auto bind = [&](const rhi::Pipeline& pipeline) {
         if (&pipeline != bound.pipeline) {
             cmd.set_pipeline(pipeline);
@@ -483,10 +491,14 @@ void PropRenderer::draw_instance(rhi::CommandList& cmd, const std::array<float, 
     for (std::size_t k = 0; k < 4; ++k) {
         pc.model_z[k] = inst.transform[k * 4 + 2]; // Column-major: row 2.
     }
+    // Without a block, every light is folded into the cube.
+    const AmbientCube& cube = block != UINT32_MAX ? inst.lighting.cube : inst.lighting.folded;
     for (std::size_t h = 0; h < 18; ++h) {
-        const std::uint32_t half = detail::to_half(inst.lighting.color[h / 3][h % 3] * settings.light_scale);
+        const std::uint32_t half = detail::to_half(cube.color[h / 3][h % 3] * settings.light_scale);
         pc.cube[h / 2] = (h % 2) ? ((pc.cube[h / 2] & 0xFFFFu) | (half << 16)) : half;
     }
+    const std::uint32_t block_bits = block != UINT32_MAX ? block << 16 : 0u;
+    const std::uint32_t light_bits = block != UINT32_MAX ? kLights : 0u;
     const std::uint32_t fade_bits =
         fading ? (255u - static_cast<std::uint32_t>(inst.alpha * 255.0f)) << kFadeShift : 0u;
     for (const Mesh& mesh : inst.model->skins[inst.skin]) {
@@ -505,14 +517,13 @@ void PropRenderer::draw_instance(rhi::CommandList& cmd, const std::array<float, 
         pc.flags = (m.alpha_test ? kAlphaTest : 0) | ((m.unlit || settings.fullbright) ? kUnlit : 0) |
                    (m.self_illum ? kSelfIllum : 0) | (m.translucent ? kTranslucent : 0) |
                    (m.multiply_layers ? kMultiplyLayers : 0) | (m.additive ? kAdditive : 0) |
-                   (m.bumpmap && settings.bumpmaps ? kBump : 0) | fade_bits;
-        pc.params_index = m.params_index < rows ? m.params_index : 0;
+                   (m.bumpmap && settings.bumpmaps ? kBump : 0) | light_bits | fade_bits;
+        pc.params_index = (m.params_index < rows ? m.params_index : 0) | block_bits;
         const rhi::BindGroup* group = mesh.frame_bind_groups.empty()
                                           ? mesh.bind_group.get()
                                           : mesh.frame_bind_groups[m.base_frame % mesh.frame_bind_groups.size()].get();
-        if (m.envmap && block != UINT32_MAX) {
+        if (m.envmap && settings.envmaps && block != UINT32_MAX) {
             pc.flags |= kEnvmap | (static_cast<std::uint32_t>(m.envmap_mask_mode) << kEnvmapMaskShift);
-            pc.params_index |= block << 16;
             if (m.envmap_nearest && inst.cubemap && inst.cubemap != m.envmap) {
                 auto& g = mesh.cubemap_groups[inst.cubemap];
                 if (!g) {
@@ -539,8 +550,8 @@ void PropRenderer::draw_instance(rhi::CommandList& cmd, const std::array<float, 
         bound.model = nullptr;
         pc.alpha_ref = m.alpha_ref;
         pc.flags = (m.alpha_test ? kAlphaTest : 0) | ((m.unlit || settings.fullbright) ? kUnlit : 0) |
-                   (m.self_illum ? kSelfIllum : 0) | kTranslucent | fade_bits;
-        pc.params_index = m.params_index < rows ? m.params_index : 0;
+                   (m.self_illum ? kSelfIllum : 0) | kTranslucent | light_bits | fade_bits;
+        pc.params_index = (m.params_index < rows ? m.params_index : 0) | block_bits;
         cmd.set_bind_group(*decal.bind_group);
         cmd.push_constants(&pc, sizeof(pc));
         cmd.draw_indexed(decal.index_count, 0);

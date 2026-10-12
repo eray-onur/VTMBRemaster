@@ -66,7 +66,9 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Static props and `prop_*` entities (LOD 0, default body group, skins)
 - [x] Prop lighting: per-vertex ambient cube from visible style-0 world lights (BSP line-of-sight test)
 - [x] Prop lighting: indirect light gathered from the surrounding lightmaps (162 traced rays), fitted to original-game captures
-- [ ] Prop lighting: confirm in more rooms and outdoors (sky ambient); per-vertex lighting if the original uses it (`r_staticlighting`); lights with styles other than 0
+- [x] Model lighting from the original's shaders (`vertexlit_and_unlit_generic_vs20`): two local lights per model, evaluated per vertex (per pixel with a normal map) with Lambert, attenuation and spot cones; the rest in the ambient cube; the sun where the sky is seen, and sky ambient light in the gathered indirect light ([RENDERING.md](RENDERING.md#models-vertexlitgeneric))
+- [ ] Prop lighting: confirm in more rooms and outdoors; static props' baked per-vertex lighting if the original uses it (the shaders' second colour stream, `r_staticlighting`); lights with styles other than 0
+- [ ] Model lighting: compare near strong lights with the running game (`sm_hub_1`: the NPCs at the burning barrel, lamp posts, the 3D skybox's parking structure)
 - [x] Light styles: all lightmap styles drawn, weighted per style (animated Quake patterns at 10 letters/s; switchable styles 32+ on unless all their lights start dark); props include styled world lights
 - [ ] Light styles: toggling switchable lights at runtime (needs entity I/O, Phase 2)
 - [x] 2D skybox
@@ -90,7 +92,6 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Bump-mapped envmap reflections (tangent frame from the texture axes, normal-map alpha mask) and bump-mapped `WorldVertexTransition` blends ([RENDERING.md](RENDERING.md#bump-mapped-lightmaps))
 - [x] Normal maps on models: the ambient cube per pixel about the bumped normal, bumped envmap reflections; MDL tangents ([RENDERING.md](RENDERING.md#normal-maps-on-models))
 - [ ] Bump maps: compare with the original (Warrens, temple, `sp_soc_3` tunnels, the temple's gold Buddha)
-- [ ] Model lighting from the original's shaders: `vertexlit_and_unlit_generic_bump` shows an ambient cube plus two squared half-Lambert lights and a hue-preserving clamp; read the non-bump vertex shaders and compare with the fitted model
 - [ ] Detail textures (`$detail`, multiplied in at 2×)
 - [ ] Detail props (grass and debris sprites placed from the map's detail-prop lump)
 - [ ] Ropes and cables (`keyframe_rope`, `move_rope`; 76 in `sm_hub_1`)

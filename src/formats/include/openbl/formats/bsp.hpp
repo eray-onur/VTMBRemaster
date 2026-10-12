@@ -375,10 +375,11 @@ struct BspFile {
     // contents intersect `mask` (solid by default).
     bool segment_blocked(const Vec3& a, const Vec3& b, std::int32_t mask = contents::Solid) const;
     // The first lightmapped world face the segment from `a` to `b` crosses,
-    // found on the node planes along the way (faces without a lightmap,
-    // displacements and sky are skipped). The face must contain the crossing
-    // within its lightmap extents.
-    std::optional<BspSurfaceHit> trace_lightmap(const Vec3& a, const Vec3& b) const;
+    // found on the node planes along the way (faces without a lightmap and
+    // displacements are skipped). The face must contain the crossing within
+    // its lightmap extents. A sky face crossed first ends the trace with no
+    // hit and sets `*sky`, if given.
+    std::optional<BspSurfaceHit> trace_lightmap(const Vec3& a, const Vec3& b, bool* sky = nullptr) const;
 };
 
 // Throws FormatError.

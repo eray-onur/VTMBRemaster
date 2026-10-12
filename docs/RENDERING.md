@@ -67,14 +67,32 @@ Bump-mapped materials on faces without the flag use the flat lightmap, as there 
 
 ## Models (`VertexLitGeneric`)
 
-Lit colour = base texture × colour modulation (`$color`, alpha) × per-vertex lighting × 2 × (overbright ÷ 2). The per-vertex lighting is computed by vertex shaders that are only shipped compiled. How the original computes it has not been read, so OpenBL uses a model fitted to captures, in the same units as the world (lit colour = base × light in linear terms, scale 1.0). One ambient cube per model, at its lighting origin:
+At DX9 the original draws models with `vertexlit_and_unlit_generic_vs20` and `_ps20` (read from the shipped `.vcs`: 1,408 vertex shader combinations, 8 static × 176 dynamic). The pixel shader multiplies the base texture by the interpolated lighting and `$color`, with no doubling and no clamp. The vertex shader lights each vertex with the sum of:
 
-- **Direct:** every visible point, spot and emissive-surface world light, with its attenuation and spot cone, spread over the cube's six directions by cosine.
-- **Indirect:** 162 rays traced from the point through the BSP (`BspFile::trace_lightmap`) to the first lightmapped surface. Its summed light styles are averaged per cube direction with cosine weights, and weighted by **0.5**.
+- **an ambient cube**: six colours, weighted by the squared components of the world-space normal, the sign of each component picking the + or − face;
+- **up to two lights**, each directional, point or spot (the dynamic combinations cover none, one or two of any kind). Each gives colour × max(n·l, 0). Point and spot lights are also multiplied by 1 / (constant + linear × d + quadratic × d²) and by saturate(1 − d² × w), with w a per-light constant. Spot lights add saturate((cos − outer cosine) × scale)^exponent;
+- **a baked per-vertex colour** (a second colour stream), in some combinations: multiplied by the overbright factor, then raised to the power 2.2. This is the per-vertex lighting the engine bakes for static props (its console has `r_staticlighting 1`). Combinations exist with it alone and with it plus the cube and lights.
+
+**Half-Lambert.** A static combination replaces max(n·l, 0) with (n·l × 0.5 + 0.5)². The `$halflambert` material flag selects it, and no shipped material sets that flag (0 of 11,049), so the original lights models with plain Lambert. The bump-mapped shader has the same switch.
+
+The engine computes what it passes in, so these stay unknown: which lights it chooses, what goes into the cube, the baked colours, and w.
+
+**Units.** The vertex shader treats light as linear (it raises the baked colours to 2.2), and the pixel shader multiplies it straight onto gamma-space texels. Yet in two captures of `sp_tutorial_1`, each prop's brightness in the original (divided by its base texture) follows OpenBL's light level with a slope of 0.88–1.06 per channel, over light levels of 0.06–0.47, not 2.2. So the screen colour is base × light in OpenBL's linear terms, as for the world (scale 1.0), and the engine must pass gamma-encoded colours. OpenBL evaluates the shader's formula in linear terms.
+
+**OpenBL's model.** OpenBL samples once per model, at its lighting origin (props: the model's centre or the static prop's lighting origin; NPCs: chest height):
+
+- **Local lights.** The two brightest point, spot or sun lights visible there become the shader's two lights, evaluated per vertex as above (per pixel with a normal map).
+- **The cube** holds every other visible light (including emissive-surface lights), spread over the six directions by cosine. It also holds the indirect light: 162 rays traced from the point through the BSP (`BspFile::trace_lightmap`) to the first lightmapped surface, whose summed light styles are averaged per cube direction with cosine weights and weighted by **0.5**. Rays that reach the sky take the map's sky ambient light (`light_environment`) at full weight, so a face open to the whole sky gets what an upward world surface there gets.
+- **Light radius.** Lights are cut off at their radius, as the map compiler does for lightmaps (71% of point and spot lights have one). With w = 1/radius², the shader's smooth range term made the captured props 20% darker than the original (geometric mean over props). Ignoring the radius made them 30% brighter.
+- **Lights inside the model's bounds** stay in the cube. Lamp fixtures and light boxes carry their light inside them, and the 3D skybox's miniatures are lit by lights a few units from their centres. Lit per vertex from inside, the outer surfaces face away from the light and go black (`sm_hub_1`'s skybox parking structure did). How the engine handles these lights is not known.
+- **The sun** (a `light_environment`'s directional light) counts as a local-light candidate where a ray against it reaches the sky. 19 maps have one, mostly moonlight; `ch_fishmarket_1`, `hw_chinese_1` and `sp_endsequences_b` have bright ones.
+- **Embedded props** (centre inside solid): each side of the cube is sampled from just outside that side of the model's bounds, with all lights folded in.
+
+Against the two captures (10 prop regions, below the rotating ceiling fan), the original is 1.01 / 0.97 / 1.10 as bright as OpenBL (red / green / blue, geometric mean), with a spread of 0.13 / 0.05 / 0.09 in natural-log terms. The previous model, with every light in the cube, gave 1.02 / 0.98 / 1.10 and 0.11 / 0.05 / 0.13, so this room cannot tell the two apart. Where they differ is near strong lights: NPCs beside `sm_hub_1`'s burning barrel are lit more directionally, and lamp posts below their own light get only grazing light. Still open: whether static props use the baked per-vertex lighting (the combinations and `r_staticlighting` suggest they do) and how the engine computes it, captures from more rooms to confirm the 0.5, and lights with styles other than 0.
+
+Self-illumination blends to base × tint by base alpha, as for the world. Alpha-tested models discard pixels with a texture-kill instruction driven by a separate coordinate.
 
 **Environment maps on models** (1,071 `VertexLitGeneric` materials) are added the same way as on the world (the `v2` model shaders add envmap × mask × tint after lighting). A model with `$envmap env_cubemap` uses the map cubemap nearest to it: its lighting origin for props, its chest height for NPCs. Checked on `sm_hub_1`'s alley manhole (a prop, station 4 in [PROXY_CAPTURE.md](PROXY_CAPTURE.md)): mean colour 14.8 13.5 9.6 in the original, 13.9 12.4 9.6 in OpenBL, and 4.3 1.8 0.2 without the envmap. On characters it is mostly small parts, such as the police officers' sunglasses.
-
-Against two captures of `sp_tutorial_1`, props in the original are 1.04–1.08 / 0.99–1.06 / 1.08–1.15 as bright as in OpenBL (red / green / blue, geometric mean over props). The props differ from each other by about 18%. Weighting the surfaces by their reflectivity fitted worse. The previous model (direct light plus 30% of the floor lightmap below, at scale 2.297) differed by up to 84% between props and was too blue. Still open: whether the original lights per vertex (its console has `r_staticlighting 1`), sky ambient light for outdoor props, and captures from more rooms to confirm the 0.5. Self-illumination blends to base × tint by base alpha, as for the world. Alpha-tested models discard pixels with a texture-kill instruction driven by a separate coordinate.
 
 ### Normal maps on models
 
@@ -83,11 +101,11 @@ Against two captures of `sp_tutorial_1`, props in the original are 1.04–1.08 /
 - the vertex shader passes the tangent, binormal = cross(normal, tangent) × w, and normal, all in world space. Every model stores a tangent per vertex ([formats/models.md](formats/models.md));
 - the pixel shader takes the normal map's texel × 2 − 1 in that frame, normalised (through a normalisation cube map);
 - it evaluates the ambient cube with that normal: the squared components weight the +/− face of each axis;
-- it adds up to two local lights, each (n·l × 0.5 + 0.5)², a squared half-Lambert, times a colour from the vertex shader;
-- if the sum's largest channel exceeds 2^2.2 (4.59479), it scales the whole colour down to it, which keeps the hue;
+- it adds up to two local lights, each max(n·l, 0) times a colour from the vertex shader. As in the plain shader, `$halflambert` would switch to (n·l × 0.5 + 0.5)², but no material sets it;
+- if the sum's largest channel exceeds 2^2.2 (4.59479), it scales the whole colour down to it, which keeps the hue. Only the bump-mapped shader clamps;
 - the result times `$color` and the base texture; the envmap is reflected about the bumped normal and masked by the normal map's alpha, before tint and contrast, as for the world.
 
-OpenBL folds all lights into one ambient cube per model (above), so it evaluates that cube per pixel with the bumped normal, and reflects the envmap as the original does. The squared half-Lambert lights and the hue-preserving clamp are not modelled: they belong to the original's model lighting as a whole, which these shaders now let us read. The compiled tangents are not always unit length or perpendicular to the normal, and 9.5% of all vertices have none usable (zero, where the texture coordinates collapse). OpenBL makes them perpendicular and keeps the plain normal where nothing is left. Characters skin the tangent like the normal.
+OpenBL evaluates the ambient cube and the two local lights (above) per pixel with the bumped normal, and reflects the envmap as the original does. It leaves out the clamp: in linear terms it would start at a light level of about 28 (4.59^2.2), far above anything seen. The compiled tangents are not always unit length or perpendicular to the normal, and 9.5% of all vertices have none usable (zero, where the texture coordinates collapse). OpenBL makes them perpendicular and keeps the plain normal where nothing is left. Characters skin the tangent like the normal.
 
 ## Eyes (`Eyes`)
 

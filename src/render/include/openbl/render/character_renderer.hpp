@@ -141,7 +141,7 @@ private:
         const Model* model = nullptr;
         std::size_t skin = 0;
         std::array<float, 16> transform{};
-        AmbientCube lighting;
+        ModelLighting lighting;
         std::optional<anim::AnimationPlayer> player; // Empty: bind pose.
         std::vector<float> flex_deltas; // float4 per flex slot; empty when no flex is active.
         std::vector<formats::MdlMatrix> skinning;    // Updated by update().

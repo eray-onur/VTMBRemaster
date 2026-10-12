@@ -105,7 +105,7 @@ private:
         const Model* model = nullptr;
         std::size_t skin = 0;
         std::array<float, 16> transform{}; // Column-major model matrix.
-        AmbientCube lighting;              // Model space.
+        ModelLighting lighting;            // Model space.
         std::vector<Decal> decals;
         bool skybox = false;               // In the 3D skybox's area.
         bool envmapped = false;            // Some mesh of its skin has an environment map.
@@ -118,7 +118,7 @@ private:
 
     const Model* load_model(const std::string& path);
     void place_decals(const formats::BspFile& bsp);
-    // Fills shader_data_ and envmap_blocks_ for `settings`; returns the material params rows held.
+    // Fills shader_data_ and instance_blocks_ for `settings`; returns the material params rows held.
     std::size_t build_shader_data(const PropDrawSettings& settings);
     struct Bound {
         const rhi::Pipeline* pipeline = nullptr;
@@ -140,7 +140,7 @@ private:
     std::unordered_map<std::string, std::unique_ptr<Model>> models_; // Null caches failures.
     std::vector<Instance> instances_;
     std::vector<float> shader_data_; // Fog rows, eye, material params table, envmap blocks.
-    std::vector<std::uint32_t> envmap_blocks_; // Per instance, this pass: its block, or UINT32_MAX.
+    std::vector<std::uint32_t> instance_blocks_; // Per instance, this pass: its block, or UINT32_MAX.
     // The translucent pass under way (begin_translucent).
     struct TranslucentPass {
         std::array<float, 16> view_projection{};

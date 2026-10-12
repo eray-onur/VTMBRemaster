@@ -1,7 +1,8 @@
 // Skinned (animated) studio models. Per-draw shader data holds the model-space
-// ambient cube (6 float4), one 3x4 skinning matrix per bone (3 float4 rows
-// each), then a material params row per mesh (8 float4: texture transform u
-// and v rows, colour and alpha, self-illumination tint, ...; MaterialParams).
+// ambient cube (6 float4), the fog (2), one 3x4 skinning matrix per bone (3
+// float4 rows each), then a material params row per mesh (8 float4: texture
+// transform u and v rows, colour and alpha, self-illumination tint, ...;
+// MaterialParams), then the optional blocks named in the push constants.
 
 #include "color.hlsli"
 
@@ -15,6 +16,7 @@ struct PushConstants {
     uint cloth_base;  // Element of cloth particle 0's position (float4 per particle); 0: no cloth.
     uint cloth_count; // Particles; their normals follow the positions.
     uint envmap_block; // Element of the eye (xyz), then the model-to-world rows (3); 0: none.
+    uint lights_block; // Element of the two local lights (8 float4; local_light in color.hlsli); 0: none.
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -57,6 +59,7 @@ struct VSOutput {
     [[vk::location(4)]] float3 world_normal : NORMAL;
     [[vk::location(5)]] float3 model_normal : TEXCOORD3; // Skinned; for bump-mapped materials.
     [[vk::location(6)]] float4 model_tangent : TANGENT;
+    [[vk::location(7)]] float3 model_position : TEXCOORD4; // Skinned; for bump-mapped materials.
 };
 
 // The model-space ambient cube's light for a unit normal.
@@ -64,6 +67,19 @@ float3 cube_light(float3 n) {
     const float3 n2 = n * n;
     return n2.x * shader_data[n.x >= 0 ? 0 : 1].rgb + n2.y * shader_data[n.y >= 0 ? 2 : 3].rgb +
            n2.z * shader_data[n.z >= 0 ? 4 : 5].rgb;
+}
+
+// The ambient cube and the local lights at a model-space point, unit normal.
+float3 model_light(float3 position, float3 n) {
+    float3 light = cube_light(n);
+    if (pc.lights_block != 0) {
+        const uint b = pc.lights_block;
+        [unroll] for (uint i = 0; i < 2; ++i) {
+            light += local_light(shader_data[b + i * 4], shader_data[b + i * 4 + 1], shader_data[b + i * 4 + 2],
+                                 shader_data[b + i * 4 + 3], position, n);
+        }
+    }
+    return light;
 }
 
 // Model-space direction to world space (envmapped instances only).
@@ -118,10 +134,11 @@ VSOutput vs_main(VSInput input) {
     }
     output.model_normal = normal;
     output.model_tangent = float4(tangent, input.tangent.w);
+    output.model_position = position;
     const float4 tu = shader_data[pc.params_row];
     const float4 tv = shader_data[pc.params_row + 1];
     output.uv = float2(dot(tu.xyz, float3(input.uv, 1.0)), dot(tv.xyz, float3(input.uv, 1.0)));
-    output.light = cube_light(normalize(normal));
+    output.light = model_light(position, normalize(normal));
     return output;
 }
 
@@ -151,7 +168,7 @@ float4 ps_main(VSOutput input) : SV_Target {
     if (pc.flags & kBump) {
         bump = bumpmap.Sample(texture_sampler, input.uv);
         bumped = bumped_normal(bump.xyz * 2.0 - 1.0, input.model_normal, input.model_tangent);
-        light = cube_light(bumped);
+        light = model_light(input.model_position, bumped);
     }
     const float4 tint = shader_data[pc.params_row + 2]; // $color, $alpha.
     float3 color = base.rgb * tint.rgb * ((pc.flags & kUnlit) ? float3(1, 1, 1) : light);

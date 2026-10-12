@@ -658,6 +658,16 @@ TEST_CASE("BSP lightmap trace") {
     CHECK_FALSE(bsp.trace_lightmap({100, 24, 10}, {100, 24, -10})); // Off the face: blocked by solid.
     CHECK_FALSE(bsp.trace_lightmap({40, 24, 10}, {50, 24, 20}));    // Never reaches the plane.
     CHECK_FALSE(bsp.trace_lightmap({40, 24, -10}, {40, 24, 10}));   // Starts inside solid.
+    bool sky = true;
+    CHECK(bsp.trace_lightmap({40, 24, 10}, {40, 24, -10}, &sky));
+    CHECK_FALSE(sky);
+
+    // The same face as sky: no hit, and the trace says it saw the sky.
+    bsp.texinfos[0].flags = surf_flags::Sky;
+    CHECK_FALSE(bsp.trace_lightmap({40, 24, 10}, {40, 24, -10}, &sky));
+    CHECK(sky);
+    CHECK_FALSE(bsp.trace_lightmap({100, 24, 10}, {100, 24, -10}, &sky)); // Off the face: solid, not sky.
+    CHECK_FALSE(sky);
 }
 
 TEST_CASE("BSP draw order: back to front from the eye") {
