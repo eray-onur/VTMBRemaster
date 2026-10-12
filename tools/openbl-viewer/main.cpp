@@ -50,7 +50,7 @@ namespace {
 
 constexpr const char* kUsage =
     "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--show TARGETNAME]... [--npc-sequence NAME] [--pose NAME=VALUE]... [--flex CONTROLLER=VALUE]... [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
-    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-envmap] [--no-sprites] [--no-prop-fade] [--no-cloth] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
+    "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-envmap] [--no-bump] [--no-sprites] [--no-prop-fade] [--no-cloth] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
     "                     [--validation] [--no-vsync]";
 
 struct Options {
@@ -71,6 +71,7 @@ struct Options {
     bool fog = true; // --no-fog: ignore the map's distance fog.
     bool water = true; // --no-water: no reflection and refraction passes (water shows its fog colour).
     bool envmaps = true; // --no-envmap: no environment-map reflections.
+    bool bumpmaps = true; // --no-bump: world normal maps not lit by the directional lightmaps.
     bool sprites = true; // --no-sprites: no env_sprite glows and cones.
     bool prop_fade = true; // --no-prop-fade: static props never fade with distance.
     bool characters = true;
@@ -158,6 +159,8 @@ Options parse_args(int argc, char** argv) {
             o.prop_fade = false;
         } else if (a == "--no-envmap") {
             o.envmaps = false;
+        } else if (a == "--no-bump") {
+            o.bumpmaps = false;
         } else if (a == "--no-water") {
             o.water = false;
         } else if (a == "--no-light-styles") {
@@ -341,6 +344,7 @@ public:
         world_fog_.enabled = world_fog_.enabled && options.fog;
         water_targets_ = options.water;
         settings_.envmaps = options.envmaps;
+        settings_.bumpmaps = options.bumpmaps;
         if (options.props) {
             props_ = std::make_unique<render::PropRenderer>(device, *materials_, *assets_, bsp_, options.shown);
         }

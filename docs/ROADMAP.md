@@ -86,7 +86,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [x] Sprites checked against the original on `sm_hub_1` with `r_drawsprites` on/off captures: colour mode, additive, lamp-globe glows and the skyline light cones, within about 7% except a faint glow excess close to a lamp and cones at 0.87 ([RENDERING.md](RENDERING.md#sprites-env_sprite))
 - [ ] Sprites: scripts switching sprites on and off (traffic lights; needs entity I/O, Phase 2); scale animations
 - [ ] Visibility culling: draw only what the PVS and area portals allow (every pass currently draws the whole map, plus the water passes)
-- [ ] Bump-mapped surfaces: the three directional lightmaps of `$bumpmap` world faces (OpenBL uses the flat one), normal maps on models
+- [x] Bump-mapped world surfaces: `$bumpmap` faces lit from their three directional lightmaps with the original's basis and weighted average ([RENDERING.md](RENDERING.md#bump-mapped-lightmaps)); viewer `--no-bump`
+- [ ] Bump maps: compare with the original (Warrens, temple); bumped normals in envmap reflections; `WorldVertexTransition` normal-map blends; normal maps on models
 - [ ] Detail textures (`$detail`, multiplied in at 2×)
 - [ ] Detail props (grass and debris sprites placed from the map's detail-prop lump)
 - [ ] Ropes and cables (`keyframe_rope`, `move_rope`; 76 in `sm_hub_1`)

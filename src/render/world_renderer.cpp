@@ -31,8 +31,11 @@ struct Vertex {
     std::uint8_t styles[4]; // Light styles of the face; 255 = unused.
     float style_step;       // U distance between consecutive style blocks in the atlas.
     float normal[3];        // Smoothed over the face's triangles (displacements curve).
+    // Bump-lit faces: U distance from a style's flat lightmap to its first of
+    // three directional ones (each style holds four blocks); 0 otherwise.
+    float bump_step;
 };
-static_assert(sizeof(Vertex) == 52);
+static_assert(sizeof(Vertex) == 56);
 
 // Lightmap styles drawn per face (faces store up to 8; the Steam release uses at most 4).
 constexpr std::size_t kMaxFaceStyles = 4;
@@ -72,6 +75,7 @@ constexpr std::uint32_t kMultiplyLayers = 64;
 constexpr std::uint32_t kAdditive = 128;
 constexpr std::uint32_t kEnvmap = 256;
 constexpr std::uint32_t kEnvmapMaskShift = 9; // 2 bits: RenderMaterial::EnvmapMask.
+constexpr std::uint32_t kBump = 2048;         // A normal map lit by the directional lightmaps.
 
 // Source polygons are wound clockwise seen from the front, and stay clockwise
 // in Vulkan framebuffer space with our Y-flipped projection (verified visually
@@ -385,7 +389,11 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
             for (std::size_t k = 0; k < face_styles(face); ++k) {
                 out.styles[k] = face.styles[k];
             }
-            out.style_step = static_cast<float>(face.lightmap_size[0] + 2) * inv_w;
+            // Bump-lit faces store four lightmaps per style: flat, then the three directions.
+            const float block = static_cast<float>(face.lightmap_size[0] + 2) * inv_w;
+            const bool bump = (bsp.texinfos[face.texinfo].flags & kSurfBumpLight) != 0;
+            out.style_step = bump ? 4.0f * block : block;
+            out.bump_step = bump ? block : 0.0f;
         } else {
             out.styles[0] = 0; // The white luxel, at full brightness.
         }
@@ -526,8 +534,9 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
                      {3, rhi::Format::R32_Float, 28},
                      {4, rhi::Format::RGBA8_UInt, 32},
                      {5, rhi::Format::R32_Float, 36},
-                     {6, rhi::Format::RGB32_Float, 40}};
-    pd.texture_count = 5; // Base, second base, lightmap, envmap (cube), envmap mask.
+                     {6, rhi::Format::RGB32_Float, 40},
+                     {7, rhi::Format::R32_Float, 52}};
+    pd.texture_count = 6; // Base, second base, lightmap, envmap (cube), envmap mask, bump map.
     pd.push_constant_size = sizeof(PushConstants);
     pd.shader_data = true;
     pd.front_counter_clockwise = kFrontCounterClockwise;
@@ -569,20 +578,21 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
     // Materials without an environment map bind stand-ins (the shader skips them).
     auto envmap_or = [&](const RenderMaterial& m) { return m.envmap ? m.envmap : materials.black_cube(); };
     auto mask_or = [&](const RenderMaterial& m) { return m.envmap_mask ? m.envmap_mask : materials.white(); };
+    auto bump_or = [&](const RenderMaterial& m) { return m.bumpmap ? m.bumpmap : materials.white(); };
     sampler_ = device.create_sampler({});
     for (auto* list : {&opaque_, &translucent_}) {
         for (Batch& batch : *list) {
             const RenderMaterial& m = *batch.material;
             const rhi::Texture* base =
                 batch.monitor >= 0 ? &monitors_[static_cast<std::size_t>(batch.monitor)].target->texture() : m.base;
-            const rhi::Texture* textures[] = {base, m.base2, lightmap_.get(), envmap_or(m), mask_or(m)};
+            const rhi::Texture* textures[] = {base, m.base2, lightmap_.get(), envmap_or(m), mask_or(m), bump_or(m)};
             batch.bind_group = device.create_bind_group(*pipelines_[0][0], *sampler_, textures);
             if (batch.monitor >= 0) {
                 continue; // The picture is the render target, not texture frames.
             }
             for (const rhi::Texture* frame : m.base_frames) {
                 const rhi::Texture* frame_textures[] = {frame, (m.blend_layers || m.multiply_layers) ? m.base2 : frame,
-                                                        lightmap_.get(), envmap_or(m), mask_or(m)};
+                                                        lightmap_.get(), envmap_or(m), mask_or(m), bump_or(m)};
                 batch.frame_bind_groups.push_back(device.create_bind_group(*pipelines_[0][0], *sampler_, frame_textures));
             }
         }
@@ -593,7 +603,8 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
     decal_sampler_ = device.create_sampler(clamped);
     for (Batch& batch : decals_) {
         const rhi::Texture* textures[] = {batch.material->base, batch.material->base2, lightmap_.get(),
-                                          envmap_or(*batch.material), mask_or(*batch.material)};
+                                          envmap_or(*batch.material), mask_or(*batch.material),
+                                          bump_or(*batch.material)};
         batch.bind_group = device.create_bind_group(*decal_pipelines_[0], *decal_sampler_, textures);
     }
 }
@@ -656,8 +667,10 @@ void WorldRenderer::build_lightmap_atlas(const BspFile& bsp, std::vector<std::ar
         if (!face_has_lightmap(bsp, face)) {
             continue;
         }
-        const auto styles = static_cast<std::uint32_t>(face_styles(face));
-        const auto w = static_cast<std::uint32_t>(face.lightmap_size[0] + 1) * styles + (styles - 1);
+        // Bump-lit faces: four blocks per style (flat, then the three directions).
+        const bool bump = (bsp.texinfos[face.texinfo].flags & kSurfBumpLight) != 0;
+        const auto blocks = static_cast<std::uint32_t>(face_styles(face)) * (bump ? 4 : 1);
+        const auto w = static_cast<std::uint32_t>(face.lightmap_size[0] + 1) * blocks + (blocks - 1);
         const auto h = static_cast<std::uint32_t>(face.lightmap_size[1] + 1);
         rects.push_back({f, w, h});
         area += std::uint64_t{w + 1} * (h + 1);
@@ -698,8 +711,9 @@ void WorldRenderer::build_lightmap_atlas(const BspFile& bsp, std::vector<std::ar
         const auto lw = static_cast<std::uint32_t>(face.lightmap_size[0] + 1);
         const std::size_t luxels = std::size_t{lw} * rects[i].h;
         const bool bump = (bsp.texinfos[face.texinfo].flags & kSurfBumpLight) != 0;
-        for (std::size_t k = 0; k < face_styles(face); ++k) {
-            const std::byte* src = bsp.lighting.data() + face.light_offset + k * luxels * 4 * (bump ? 4 : 1);
+        // The file holds the blocks in the same order: per style, flat then the three directions.
+        for (std::size_t k = 0; k < face_styles(face) * (bump ? 4 : 1); ++k) {
+            const std::byte* src = bsp.lighting.data() + face.light_offset + k * luxels * 4;
             const std::uint32_t x0 = placed[i][0] + static_cast<std::uint32_t>(k) * (lw + 1);
             for (std::uint32_t ly = 0; ly < rects[i].h; ++ly) {
                 for (std::uint32_t lx = 0; lx < lw; ++lx) {
@@ -773,7 +787,9 @@ void WorldRenderer::draw_batch(rhi::CommandList& cmd, const Batch& batch, const 
                ((m.unlit || settings.fullbright) ? kUnlit : 0) | (m.self_illum ? kSelfIllum : 0) |
                ((m.translucent || batch.decal) ? kTranslucent : 0) | ((batch.decal && m.modulate) ? kModulate : 0) |
                (m.multiply_layers ? kMultiplyLayers : 0) | ((m.additive && !batch.decal) ? kAdditive : 0) |
-               (m.envmap && settings.envmaps ? kEnvmap | (static_cast<std::uint32_t>(m.envmap_mask_mode) << kEnvmapMaskShift) : 0);
+               (m.envmap && settings.envmaps ? kEnvmap | (static_cast<std::uint32_t>(m.envmap_mask_mode) << kEnvmapMaskShift) : 0) |
+               // Two-layer blends would mix two normal maps; they keep the flat lightmap for now.
+               (m.bumpmap && settings.bumpmaps && !batch.decal && !m.blend_layers ? kBump : 0);
     pc.params_index = m.params_index < rows ? m.params_index : 0;
     cmd.set_bind_group(batch.current_bind_group());
     cmd.push_constants(&pc, sizeof(pc));

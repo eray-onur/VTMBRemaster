@@ -496,6 +496,13 @@ RenderMaterial MaterialSystem::load(const std::string& name, std::optional<forma
             out.envmap_mask_mode = RenderMaterial::EnvmapMask::Texture;
         }
     }
+    // World normal maps: lit from the face's three directional lightmaps
+    // where it has them (docs/RENDERING.md#bump-mapped-lightmaps).
+    if (out.shader == "lightmappedgeneric") {
+        if (auto path = mat->texture_path("$bumpmap")) {
+            out.bumpmap = texture(*path, false);
+        }
+    }
     out.water = out.shader == "water" || out.shader == "waterwarp";
     if (out.water) {
         out.translucent = true;

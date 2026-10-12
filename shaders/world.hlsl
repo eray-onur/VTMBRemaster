@@ -22,6 +22,7 @@ static const uint kAdditive = 128;
 static const uint kEnvmap = 256;
 // Envmap mask, bits 9-10: 0 none, 1 mask texture colour, 2 1 - base alpha, 3 mask texture alpha.
 static const uint kEnvmapMaskShift = 9;
+static const uint kBump = 2048; // $bumpmap: lit by the face's three directional lightmaps.
 
 struct VSInput {
     [[vk::location(0)]] float3 position : POSITION;
@@ -31,6 +32,7 @@ struct VSInput {
     [[vk::location(4)]] uint4 styles : TEXCOORD3;
     [[vk::location(5)]] float style_step : TEXCOORD4;
     [[vk::location(6)]] float3 normal : NORMAL;
+    [[vk::location(7)]] float bump_step : TEXCOORD5; // 0 unless the face has directional lightmaps.
 };
 
 struct VSOutput {
@@ -44,6 +46,8 @@ struct VSOutput {
     [[vk::location(6)]] float2 depth_z : TEXCOORD6; // View depth, world z (for fog).
     [[vk::location(7)]] float3 world : TEXCOORD7;
     [[vk::location(8)]] float3 normal : NORMAL;
+    [[vk::location(9)]] nointerpolation float bump_step : TEXCOORD8;
+    [[vk::location(10)]] float2 bump_uv : TEXCOORD9; // Untransformed, as the original's bump coordinates.
 };
 
 // Brightness of each of the 64 light styles (4 per element), the fog (2
@@ -78,6 +82,8 @@ VSOutput vs_main(VSInput input) {
     output.blend = input.blend;
     output.styles = input.styles;
     output.style_step = input.style_step;
+    output.bump_step = input.bump_step;
+    output.bump_uv = input.uv;
     return output;
 }
 
@@ -87,6 +93,15 @@ VSOutput vs_main(VSInput input) {
 [[vk::binding(3, 0)]] Texture2D lightmap;
 [[vk::binding(4, 0)]] TextureCube envmap;
 [[vk::binding(5, 0)]] Texture2D envmap_mask; // Raw values (not sRGB-decoded).
+[[vk::binding(6, 0)]] Texture2D bumpmap;     // Tangent-space normal map, raw values.
+
+// The original's bump basis (lightmappedgeneric_ps20): three directions in
+// tangent space, one per directional lightmap.
+static const float3 kBumpBasis[3] = {
+    float3(0.816497, 0.0, 0.57735),
+    float3(-0.408248, 0.707107, 0.57735),
+    float3(-0.408248, -0.707107, 0.57735),
+};
 
 float4 ps_main(VSOutput input) : SV_Target {
     float4 base = base_texture.Sample(texture_sampler, input.uv);
@@ -108,18 +123,39 @@ float4 ps_main(VSOutput input) : SV_Target {
     }
     float3 light = float3(1.0, 1.0, 1.0);
     if (!(pc.flags & kUnlit)) {
-        light = float3(0, 0, 0);
-        [unroll] for (uint k = 0; k < 4; ++k) {
-            const uint style = input.styles[k];
-            if (style < 64) {
-                const float2 uv = input.lightmap_uv + float2(input.style_step * k, 0);
-                light += lightmap.Sample(texture_sampler, uv).rgb * style_value(style);
-            }
-        }
         // The original stores the combined lightmap in an 8-bit texture as
         // luxel^(1/2.2) / 2 and doubles it in the shader, so anything above
         // 2^2.2 saturates (docs/RENDERING.md).
-        light = min(light, 4.5948) * pc.light_scale;
+        if ((pc.flags & kBump) && input.bump_step > 0.0) {
+            // Each direction's lightmap, combined over the styles; then weighted
+            // by how much the normal faces each direction (clamped at 0) and
+            // averaged, on the encoded values as the original's shader does.
+            const float3 n = bumpmap.Sample(texture_sampler, input.bump_uv).xyz * 2.0 - 1.0;
+            const float3 w = saturate(float3(dot(n, kBumpBasis[0]), dot(n, kBumpBasis[1]), dot(n, kBumpBasis[2])));
+            float3 encoded_light = float3(0, 0, 0);
+            [unroll] for (uint b = 0; b < 3; ++b) {
+                float3 direction = float3(0, 0, 0);
+                [unroll] for (uint k = 0; k < 4; ++k) {
+                    const uint style = input.styles[k];
+                    if (style < 64) {
+                        const float2 uv = input.lightmap_uv + float2(input.style_step * k + input.bump_step * (b + 1), 0);
+                        direction += lightmap.Sample(texture_sampler, uv).rgb * style_value(style);
+                    }
+                }
+                encoded_light += w[b] * pow(min(direction, 4.5948), 1.0 / 2.2);
+            }
+            light = pow(encoded_light / max(w.x + w.y + w.z, 1e-4), 2.2) * pc.light_scale;
+        } else {
+            light = float3(0, 0, 0);
+            [unroll] for (uint k = 0; k < 4; ++k) {
+                const uint style = input.styles[k];
+                if (style < 64) {
+                    const float2 uv = input.lightmap_uv + float2(input.style_step * k, 0);
+                    light += lightmap.Sample(texture_sampler, uv).rgb * style_value(style);
+                }
+            }
+            light = min(light, 4.5948) * pc.light_scale;
+        }
     }
     const float4 tint = material_param(2); // $color, $alpha.
     float3 color = base.rgb * tint.rgb * light;

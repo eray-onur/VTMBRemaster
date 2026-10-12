@@ -63,6 +63,7 @@ struct WorldDrawSettings {
     // water shows its fog colour.
     bool water_targets = false;
     bool envmaps = true; // Environment-map reflections ($envmap).
+    bool bumpmaps = true; // Normal maps lit by the directional lightmaps ($bumpmap).
 };
 
 // A horizontal water surface: the water faces at one height. As in the

@@ -40,7 +40,18 @@ The blend factor is not a vertex attribute. It is stored in the **lightmap textu
 
 ## Bump-mapped lightmaps
 
-Bump-mapped faces have three lightmaps, one per basis direction in tangent space (stored as 4 per style in the BSP; see [formats/maps.md](formats/maps.md)). The shader dots the normal-map normal with each of the three basis axes (saturated at 0) and sums the three lightmaps weighted by those dot products.
+Faces whose texinfo has `SURF_BUMPLIGHT` (0x800) store four lightmaps per style: the flat one, then one per basis direction in tangent space ([formats/maps.md](formats/maps.md)). 23,279 faces in 59 of the 101 maps have it, most in the Warrens, the Chinatown temple, the Santa Monica and Ash sewers. 19,560 faces over all maps have both the flag and a `LightmappedGeneric` material with a `$bumpmap`, mostly sewer, Warrens and temple walls.
+
+The original's `lightmappedgeneric_ps20` (read from the shipped `.vcs`) lights those faces from the three directional lightmaps only:
+
+- the normal is the bump map's texel × 2 − 1, not renormalised;
+- each weight is the normal dotted with one basis direction, clamped at 0: (0.816497, 0, 0.57735), (−0.408248, 0.707107, 0.57735) and (−0.408248, −0.707107, 0.57735);
+- light = (w₀ L₁ + w₁ L₂ + w₂ L₃) / (w₀ + w₁ + w₂), a weighted average;
+- the vertex shader places the three lightmaps 1, 2 and 3 lightmap widths to the right of the flat one, and samples the bump map at the untransformed base coordinates (`$bumptransform` only appears on water-like materials).
+
+The average is taken on the lightmap texture's encoded values (luxel^(1/2.2) / 2, as for flat lightmaps), so OpenBL sums each direction over the styles in linear terms, then averages them as L^(1/2.2) and converts back. Over ch_temple_3's 2,402 bump-lit faces the three directions average 0.97 of the flat lightmap, but the encoded-space average is lower where they differ: the temple start view comes out 17% darker than with flat lightmaps, a sewer wall 9%. Not yet compared with the original.
+
+Not done: the bumped normal in environment-map reflections (23 of the 61 bump materials have an `$envmap`; OpenBL reflects about the face normal), `WorldVertexTransition` blends of two normal maps (they keep the flat lightmap), and normal maps on models. Bump-mapped materials on faces without the flag use the flat lightmap, as there is nothing else. `openbl-viewer --no-bump` uses the flat lightmap everywhere.
 
 ## Models (`VertexLitGeneric`)
 
