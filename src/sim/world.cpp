@@ -31,7 +31,7 @@ constexpr std::size_t kMaxStepsPerAdvance = 1'000'000;
 
 } // namespace
 
-World::World(const formats::BspFile& bsp, ScriptHost* scripts) : scripts_(scripts) {
+World::World(const formats::BspFile& bsp, ScriptHost* scripts) : bsp_(bsp), scripts_(scripts) {
     const auto& classes = entity_classes();
     entities_.reserve(bsp.entity_pairs.size());
     for (const formats::BspEntityPairs& pairs : bsp.entity_pairs) {
@@ -73,6 +73,15 @@ World::World(const formats::BspFile& bsp, ScriptHost* scripts) : scripts_(script
 World::~World() = default;
 
 void World::start() {
+    // Parents by name (the first entity so named, as Source takes).
+    for (const auto& e : entities_) {
+        if (const std::string_view parent = e->value("parentname"); !parent.empty()) {
+            const auto found = find(parent);
+            if (!found.empty() && found.front() != e->id()) {
+                e->parent_ = found.front();
+            }
+        }
+    }
     for (const auto& e : entities_) {
         e->spawn(*this);
     }
@@ -219,6 +228,35 @@ void World::remove(EntityId id) {
     if (Entity* e = entity(id); e && !e->removed_) {
         e->removed_ = true;
         e->next_think_.reset();
+        touch();
+    }
+}
+
+std::optional<Transform> World::render_transform(EntityId id) const {
+    std::optional<Transform> out;
+    // Walk up the parents (bounded, in case a map names a cycle).
+    for (int depth = 0; depth < 16 && id != kNoEntity; ++depth) {
+        const Entity* e = entity(id);
+        if (!e) {
+            break;
+        }
+        if (e->motion()) {
+            out = out ? e->motion()->after(*out) : *e->motion();
+        }
+        id = e->parent();
+    }
+    return out;
+}
+
+bool World::portal_open(int portal) const {
+    const auto it = portals_.find(portal);
+    return it == portals_.end() || it->second;
+}
+
+void World::set_portal_open(int portal, bool open) {
+    auto [it, inserted] = portals_.try_emplace(portal, open);
+    if (inserted || it->second != open) {
+        it->second = open;
         touch();
     }
 }

@@ -52,7 +52,9 @@ struct PushConstants {
     std::uint32_t flags;
     std::uint32_t params_index;
     float opacity; // Scales the output alpha (area portal windows); 1 otherwise.
-    float pad[3];
+    // A moved brush entity: the shader data element of its 3 transform rows (0: none).
+    std::uint32_t transform_row;
+    float pad[2];
 };
 static_assert(sizeof(PushConstants) == 96);
 
@@ -284,6 +286,8 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
     // their own so scripts can hide and show it), else -1.
     std::map<std::tuple<std::string, int, bool, int, std::int64_t, std::int64_t>, std::vector<FaceRef>> by_material;
     entity_hidden_.assign(bsp.entities.size(), 0);
+    entity_transforms_.assign(bsp.entities.size(), std::nullopt);
+    transform_rows_.assign(bsp.entities.size(), 0);
     const auto nodes_of_face = formats::face_nodes(bsp);
     std::int64_t entity_number = 0;
     // Water faces at one height (within 2 units) make up one water plane.
@@ -949,9 +953,25 @@ std::size_t WorldRenderer::build_shader_data(const WorldDrawSettings& settings) 
     constexpr std::size_t kEyeFloats = 4;
     constexpr std::size_t kHeadFloats = kStyleFloats + kFogFloats + kEyeFloats;
     constexpr std::size_t kRowFloats = sizeof(MaterialParams) / sizeof(float);
-    const std::size_t rows = std::min<std::size_t>(settings.material_params ? settings.material_params->size() : 1,
-                                                   (rhi::kMaxShaderDataSize / sizeof(float) - kHeadFloats) / kRowFloats);
-    shader_data_.assign(kHeadFloats + std::max<std::size_t>(rows, 1) * kRowFloats, 0.0f);
+    // Moved brush entities' transforms go after the params rows, 3 float4 each.
+    std::size_t moved = 0;
+    for (const auto& t : entity_transforms_) {
+        moved += t.has_value();
+    }
+    const std::size_t rows = std::min<std::size_t>(
+        settings.material_params ? settings.material_params->size() : 1,
+        (rhi::kMaxShaderDataSize / sizeof(float) - kHeadFloats - moved * 12) / kRowFloats);
+    const std::size_t transforms_at = kHeadFloats + std::max<std::size_t>(rows, 1) * kRowFloats;
+    shader_data_.assign(transforms_at + moved * 12, 0.0f);
+    std::size_t next = transforms_at;
+    for (std::size_t i = 0; i < entity_transforms_.size(); ++i) {
+        transform_rows_[i] = 0;
+        if (entity_transforms_[i]) {
+            std::copy(entity_transforms_[i]->begin(), entity_transforms_[i]->end(), shader_data_.begin() + static_cast<std::ptrdiff_t>(next));
+            transform_rows_[i] = static_cast<std::uint32_t>(next / 4);
+            next += 12;
+        }
+    }
     std::copy(values.begin(), values.end(), shader_data_.begin());
     const auto fog = settings.fog.rows();
     std::copy(fog.begin(), fog.end(), shader_data_.begin() + kStyleFloats);
@@ -1001,6 +1021,14 @@ void WorldRenderer::draw_batch(rhi::CommandList& cmd, const Batch& batch, const 
     }
     PushConstants pc{};
     std::memcpy(pc.mvp, vp.data(), sizeof(pc.mvp));
+    if (batch.entity_index >= 0) {
+        const auto e = static_cast<std::size_t>(batch.entity_index);
+        if (entity_transforms_[e] && transform_rows_[e] != 0) {
+            const auto mvp = multiply(vp, transform_matrix(*entity_transforms_[e]));
+            std::memcpy(pc.mvp, mvp.data(), sizeof(pc.mvp));
+            pc.transform_row = transform_rows_[e];
+        }
+    }
     pc.light_scale = settings.light_scale;
     pc.alpha_ref = m.alpha_ref;
     pc.flags = (m.alpha_test ? kAlphaTest : 0) | (m.blend_layers ? kBlendLayers : 0) |
@@ -1084,6 +1112,7 @@ void WorldRenderer::draw_water_surfaces(rhi::CommandList& cmd, const std::array<
 void WorldRenderer::set_entity_states(const std::vector<EntityState>& states) {
     for (std::size_t i = 0; i < entity_hidden_.size(); ++i) {
         entity_hidden_[i] = i < states.size() && states[i].hidden;
+        entity_transforms_[i] = i < states.size() ? states[i].transform : std::nullopt;
     }
 }
 

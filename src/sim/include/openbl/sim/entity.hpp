@@ -9,6 +9,7 @@
 #include "openbl/formats/bsp.hpp"
 #include "openbl/formats/entity_io.hpp"
 #include "openbl/sim/script_host.hpp"
+#include "openbl/sim/transform.hpp"
 
 #include <optional>
 #include <string>
@@ -42,6 +43,12 @@ public:
     bool removed() const { return removed_; }
     // Model entities: the skin to draw ("skin", the Skin input); -1 for others.
     std::int32_t skin() const { return skin_; }
+    // How far the entity has moved from its pose in the map (doors, fans);
+    // empty: not at all. Parents carry their children (World::render_transform).
+    const std::optional<Transform>& motion() const { return motion_; }
+    // The entity named by "parentname", once the map has spawned.
+    EntityId parent() const { return parent_; }
+    formats::Vec3 origin() const;
 
     // After every entity of the map exists, in map order.
     virtual void spawn(World& world);
@@ -68,6 +75,7 @@ public:
 protected:
     void set_next_think(std::optional<double> time) { next_think_ = time; }
     void set_hidden(bool hidden) { hidden_ = hidden; }
+    void set_motion(World& world, std::optional<Transform> motion);
 
 private:
     friend class World;
@@ -85,6 +93,8 @@ private:
     bool hidden_ = false;
     bool removed_ = false;
     std::int32_t skin_ = -1;
+    std::optional<Transform> motion_;
+    EntityId parent_ = kNoEntity;
 };
 
 // Case-insensitive comparison, as entity names, classes and inputs use.

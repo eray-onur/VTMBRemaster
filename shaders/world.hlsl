@@ -9,7 +9,10 @@ struct PushConstants {
     uint flags;
     uint params_index; // Row of the material params table (after the light styles).
     float opacity;     // Scales the output alpha (area portal windows); 1 otherwise.
-    float3 pad;
+    // A moved brush entity (door, fan): the element of style_values holding its
+    // 3x4 transform rows; 0: in its map pose.
+    uint transform_row;
+    float2 pad;
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -81,21 +84,35 @@ float4 material_param(uint k) {
 VSOutput vs_main(VSInput input) {
     VSOutput output;
     output.position = mul(pc.mvp, float4(input.position, 1.0));
+    // World-space position and frame (mvp already includes a moved entity's transform).
+    float3 world = input.position;
+    float3 normal = input.normal;
+    float3 tangent_s = input.tangent_s;
+    float3 tangent_t = input.tangent_t;
+    if (pc.transform_row != 0) {
+        const float4 r0 = style_values[pc.transform_row];
+        const float4 r1 = style_values[pc.transform_row + 1];
+        const float4 r2 = style_values[pc.transform_row + 2];
+        world = float3(dot(r0.xyz, world) + r0.w, dot(r1.xyz, world) + r1.w, dot(r2.xyz, world) + r2.w);
+        normal = float3(dot(r0.xyz, normal), dot(r1.xyz, normal), dot(r2.xyz, normal));
+        tangent_s = float3(dot(r0.xyz, tangent_s), dot(r1.xyz, tangent_s), dot(r2.xyz, tangent_s));
+        tangent_t = float3(dot(r0.xyz, tangent_t), dot(r1.xyz, tangent_t), dot(r2.xyz, tangent_t));
+    }
     const float4 tu = material_param(0);
     const float4 tv = material_param(1);
     output.uv = float2(dot(tu.xyz, float3(input.uv, 1.0)), dot(tv.xyz, float3(input.uv, 1.0)));
     output.uv2 = float2(dot(material_param(4).xyz, float3(input.uv, 1.0)), dot(material_param(5).xyz, float3(input.uv, 1.0)));
     output.lightmap_uv = input.lightmap_uv;
-    output.depth_z = float2(output.position.w, input.position.z);
-    output.world = input.position;
-    output.normal = input.normal;
+    output.depth_z = float2(output.position.w, world.z);
+    output.world = world;
+    output.normal = normal;
     output.blend = input.blend;
     output.styles = input.styles;
     output.style_step = input.style_step;
     output.bump_step = input.bump_step;
     output.bump_uv = input.uv;
-    output.tangent_s = input.tangent_s;
-    output.tangent_t = input.tangent_t;
+    output.tangent_s = tangent_s;
+    output.tangent_t = tangent_t;
     return output;
 }
 

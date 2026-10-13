@@ -117,6 +117,7 @@ private:
         const Model* model = nullptr;
         std::size_t skin = 0;
         std::array<float, 16> transform{}; // Column-major model matrix.
+        std::array<float, 16> map_transform{}; // Its pose in the map (transform follows the simulation).
         ModelLighting lighting;            // Model space.
         std::unique_ptr<StyledLighting> styled; // Set when styled lights reach it.
         std::int32_t entity = -1;          // Its map entity (prop_* entities); -1: a static prop.

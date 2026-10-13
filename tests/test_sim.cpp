@@ -7,6 +7,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 
 using namespace openbl;
@@ -163,6 +164,74 @@ TEST_CASE("Entity I/O: sprites and model skins") {
     CHECK_FALSE(world.entity(dark)->hidden());
     CHECK(world.entity(lamp)->skin() == 2);
     CHECK(world.revision() > before);
+}
+
+TEST_CASE("Movers: a swinging door, its portal, a linked door and a knob it carries") {
+    RecordingScriptHost scripts;
+    World world(map_from(R"(
+{ "classname" "func_door_rotating" "targetname" "door" "origin" "100 0 0" "distance" "90" "speed" "100"
+  "wait" "2" "spawnflags" "256" "linked_door" "door2"
+  "OnFullyOpen" ",,,0,-1,opened()," "OnFullyClosed" ",,,0,-1,closed()," }
+{ "classname" "func_door_rotating" "targetname" "door2" "origin" "300 0 0" "distance" "90" "speed" "100" "wait" "-1" }
+{ "classname" "func_areaportal" "portalnumber" "7" "StartOpen" "0" "target" "door" }
+{ "classname" "prop_doorknob" "parentname" "door" "origin" "110 0 40" }
+)"),
+                &scripts);
+    world.start();
+    CHECK_FALSE(world.portal_open(7));
+    const EntityId door = named(world, "door");
+    const EntityId knob = world.find("prop_doorknob")[0];
+    CHECK_FALSE(world.render_transform(knob));
+    world.queue_input("door", "Open", "", 0, kNoEntity, kNoEntity);
+    world.advance(0.45);
+    CHECK(world.portal_open(7)); // Opens as the door starts to move.
+    // About 45 degrees about z through the door's origin: (110, 0) -> (100 + 10 cos 45, 10 sin 45).
+    const auto t = world.render_transform(knob);
+    REQUIRE(t);
+    const auto p = t->apply({110, 0, 40});
+    CHECK(p[0] == doctest::Approx(107.1).epsilon(0.02));
+    CHECK(p[1] == doctest::Approx(7.1).epsilon(0.02));
+    CHECK(p[2] == doctest::Approx(40));
+    world.advance(0.6);
+    REQUIRE(scripts.calls.size() == 1);
+    CHECK(scripts.calls[0].statement == "opened()");
+    CHECK(world.render_transform(named(world, "door2"))); // The linked door opened too.
+    world.advance(2.0 + 1.0);                               // Waits 2 s, then closes in 0.9 s.
+    REQUIRE(scripts.calls.size() == 2);
+    CHECK(scripts.calls[1].statement == "closed()");
+    CHECK_FALSE(world.render_transform(door));
+    CHECK_FALSE(world.portal_open(7));
+    world.advance(1.0);
+    CHECK_FALSE(world.render_transform(named(world, "door2"))); // Linked: it closes with it.
+}
+
+TEST_CASE("Movers: a sliding door and a fan") {
+    formats::BspFile bsp = map_from(R"(
+{ "classname" "worldspawn" }
+{ "classname" "func_door" "targetname" "slide" "model" "*1" "angles" "-90 0 0" "speed" "50" "lip" "8" "wait" "-1" }
+{ "classname" "func_rotating" "targetname" "fan" "origin" "0 0 100" "maxspeed" "90" "spawnflags" "1" }
+)");
+    bsp.models.resize(2);
+    bsp.models[1].mins = {0, 0, 0};
+    bsp.models[1].maxs = {64, 8, 100}; // Moves up by (100 - 2) - 8 = 90 units.
+    World world(bsp);
+    world.start();
+    world.queue_input("slide", "Open", "", 0, kNoEntity, kNoEntity);
+    world.advance(3.0);
+    const auto t = world.render_transform(named(world, "slide"));
+    REQUIRE(t);
+    CHECK(t->translation[0] == doctest::Approx(0).epsilon(0.001));
+    CHECK(t->translation[2] == doctest::Approx(90));
+    // The fan: 90 degrees a second about z through (0, 0, 100).
+    const auto f = world.render_transform(named(world, "fan"));
+    REQUIRE(f);
+    const auto p = f->apply({10, 0, 100});
+    CHECK(std::hypot(p[0], p[1]) == doctest::Approx(10));
+    world.queue_input("fan", "Stop", "", 0, kNoEntity, kNoEntity);
+    world.advance(0.05);
+    const auto stopped = world.render_transform(named(world, "fan"))->apply({10, 0, 100});
+    world.advance(1.0);
+    CHECK(world.render_transform(named(world, "fan"))->apply({10, 0, 100})[0] == doctest::Approx(stopped[0]));
 }
 
 TEST_CASE("Entity I/O: every shipped map runs") {

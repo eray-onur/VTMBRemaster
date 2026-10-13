@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <cstdio>
 #include <cstdlib>
 
 namespace openbl::sim {
@@ -49,6 +50,18 @@ float Entity::number(std::string_view key, float fallback) const {
     char* end = nullptr;
     const float v = std::strtof(text.c_str(), &end);
     return end == text.c_str() ? fallback : v;
+}
+
+formats::Vec3 Entity::origin() const {
+    formats::Vec3 o{};
+    const std::string text(value("origin"));
+    std::sscanf(text.c_str(), "%f %f %f", &o[0], &o[1], &o[2]);
+    return o;
+}
+
+void Entity::set_motion(World& world, std::optional<Transform> motion) {
+    motion_ = std::move(motion);
+    world.touch();
 }
 
 void Entity::spawn(World&) {}

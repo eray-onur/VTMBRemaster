@@ -3,6 +3,7 @@ add_library(openbl_sim
     effects.cpp
     entity.cpp
     logic.cpp
+    movers.cpp
     world.cpp)
 add_library(openbl::sim ALIAS openbl_sim)
 

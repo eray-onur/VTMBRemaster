@@ -128,6 +128,7 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
         inst.skin = skin < model->skins.size() ? skin : 0;
         const glm::mat4 m = prop_transform(origin, angles);
         std::memcpy(inst.transform.data(), glm::value_ptr(m), sizeof(inst.transform));
+        inst.map_transform = inst.transform;
         std::array<std::array<float, 3>, 3> rotation{};
         for (int r = 0; r < 3; ++r) {
             for (int k = 0; k < 3; ++k) {
@@ -592,6 +593,10 @@ void PropRenderer::set_entity_states(const std::vector<EntityState>& states) {
         }
         const EntityState& state = states[static_cast<std::size_t>(inst.entity)];
         inst.hidden = state.hidden;
+        // Carried by a door or turned: the motion after the map pose. (Its
+        // lighting stays as sampled in the map pose.)
+        inst.transform = state.transform ? multiply(transform_matrix(*state.transform), inst.map_transform)
+                                         : inst.map_transform;
         if (state.skin >= 0 && static_cast<std::size_t>(state.skin) < inst.model->skins.size() &&
             static_cast<std::size_t>(state.skin) != inst.skin) {
             inst.skin = static_cast<std::size_t>(state.skin);

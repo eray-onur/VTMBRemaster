@@ -218,6 +218,10 @@ private:
     std::vector<Batch> water_;
     std::vector<Batch> decals_; // infodecals, drawn over the opaque world.
     std::vector<std::uint8_t> entity_hidden_; // By map entity.
+    // Moved named brush entities (doors, fans): their transform rows by map
+    // entity, and where this pass's shader data holds them (float4 index; 0: none).
+    std::vector<std::optional<std::array<float, 12>>> entity_transforms_;
+    std::vector<std::uint32_t> transform_rows_;
     bool hidden(const Batch& batch) const {
         return batch.entity_index >= 0 && entity_hidden_[static_cast<std::size_t>(batch.entity_index)] != 0;
     }

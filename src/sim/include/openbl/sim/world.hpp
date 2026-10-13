@@ -53,8 +53,9 @@ struct TraceEntry {
 class World {
 public:
     // Creates an entity per map entity; `scripts` (may be null) runs the
-    // Python statements outputs carry.
+    // Python statements outputs carry. `bsp` must outlive the world.
     explicit World(const formats::BspFile& bsp, ScriptHost* scripts = nullptr);
+    const formats::BspFile& bsp() const { return bsp_; }
     ~World();
     World(const World&) = delete;
     World& operator=(const World&) = delete;
@@ -88,6 +89,16 @@ public:
     // switched here (0 is always on, 1..12 animate on their own).
     bool light_style_on(std::size_t style) const { return style < kLightStyleCount && style_on_[style]; }
     void set_light_style(std::size_t style, bool on);
+    // Where an entity is drawn relative to its map pose: its own motion after
+    // its parents' (a knob turns with its door); empty if none of them moved.
+    std::optional<Transform> render_transform(EntityId id) const;
+
+    // Area portals by portalnumber: open or closed (func_areaportal, and the
+    // doors they name as their target).
+    bool portal_open(int portal) const;
+    void set_portal_open(int portal, bool open);
+    const std::map<int, bool>& portals() const { return portals_; }
+
     // Changes every time a switchable style or an entity's visibility changes.
     std::uint64_t revision() const { return revision_; }
     void touch() { ++revision_; }
@@ -114,7 +125,9 @@ private:
     std::vector<EntityId> resolve(std::string_view target, EntityId activator, EntityId caller) const;
     void deliver(const Event& event);
 
+    const formats::BspFile& bsp_;
     std::vector<std::unique_ptr<Entity>> entities_;
+    std::map<int, bool> portals_;
     std::priority_queue<Event, std::vector<Event>, Later> events_;
     std::uint64_t next_order_ = 0;
     double time_ = 0.0;

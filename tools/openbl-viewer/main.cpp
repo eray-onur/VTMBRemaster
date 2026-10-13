@@ -53,7 +53,7 @@ using namespace openbl;
 namespace {
 
 constexpr const char* kUsage =
-    "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--show TARGETNAME]... [--npc-sequence NAME] [--pose NAME=VALUE]... [--flex CONTROLLER=VALUE]... [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
+    "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--show TARGETNAME]... [--input TARGET,INPUT[,PARAM[,DELAY]]]... [--npc-sequence NAME] [--pose NAME=VALUE]... [--flex CONTROLLER=VALUE]... [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
     "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-envmap] [--no-bump] [--no-sprites] [--no-ropes] [--no-detail-props] [--no-cull] [--no-area-portals] [--no-prop-fade] [--no-cloth] [--no-shadows] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
     "                     [--validation] [--no-vsync]";
 
@@ -61,6 +61,7 @@ struct Options {
     std::optional<std::filesystem::path> game_dir;
     std::vector<std::string> mods; // Mod folders mounted over the game, e.g. Unofficial_Patch.
     std::vector<std::string> shown; // Targetnames of StartHidden brush entities to draw anyway.
+    std::vector<std::string> inputs; // "target,Input,param,delay" sent to the map's entities at the start.
     render::CharacterOptions characters_options; // --npc-sequence, --pose.
     std::optional<std::string> map;
     std::optional<glm::vec3> position;
@@ -116,6 +117,8 @@ Options parse_args(int argc, char** argv) {
         } else if (a == "--show") {
             o.shown.push_back(next());
             o.characters_options.shown.push_back(o.shown.back());
+        } else if (a == "--input") {
+            o.inputs.push_back(next());
         } else if (a == "--flex") {
             const std::string spec = next();
             const auto eq = spec.find('=');
@@ -390,6 +393,7 @@ public:
                       << " with a missing material)\n";
         }
         prop_fade_ = options.prop_fade;
+        area_portals_ = options.area_portals;
         if (options.cull) {
             visibility_ = std::make_unique<formats::ViewVisibility>(bsp_);
             main_visibility_ = std::make_unique<formats::ViewVisibility>(bsp_);
@@ -437,6 +441,20 @@ public:
         simulation_->start();
         for (const std::string& target : options.shown) {
             simulation_->queue_input(target, "ScriptUnhide", "", 0.0, sim::kNoEntity, sim::kNoEntity);
+        }
+        for (const std::string& spec : options.inputs) {
+            // As an output's fields: target, input, parameter, delay.
+            if (spec.find(',') == std::string::npos) {
+                throw std::runtime_error("--input expects TARGET,INPUT[,PARAM[,DELAY]]");
+            }
+            const std::size_t c1 = spec.find(',');
+            const std::size_t c2 = spec.find(',', c1 + 1);
+            const std::size_t c3 = c2 == std::string::npos ? c2 : spec.find(',', c2 + 1);
+            const std::string target = spec.substr(0, c1);
+            const std::string input = spec.substr(c1 + 1, c2 == std::string::npos ? c2 : c2 - c1 - 1);
+            const std::string param = c2 == std::string::npos ? "" : spec.substr(c2 + 1, c3 == std::string::npos ? c3 : c3 - c2 - 1);
+            const double delay = c3 == std::string::npos ? 0.0 : std::atof(spec.c_str() + c3 + 1);
+            simulation_->queue_input(target, input, param, delay, sim::kNoEntity, sim::kNoEntity);
         }
         simulation_->advance(0.0);
         const auto& st = simulation_->stats();
@@ -486,6 +504,12 @@ public:
                 const sim::Entity* e = simulation_->entity(static_cast<sim::EntityId>(i));
                 states[i].hidden = e->hidden() || e->removed();
                 states[i].skin = e->skin();
+                if (const auto t = simulation_->render_transform(static_cast<sim::EntityId>(i))) {
+                    states[i].transform = std::array<float, 12>{
+                        t->rotation[0], t->rotation[1], t->rotation[2], t->translation[0],
+                        t->rotation[3], t->rotation[4], t->rotation[5], t->translation[1],
+                        t->rotation[6], t->rotation[7], t->rotation[8], t->translation[2]};
+                }
             }
             world_->set_entity_states(states);
             sprites_->set_entity_states(states);
@@ -494,6 +518,13 @@ public:
             }
             if (characters_) {
                 characters_->set_entity_states(states);
+            }
+            // Area portals open and close with their doors.
+            if (visibility_ && area_portals_) {
+                for (const auto& [portal, open] : simulation_->portals()) {
+                    visibility_->set_portal_open(static_cast<std::uint16_t>(portal), open);
+                    main_visibility_->set_portal_open(static_cast<std::uint16_t>(portal), open);
+                }
             }
         }
         settings_.time = time;
@@ -846,6 +877,7 @@ private:
     std::unique_ptr<render::DetailPropRenderer> detail_props_;
     bool draw_sprites_ = true; // false: --no-sprites.
     bool prop_fade_ = true;    // false: --no-prop-fade.
+    bool area_portals_ = true; // false: --no-area-portals (every portal stays open).
     formats::BspDrawOrder draw_order_{bsp_};
     std::optional<render::LightStyles> light_styles_; // Set once the map is parsed.
     std::array<float, render::LightStyles::kCount> frame_styles_{};
