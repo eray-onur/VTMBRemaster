@@ -74,6 +74,7 @@ void usage() {
                  "  openbl-cli bsp pak <map> [game-dir]\n"
                  "  openbl-cli bsp pak-cat <map> <path> [game-dir]\n"
                  "  openbl-cli bsp export <map> <out.obj> [game-dir]\n"
+                 "  openbl-cli bsp trace <map> x0 y0 z0 x1 y1 z1 [player] [game-dir]   collision trace\n"
                  "  openbl-cli sim <map> [seconds] [game-dir]   run a map's entity I/O, printing each input\n"
                  "  openbl-cli image compare <reference> <candidate> [x y w h]\n"
                  "  openbl-cli audio export <sound> <out.wav> [game-dir]\n"
@@ -936,6 +937,29 @@ bool face_is_drawn(const formats::BspFile& bsp, const formats::BspFace& face) {
 }
 
 int cmd_bsp(const std::vector<std::string_view>& args) {
+    if (args.size() >= 9 && args[1] == "trace") {
+        // trace <map> x0 y0 z0 x1 y1 z1 [player] [game-dir]: a box (or point)
+        // trace through the world and its solid brush entities, next to the
+        // leaf-based line-of-sight test.
+        const bool player = args.size() >= 10 && args[9] == "player";
+        const vfs::GameFileSystem gfs(game_dir_arg(args, player ? 10 : 9), game_mods());
+        const auto bsp = load_map(gfs, args[2]);
+        sim::World world(bsp);
+        world.start();
+        auto num = [&](std::size_t i) { return std::strtof(std::string(args[i]).c_str(), nullptr); };
+        const formats::Vec3 a{num(3), num(4), num(5)}, b{num(6), num(7), num(8)};
+        const formats::Vec3 mins = player ? formats::Vec3{-16, -16, 0} : formats::Vec3{};
+        const formats::Vec3 maxs = player ? formats::Vec3{16, 16, 72} : formats::Vec3{};
+        const sim::Trace t = world.trace(a, b, mins, maxs);
+        std::cout << "fraction " << t.fraction << " end " << t.end[0] << " " << t.end[1] << " " << t.end[2] << " normal "
+                  << t.normal[0] << " " << t.normal[1] << " " << t.normal[2] << " contents 0x" << std::hex << t.contents
+                  << std::dec << (t.start_solid ? " start-solid" : "") << (t.all_solid ? " all-solid" : "")
+                  << " entity " << t.entity << "\n";
+        std::cout << "line of sight: " << (bsp.segment_blocked(a, b) ? "blocked" : "clear") << "; leaf contents at start 0x"
+                  << std::hex << bsp.leafs[bsp.leaf_at(a)].contents << ", end 0x" << bsp.leafs[bsp.leaf_at(b)].contents
+                  << std::dec << "\n";
+        return 0;
+    }
     if (args.size() >= 3 && (args[1] == "pak" || args[1] == "pak-cat")) {
         // pak <map> [game-dir]: list the embedded files; pak-cat <map> <path> [game-dir]: print one.
         const bool cat = args[1] == "pak-cat";

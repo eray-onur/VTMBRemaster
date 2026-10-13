@@ -1,5 +1,6 @@
 add_library(openbl_sim
     classes.cpp
+    collision.cpp
     effects.cpp
     entity.cpp
     logic.cpp

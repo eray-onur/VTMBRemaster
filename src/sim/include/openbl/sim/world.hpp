@@ -6,6 +6,7 @@
 // styles) instead of reading the map directly.
 
 #include "openbl/formats/bsp.hpp"
+#include "openbl/sim/collision.hpp"
 #include "openbl/sim/entity.hpp"
 #include "openbl/sim/script_host.hpp"
 
@@ -93,6 +94,14 @@ public:
     // its parents' (a knob turns with its door); empty if none of them moved.
     std::optional<Transform> render_transform(EntityId id) const;
 
+    // Sweeps a box through the world and the solid brush entities in their
+    // current pose (doors, walls, breakables); hidden and removed ones let it
+    // through. `ignore`: an entity not to collide with.
+    Trace trace(const formats::Vec3& start, const formats::Vec3& end, const formats::Vec3& mins,
+                const formats::Vec3& maxs, std::int32_t mask = contents::PlayerSolid,
+                EntityId ignore = kNoEntity) const;
+    const Collision& collision() const { return *collision_; }
+
     // Area portals by portalnumber: open or closed (func_areaportal, and the
     // doors they name as their target).
     bool portal_open(int portal) const;
@@ -128,6 +137,9 @@ private:
     const formats::BspFile& bsp_;
     std::vector<std::unique_ptr<Entity>> entities_;
     std::map<int, bool> portals_;
+    std::unique_ptr<Collision> collision_;
+    // Solid brush entities and their brush models, found when the map starts.
+    std::vector<std::pair<EntityId, std::size_t>> solid_brushes_;
     std::priority_queue<Event, std::vector<Event>, Later> events_;
     std::uint64_t next_order_ = 0;
     double time_ = 0.0;

@@ -8,7 +8,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <iostream>
+#include <random>
 
 using namespace openbl;
 using namespace openbl::sim;
@@ -277,4 +279,82 @@ TEST_CASE("Entity I/O: every shipped map runs") {
         std::cout << " " << top[i].second << " " << top[i].first;
     }
     std::cout << "\n";
+}
+
+TEST_CASE("Collision: player starts, floors, walls, and agreement with line-of-sight") {
+    const auto dir = test::game_dir();
+    if (!dir) {
+        return;
+    }
+    vfs::GameFileSystem fs(*dir);
+    const formats::Vec3 mins{-16, -16, 0}, maxs{16, 16, 72};
+    std::size_t maps = 0, starts = 0, embedded = 0, stuck = 0, floors = 0, walls = 0, compared = 0, missed = 0;
+    std::string notes;
+    std::mt19937 rng(7);
+    for (const std::string& path : fs.list_files()) {
+        if (!path.starts_with("maps/") || !path.ends_with(".bsp")) {
+            continue;
+        }
+        const auto bsp = formats::parse_bsp(*fs.read(path));
+        World world(bsp);
+        world.start();
+        ++maps;
+        for (const auto& e : bsp.entities) {
+            const auto cls = e.find("classname");
+            const auto o = e.find("origin");
+            if (cls == e.end() || cls->second != "info_player_start" || o == e.end()) {
+                continue;
+            }
+            formats::Vec3 p{};
+            std::sscanf(o->second.c_str(), "%f %f %f", &p[0], &p[1], &p[2]);
+            ++starts;
+            p[2] += 1.0f; // The player spawns a unit above its spawn point, as in Source.
+            if (world.trace(p, p, mins, maxs).start_solid) {
+                // A few starts sit inside geometry (a cutscene's taxi); lift out of it.
+                ++embedded;
+                notes += " embedded:" + path;
+                int lift = 1;
+                while (lift <= 64 && world.trace({p[0], p[1], p[2] + lift}, {p[0], p[1], p[2] + lift}, mins, maxs).start_solid) {
+                    ++lift;
+                }
+                if (lift > 64) {
+                    ++stuck;
+                    continue;
+                }
+                p[2] += static_cast<float>(lift);
+            }
+            const Trace down = world.trace(p, {p[0], p[1], p[2] - 1024}, mins, maxs);
+            const bool floor = down.fraction < 1 && down.normal[2] > 0.7f;
+            floors += floor;
+            if (floor && p[2] - down.end[2] > 128) {
+                notes += " high:" + path; // Standing on a static prop (no collision for those yet).
+            }
+            const Trace across = world.trace(p, {p[0] + 16384, p[1], p[2]}, mins, maxs);
+            walls += across.fraction < 1;
+        }
+        // Point traces against the world: where the leaf-based line test is
+        // blocked, the trace is too. (The trace also stops at detail brushes,
+        // windows and displacements, which the leaves do not hold.)
+        const auto& w = bsp.models[0];
+        std::uniform_real_distribution<float> ux(w.mins[0], w.maxs[0]), uy(w.mins[1], w.maxs[1]), uz(w.mins[2], w.maxs[2]);
+        for (int i = 0; i < 50; ++i) {
+            const formats::Vec3 a{ux(rng), uy(rng), uz(rng)}, b{ux(rng), uy(rng), uz(rng)};
+            if ((bsp.leafs[bsp.leaf_at(a)].contents & formats::contents::Solid) ||
+                (bsp.leafs[bsp.leaf_at(b)].contents & formats::contents::Solid)) {
+                continue; // The void around a map is solid to the leaf test but holds no brushes.
+            }
+            ++compared;
+            if (bsp.segment_blocked(a, b)) {
+                const Trace t = world.collision().trace(0, a, b, {0, 0, 0}, {0, 0, 0}, contents::Solid);
+                missed += t.fraction == 1 && !t.start_solid;
+            }
+        }
+    }
+    CHECK(maps == 101);
+    MESSAGE(starts << " player starts: " << embedded << " embedded, " << stuck << " stuck, " << floors << " above a floor, "
+                   << walls << " with a wall along +x; " << missed << " of " << compared
+                   << " blocked lines missed by the trace;" << notes);
+    CHECK(stuck == 0);
+    CHECK(floors == starts);
+    CHECK(missed == 0);
 }

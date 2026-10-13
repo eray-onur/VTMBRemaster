@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstdlib>
 #include <limits>
 
 namespace openbl::sim {
@@ -31,7 +33,8 @@ constexpr std::size_t kMaxStepsPerAdvance = 1'000'000;
 
 } // namespace
 
-World::World(const formats::BspFile& bsp, ScriptHost* scripts) : bsp_(bsp), scripts_(scripts) {
+World::World(const formats::BspFile& bsp, ScriptHost* scripts)
+    : bsp_(bsp), collision_(std::make_unique<Collision>(bsp)), scripts_(scripts) {
     const auto& classes = entity_classes();
     entities_.reserve(bsp.entity_pairs.size());
     for (const formats::BspEntityPairs& pairs : bsp.entity_pairs) {
@@ -80,6 +83,24 @@ void World::start() {
             if (!found.empty() && found.front() != e->id()) {
                 e->parent_ = found.front();
             }
+        }
+    }
+    // Brush entities that block: everything with a brush model but the
+    // volumes (triggers, illusions, particle and fog volumes, portals).
+    for (const auto& e : entities_) {
+        const std::string_view model = e->value("model");
+        const std::string& cls = e->classname();
+        if (model.size() < 2 || model[0] != '*' || cls == "worldspawn" || cls.rfind("trigger_", 0) == 0 ||
+            cls == "func_illusionary" || cls == "func_areaportal" || cls == "func_areaportalwindow" ||
+            cls == "func_particle" || cls == "func_dustmotes" || cls == "func_lod" || cls == "func_precipitation" ||
+            cls == "func_ladder" || cls == "func_monitor" || cls == "func_occluder" ||
+            (cls == "func_brush" && e->value("Solidity") == "1") ||
+            (cls == "func_rotating" && (e->spawnflags() & 64))) {
+            continue;
+        }
+        const auto index = static_cast<std::size_t>(std::strtoul(std::string(model.substr(1)).c_str(), nullptr, 10));
+        if (index > 0 && index < bsp_.models.size()) {
+            solid_brushes_.emplace_back(e->id(), index);
         }
     }
     for (const auto& e : entities_) {
@@ -246,6 +267,53 @@ std::optional<Transform> World::render_transform(EntityId id) const {
         id = e->parent();
     }
     return out;
+}
+
+Trace World::trace(const formats::Vec3& start, const formats::Vec3& end, const formats::Vec3& mins,
+                   const formats::Vec3& maxs, std::int32_t mask, EntityId ignore) const {
+    Trace best = collision_->trace(0, start, end, mins, maxs, mask);
+    for (const auto& [id, model] : solid_brushes_) {
+        const Entity& e = *entities_[id];
+        if (id == ignore || e.removed() || e.hidden()) {
+            continue;
+        }
+        // Its model space to the world: the map pose, then any motion.
+        Transform pose = Transform::translate(e.origin());
+        if (const auto moved = render_transform(id)) {
+            pose = moved->after(pose);
+        }
+        // Skip models nowhere near the sweep (a sphere around the model's bounds).
+        const auto& m = bsp_.models[model];
+        const formats::Vec3 centre = pose.apply({(m.mins[0] + m.maxs[0]) * 0.5f, (m.mins[1] + m.maxs[1]) * 0.5f,
+                                                 (m.mins[2] + m.maxs[2]) * 0.5f});
+        float radius = 0, sweep = 0;
+        for (int k = 0; k < 3; ++k) {
+            radius += (m.maxs[k] - m.mins[k]) * (m.maxs[k] - m.mins[k]) * 0.25f;
+            sweep += (maxs[k] - mins[k]) * (maxs[k] - mins[k]) * 0.25f;
+        }
+        radius = std::sqrt(radius) + std::sqrt(sweep);
+        auto distance_to_segment = [&] {
+            formats::Vec3 d{end[0] - start[0], end[1] - start[1], end[2] - start[2]};
+            formats::Vec3 w{centre[0] - start[0], centre[1] - start[1], centre[2] - start[2]};
+            const float dd = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+            const float t = dd > 0 ? std::clamp((w[0] * d[0] + w[1] * d[1] + w[2] * d[2]) / dd, 0.0f, 1.0f) : 0.0f;
+            const float x = w[0] - d[0] * t, y = w[1] - d[1] * t, z = w[2] - d[2] * t;
+            return std::sqrt(x * x + y * y + z * z);
+        };
+        if (distance_to_segment() > radius) {
+            continue;
+        }
+        Trace t = collision_->trace_moved(model, pose, start, end, mins, maxs, mask);
+        if (t.all_solid || t.start_solid || t.fraction < best.fraction) {
+            if (t.fraction < best.fraction || (t.start_solid && !best.start_solid)) {
+                t.entity = static_cast<std::int32_t>(id);
+                const bool start_solid = best.start_solid || t.start_solid;
+                best = t;
+                best.start_solid = start_solid;
+            }
+        }
+    }
+    return best;
 }
 
 bool World::portal_open(int portal) const {
