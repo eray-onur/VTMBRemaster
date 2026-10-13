@@ -35,6 +35,8 @@ The original game stores clans, disciplines, feats and item types in fixed table
 
 Bloodlines' game logic is largely written in Python and ships in the game data. OpenBL hosts these scripts and reimplements the module API that the original engine exposes to them. It does not rewrite their logic. The host's API surface is documented under `docs/scripting/` as it is reverse-engineered by observing the game.
 
+The interpreter is **Python 2.1, the version the game embeds** (its compiled scripts carry magic 60202), built from CPython 2.1.3's source for today's 64-bit compilers; the PSF licence of 2.1.1 and later is GPL-compatible. The game's own `vampire_python21.dll` cannot be used: it is 32-bit and an original binary. Running the same version means the scripts, the Python state pickled in saves and statements in entity outputs and dialogue behave exactly as in the original, with no translation layer. The simulation hands statements to the host through `sim::ScriptHost`, so the host can be built and replaced on its own.
+
 ### 4. Rendering goes through an RHI
 
 The renderer talks to a thin rendering hardware interface (RHI) with two backends: Vulkan (Windows and Linux) and Direct3D 12 (Windows). The original look is reproduced first. Modern lighting is added as optional render paths, never by changing the defaults.

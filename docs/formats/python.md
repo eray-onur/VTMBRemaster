@@ -12,8 +12,4 @@ All 24 `.pyc` files have their `.py` source next to them, and 8 more `.py` files
 
 ## What this means for Phase 2
 
-The scripting host must run **Python 2.1-era code** unmodified. That code uses `print` statements, `string`-module functions, integer division with `/`, and builds before `True`/`False` existed. The Python state in saves is pickled with protocol 0 (see [saves.md](saves.md)). Options for the host, to be decided in Phase 2:
-
-- embed a modern Python 3 with a source translator and compatibility layer;
-- embed a Python 2 interpreter;
-- write a purpose-built interpreter for the subset the game uses.
+The scripting host must run **Python 2.1-era code** unmodified. That code uses `print` statements, `string`-module functions, integer division with `/`, and builds before `True`/`False` existed. The Python state in saves is pickled with protocol 0 (see [saves.md](saves.md)). Decided: OpenBL embeds Python 2.1 itself, built from CPython 2.1.3's source ([ARCHITECTURE.md](../ARCHITECTURE.md), decision 3).

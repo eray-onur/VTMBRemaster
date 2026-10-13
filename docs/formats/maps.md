@@ -132,6 +132,10 @@ This was verified by colour continuity across all 12 cube edges of the `santamon
 
 The entity lump is plain text without the KeyValues extras: no comments and no nesting. One Bloodlines-specific detail matters: values containing Python code escape quotes as `\"`, for example `"python_script" "IsDead(\"Mandarin\")"` in `ch_fulab_1`. The parser turns `\"` into `"` and keeps all other backslashes literal, because paths use them as separators.
 
+Keys can repeat: an entity has one `OnTrigger` line per connection of that output. `BspFile::entity_pairs` keeps every key/value in file order; `BspFile::entities` keeps the last value of each key.
+
+**Outputs** (keys starting with `On`, 176 different names) connect the entity to inputs on others. All 16,214 in the shipped maps have seven comma-separated fields: target, input, parameter, delay in seconds, how many more times it may fire (`-1` always: 15,015; `1` once: 1,199), a Python statement, and an empty field. The Python field is Bloodlines' own: it runs in the game's interpreter when the output fires, after the delay like the input (`,,,3,-1,YukieFloat(421),` waits three seconds), and 1,535 connections have only it (an empty target and input), such as `OnDeath` running `G.Yukie_Quest = 2`. No statement contains a comma. Targets are a targetname or classname, compared without case; 214 end in `*`, matching any ending; keywords are `!activator` (25), `!playercontroller` (20), `!caller` (4) and `!player` (2). `formats::parse_entity_output` reads them; the simulation's entity I/O is in `src/sim` ([ARCHITECTURE.md](../ARCHITECTURE.md)).
+
 ## Leafs (32 bytes)
 
 | Offset | Field |

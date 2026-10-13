@@ -67,7 +67,13 @@ public:
         if (auto nul = entity_text.find('\0'); nul != std::string_view::npos) {
             entity_text = entity_text.substr(0, nul);
         }
-        bsp.entities = parse_bsp_entities(entity_text);
+        bsp.entity_pairs = parse_bsp_entity_pairs(entity_text);
+        for (const BspEntityPairs& pairs : bsp.entity_pairs) {
+            bsp.entities.emplace_back();
+            for (const auto& [key, value] : pairs) {
+                bsp.entities.back()[key] = value; // The last of a repeated key wins.
+            }
+        }
 
         for_each(bsp_lump::Planes, 20, [&](detail::BinaryReader& r) {
             BspPlane p;
@@ -1044,6 +1050,17 @@ BspFile parse_bsp(std::span<const std::byte> data) {
 
 std::vector<BspEntity> parse_bsp_entities(std::string_view text) {
     std::vector<BspEntity> out;
+    for (const BspEntityPairs& pairs : parse_bsp_entity_pairs(text)) {
+        BspEntity& entity = out.emplace_back();
+        for (const auto& [key, value] : pairs) {
+            entity[key] = value;
+        }
+    }
+    return out;
+}
+
+std::vector<BspEntityPairs> parse_bsp_entity_pairs(std::string_view text) {
+    std::vector<BspEntityPairs> out;
     std::size_t pos = 0;
     // Also skips "//" comment lines, which the Unofficial Patch uses to disable
     // entity outputs (la_bradbury_2).
@@ -1091,7 +1108,7 @@ std::vector<BspEntity> parse_bsp_entities(std::string_view text) {
             throw FormatError("BSP entities: expected '{'");
         }
         ++pos;
-        BspEntity entity;
+        BspEntityPairs entity;
         for (;;) {
             skip_space();
             if (pos >= text.size()) {
@@ -1114,7 +1131,7 @@ std::vector<BspEntity> parse_bsp_entities(std::string_view text) {
                     ++pos;
                 }
             }
-            entity[key] = std::move(value);
+            entity.emplace_back(std::move(key), std::move(value));
         }
         out.push_back(std::move(entity));
     }

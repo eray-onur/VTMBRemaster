@@ -5,6 +5,7 @@ add_library(openbl_formats
     console_script.cpp
     dlg.cpp
     draw_order.cpp
+    entity_io.cpp
     expressions.cpp
     fnt.cpp
     image_decode.cpp

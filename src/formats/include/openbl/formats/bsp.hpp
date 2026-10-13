@@ -308,6 +308,9 @@ struct BspVisibility {
 };
 
 using BspEntity = std::map<std::string, std::string>;
+// Every key/value of an entity in file order, repeated keys included (an
+// entity lists one "OnTrigger" line per output it fires).
+using BspEntityPairs = std::vector<std::pair<std::string, std::string>>;
 
 // Collision geometry of one brush; see BspFile::brush_hull.
 struct BspBrushHull {
@@ -318,7 +321,8 @@ struct BspBrushHull {
 struct BspFile {
     std::int32_t version = 0;
     std::int32_t map_revision = 0;
-    std::vector<BspEntity> entities;
+    std::vector<BspEntity> entities;     // Last value per key.
+    std::vector<BspEntityPairs> entity_pairs; // Same entities, every key/value in order.
     std::vector<BspPlane> planes;
     std::vector<Vec3> vertices;
     std::vector<std::array<std::uint16_t, 2>> edges;
@@ -386,6 +390,8 @@ struct BspFile {
 BspFile parse_bsp(std::span<const std::byte> data);
 
 // Parses the entity lump text: a sequence of { "key" "value" ... } blocks.
+std::vector<BspEntityPairs> parse_bsp_entity_pairs(std::string_view text);
+// The same, keeping the last value of each key.
 std::vector<BspEntity> parse_bsp_entities(std::string_view text);
 
 // Triangulated geometry for one face: positions, texture UVs (normalized by

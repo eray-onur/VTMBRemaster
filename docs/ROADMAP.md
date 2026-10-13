@@ -138,7 +138,8 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 
 ## Phase 2: simulation core
 
-- [ ] Client/server entity system, with single-player running as a local server
+- [x] Entity I/O on the server (`src/sim`): every map entity created (unknown classes inert), outputs with delays, fire counts, wildcard and `!activator`/`!caller` targets and Bloodlines' Python field; Kill, ScriptHide/ScriptUnhide, FireUser, AddOutput; `logic_auto`, `logic_relay`, `logic_timer`, switchable lights. All 101 maps run ([formats/maps.md](formats/maps.md#entities))
+- [ ] Client/server entity system, with single-player running as a local server: replication to the client, the renderers drawing replicated state
 - [ ] Data-driven registries for clans, disciplines, feats, items and NPC types (see ARCHITECTURE.md)
 - [ ] Physics and collision
 - [ ] Python scripting host that runs the game's original scripts unmodified
