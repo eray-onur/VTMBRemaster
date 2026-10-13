@@ -4,6 +4,7 @@
 // one textured quad sized from its texture and `scale`, tinted by its render
 // colour and amount, and blended by its render mode (docs/RENDERING.md).
 
+#include "openbl/render/entity_state.hpp"
 #include "openbl/formats/bsp.hpp"
 #include "openbl/formats/draw_order.hpp"
 #include "openbl/formats/visibility.hpp"
@@ -40,6 +41,10 @@ public:
     // the rest; `world_scale`: world units per unit of distance (the skybox's
     // scale), for distance-driven material proxies.
     // `visibility`: skips sprites outside this view's PVS (null: none).
+    // What the simulation says of each map entity (render/entity_state.hpp;
+    // hidden, skin), indexed like BspFile::entities. Until this is
+    // called, sprites are off without "Start on" or with StartHidden unless named in `shown`.
+    void set_entity_states(const std::vector<EntityState>& states);
     void collect_translucent(const formats::BspDrawOrder& order, const std::array<float, 3>& eye, bool skybox,
                              std::uint32_t source, std::vector<TranslucentItem>& out,
                              const formats::ViewVisibility* visibility = nullptr) const;
@@ -65,6 +70,8 @@ private:
         float phase = 0.0f;              // Pulse offset (entity index x 363, as in Source).
         bool skybox = false;             // In the 3D skybox's area.
         std::vector<std::uint32_t> leaves; // World leaves within its size of its origin.
+        std::int32_t entity = -1;        // Its map entity.
+        bool hidden = false;             // Off ("Start on" unset, StartHidden, HideSprite...).
     };
 
     const rhi::BindGroup& bind_group(const rhi::Texture* texture);

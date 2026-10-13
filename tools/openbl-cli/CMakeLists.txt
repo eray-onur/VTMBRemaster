@@ -1,5 +1,5 @@
 add_executable(openbl-cli main.cpp)
-target_link_libraries(openbl-cli PRIVATE openbl::formats openbl::vfs openbl_options)
+target_link_libraries(openbl-cli PRIVATE openbl::formats openbl::sim openbl::vfs openbl_options)
 if(OPENBL_WITH_FFMPEG)
     target_link_libraries(openbl-cli PRIVATE openbl::media)
     target_compile_definitions(openbl-cli PRIVATE OPENBL_WITH_FFMPEG)

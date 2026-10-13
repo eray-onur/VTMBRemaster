@@ -38,6 +38,18 @@ struct WorldStats {
     std::map<std::string, std::size_t> unhandled_inputs;
 };
 
+// One delivered input or script statement, for tools that show the I/O as it runs.
+struct TraceEntry {
+    double time = 0;
+    bool script = false;
+    EntityId entity = kNoEntity; // Who received the input (kNoEntity: its target named nothing).
+    std::string_view target;     // As the connection named it.
+    std::string_view input;      // Or the statement.
+    std::string_view parameter;
+    EntityId caller = kNoEntity;
+    bool handled = false;        // Some class or common input understood it.
+};
+
 class World {
 public:
     // Creates an entity per map entity; `scripts` (may be null) runs the
@@ -81,6 +93,7 @@ public:
     void touch() { ++revision_; }
 
     const WorldStats& stats() const { return stats_; }
+    void set_trace(std::function<void(const TraceEntry&)> trace) { trace_ = std::move(trace); }
 
 private:
     struct Event {
@@ -109,11 +122,13 @@ private:
     std::array<bool, kLightStyleCount> style_on_{};
     std::uint64_t revision_ = 0;
     WorldStats stats_;
+    std::function<void(const TraceEntry&)> trace_;
 };
 
 // Builds the entity for one map entity; the class registry maps classnames
 // to these (classes without one become plain Entity objects).
 using EntityFactory = std::function<std::unique_ptr<Entity>(EntityId, formats::BspEntityPairs)>;
-const std::map<std::string, EntityFactory, std::less<>>& entity_classes();
+using EntityClasses = std::map<std::string, EntityFactory, std::less<>>; // By lowercase classname.
+const EntityClasses& entity_classes();
 
 } // namespace openbl::sim

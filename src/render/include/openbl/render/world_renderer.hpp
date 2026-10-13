@@ -5,6 +5,7 @@
 // by its current brightness (switchable lights in their default state,
 // animated styles flickering).
 
+#include "openbl/render/entity_state.hpp"
 #include "openbl/formats/bsp.hpp"
 #include "openbl/formats/draw_order.hpp"
 #include "openbl/formats/visibility.hpp"
@@ -28,7 +29,7 @@ struct WorldStats {
     std::size_t triangles = 0;
     std::size_t batches = 0;
     std::size_t skipped_faces = 0; // Tool, sky and not-yet-supported surfaces.
-    std::size_t hidden_entities = 0; // Brush entities with StartHidden, not drawn.
+    std::size_t hidden_entities = 0; // Brush entities with StartHidden (not drawn until shown).
     std::size_t monitors = 0;        // func_monitor screens drawing a camera view.
     std::size_t skybox_faces = 0;    // Faces in the 3D skybox's area.
     std::size_t water_planes = 0;    // Heights of water surfaces.
@@ -49,6 +50,9 @@ struct WorldDrawSettings {
     std::array<float, 3> camera_position{}; // For water.
     float time = 0.0f;                      // Seconds; animates water and light styles.
     bool light_styles = true;               // false: lightmap style 0 only (debugging).
+    // Every style's brightness this frame (switchable ones from the
+    // simulation); null: LightStyles::values(time).
+    const std::array<float, LightStyles::kCount>* style_values = nullptr;
     // Material params table (MaterialSystem::params()); null: defaults only.
     const std::vector<MaterialParams>* material_params = nullptr;
     // false while drawing into a monitor's render target, so no target is
@@ -117,6 +121,12 @@ public:
     // node they lie on; those of brush entities count as entities.
     void draw_water_surfaces(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
                              const WorldDrawSettings& settings);
+    // What the simulation says of each map entity (render/entity_state.hpp;
+    // hidden, skin), indexed like BspFile::entities. Named brush
+    // entities have batches of their own for this. Until this is called,
+    // those with StartHidden are hidden unless named in `shown`.
+    void set_entity_states(const std::vector<EntityState>& states);
+
     void collect_translucent(const formats::BspDrawOrder& order, const WorldDrawSettings& settings,
                              std::uint32_t source, std::vector<TranslucentItem>& out) const;
     void begin_translucent(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
@@ -166,6 +176,9 @@ private:
             float start = 0, end = 0, limit = 0;
         };
         std::optional<PortalFade> portal_fade;
+        // A named brush entity's own batch: its map entity, whose visibility
+        // scripts can change (-1: world faces and unnamed entities).
+        std::int32_t entity_index = -1;
         // Opaque batches and decals: their faces grouped by the clusters they lie in,
         // each group with its bounds, so a view draws only the groups in its
         // PVS and frustum (docs/RENDERING.md#visibility).
@@ -204,6 +217,10 @@ private:
     std::vector<Batch> translucent_;
     std::vector<Batch> water_;
     std::vector<Batch> decals_; // infodecals, drawn over the opaque world.
+    std::vector<std::uint8_t> entity_hidden_; // By map entity.
+    bool hidden(const Batch& batch) const {
+        return batch.entity_index >= 0 && entity_hidden_[static_cast<std::size_t>(batch.entity_index)] != 0;
+    }
     std::vector<MonitorView> monitors_;
     std::optional<SkyCamera> sky_camera_;
     std::vector<WaterPlane> water_planes_;

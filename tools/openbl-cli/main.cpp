@@ -29,6 +29,7 @@
 #include <optional>
 #include <span>
 #include <unordered_map>
+#include "openbl/sim/world.hpp"
 #include "openbl/vfs/game_filesystem.hpp"
 
 #include <cmath>
@@ -73,6 +74,7 @@ void usage() {
                  "  openbl-cli bsp pak <map> [game-dir]\n"
                  "  openbl-cli bsp pak-cat <map> <path> [game-dir]\n"
                  "  openbl-cli bsp export <map> <out.obj> [game-dir]\n"
+                 "  openbl-cli sim <map> [seconds] [game-dir]   run a map's entity I/O, printing each input\n"
                  "  openbl-cli image compare <reference> <candidate> [x y w h]\n"
                  "  openbl-cli audio export <sound> <out.wav> [game-dir]\n"
                  "  openbl-cli save rewrite <in.sav> <out.sav>\n"
@@ -1394,6 +1396,67 @@ int cmd_fs(const std::vector<std::string_view>& args) {
 
 } // namespace
 
+// sim <map> [seconds] [game-dir]: starts the map's entities and prints every
+// input and script statement they deliver, then what nobody handled.
+int cmd_sim(const std::vector<std::string_view>& args) {
+    if (args.size() < 2) {
+        usage();
+        return 2;
+    }
+    double seconds = 30.0;
+    std::size_t dir_arg = 2;
+    if (args.size() >= 3) {
+        const std::string text(args[2]);
+        char* end = nullptr;
+        const double v = std::strtod(text.c_str(), &end);
+        if (end != text.c_str() && *end == 0) {
+            seconds = v;
+            dir_arg = 3;
+        }
+    }
+    const vfs::GameFileSystem gfs(game_dir_arg(args, dir_arg), game_mods());
+    const auto bsp = load_map(gfs, args[1]);
+    sim::RecordingScriptHost scripts;
+    sim::World world(bsp, &scripts);
+    auto describe = [&](sim::EntityId id) {
+        const sim::Entity* e = world.entity(id);
+        if (!e) {
+            return std::string("-");
+        }
+        return e->targetname().empty() ? e->classname() + " #" + std::to_string(id)
+                                       : e->targetname() + " (" + e->classname() + ")";
+    };
+    world.set_trace([&](const sim::TraceEntry& t) {
+        char time[32];
+        std::snprintf(time, sizeof(time), "%8.2f  ", t.time);
+        std::cout << time;
+        if (t.script) {
+            std::cout << "python: " << t.input << "   [from " << describe(t.caller) << "]\n";
+            return;
+        }
+        std::cout << (t.entity == sim::kNoEntity ? std::string(t.target) + " (nothing)" : describe(t.entity)) << "."
+                  << t.input;
+        if (!t.parameter.empty()) {
+            std::cout << "(" << t.parameter << ")";
+        }
+        std::cout << "   [from " << describe(t.caller) << "]" << (t.handled || t.entity == sim::kNoEntity ? "" : "  UNHANDLED")
+                  << "\n";
+    });
+    world.start();
+    for (double t = 0; t < seconds; t += 0.1) {
+        world.advance(std::min(0.1, seconds - t));
+    }
+    const auto& st = world.stats();
+    std::cout << "\n" << st.entities << " entities, " << st.outputs << " outputs; " << st.inputs << " inputs ("
+              << st.unhandled << " unhandled), " << st.scripts << " script statements in " << seconds << " s\n";
+    std::cout << "classes without behaviour yet:";
+    for (const auto& [cls, n] : st.generic_classes) {
+        std::cout << " " << cls << " " << n;
+    }
+    std::cout << "\n";
+    return 0;
+}
+
 int main(int argc, char** argv) {
     std::vector<std::string_view> args(argv + 1, argv + argc);
     if (args.empty()) {
@@ -1418,6 +1481,9 @@ int main(int argc, char** argv) {
         }
         if (args[0] == "bsp") {
             return cmd_bsp(args);
+        }
+        if (args[0] == "sim") {
+            return cmd_sim(args);
         }
         if (args[0] == "image") {
             return cmd_image(args);

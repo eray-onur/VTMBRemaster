@@ -25,6 +25,7 @@
 #include "openbl/render/sprite_renderer.hpp"
 #include "openbl/render/world_renderer.hpp"
 #include "openbl/rhi/vulkan.hpp"
+#include "openbl/sim/world.hpp"
 #include "openbl/vfs/game_filesystem.hpp"
 
 #include "openbl_textured_ps.h"
@@ -430,6 +431,21 @@ public:
                       << " world lights; " << p.decals << " decals on props, " << p.unplaced_decals
                       << " decals placed nowhere\n";
         }
+        // The local server: the map's entities and their I/O. The renderers
+        // draw what it reports (hidden entities, switchable light styles).
+        simulation_ = std::make_unique<sim::World>(bsp_);
+        simulation_->start();
+        for (const std::string& target : options.shown) {
+            simulation_->queue_input(target, "ScriptUnhide", "", 0.0, sim::kNoEntity, sim::kNoEntity);
+        }
+        simulation_->advance(0.0);
+        const auto& st = simulation_->stats();
+        std::size_t generic = 0;
+        for (const auto& [cls, n] : st.generic_classes) {
+            generic += n;
+        }
+        std::cout << "simulation: " << st.entities << " entities (" << generic << " of "
+                  << st.generic_classes.size() << " classes without behaviour yet), " << st.outputs << " outputs\n";
         std::cout << "loaded in " << std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count()
                   << " s\n";
     }
@@ -458,6 +474,28 @@ public:
 
     void draw(rhi::CommandList& cmd, const glm::mat4& projection, const glm::mat4& view, const viewer::Camera& camera,
               float time) override {
+        // The server runs on the scene clock (it stops while paused).
+        if (simulation_clock_ && time > *simulation_clock_) {
+            simulation_->advance(time - *simulation_clock_);
+        }
+        simulation_clock_ = time;
+        if (simulation_->revision() != simulation_revision_) {
+            simulation_revision_ = simulation_->revision();
+            std::vector<render::EntityState> states(simulation_->entity_count());
+            for (std::size_t i = 0; i < states.size(); ++i) {
+                const sim::Entity* e = simulation_->entity(static_cast<sim::EntityId>(i));
+                states[i].hidden = e->hidden() || e->removed();
+                states[i].skin = e->skin();
+            }
+            world_->set_entity_states(states);
+            sprites_->set_entity_states(states);
+            if (props_) {
+                props_->set_entity_states(states);
+            }
+            if (characters_) {
+                characters_->set_entity_states(states);
+            }
+        }
         settings_.time = time;
         materials_->update({.time = time});
         settings_.material_params = &materials_->params();
@@ -469,10 +507,15 @@ public:
             characters_->update(time, main_visibility_.get());
         }
         // Models lit by styled lights follow them (as the world's lightmaps do).
-        auto styles = light_styles_->values(time);
+        auto& styles = frame_styles_;
+        styles = light_styles_->values(time);
+        for (std::size_t s = sim::kFirstSwitchableStyle; s < styles.size(); ++s) {
+            styles[s] = simulation_->light_style_on(s) ? 1.0f : 0.0f; // Switched by entity I/O.
+        }
         if (!settings_.light_styles) {
             std::fill(styles.begin() + 1, styles.end(), 0.0f);
         }
+        settings_.style_values = &styles;
         if (props_) {
             props_->update_lighting(styles);
         }
@@ -805,6 +848,10 @@ private:
     bool prop_fade_ = true;    // false: --no-prop-fade.
     formats::BspDrawOrder draw_order_{bsp_};
     std::optional<render::LightStyles> light_styles_; // Set once the map is parsed.
+    std::array<float, render::LightStyles::kCount> frame_styles_{};
+    std::unique_ptr<sim::World> simulation_;
+    std::optional<float> simulation_clock_ = 0.0f; // Scene time it has run to (it starts at 0).
+    std::uint64_t simulation_revision_ = UINT64_MAX;
     std::vector<render::TranslucentItem> translucent_;
 };
 

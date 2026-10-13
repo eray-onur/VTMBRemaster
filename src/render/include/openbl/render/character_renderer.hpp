@@ -4,6 +4,7 @@
 // models playing a looping sequence, with animations found through the
 // model's include chain (e.g. models/character/shared/male/*.mdl).
 
+#include "openbl/render/entity_state.hpp"
 #include "openbl/anim/animation.hpp"
 #include "openbl/anim/cloth.hpp"
 #include "openbl/formats/bsp.hpp"
@@ -101,6 +102,10 @@ public:
     // This frame's light styles (LightStyles::values): characters lit by
     // styled lights choose their lights again when one changes.
     void update_lighting(const std::array<float, LightStyles::kCount>& styles);
+    // What the simulation says of each map entity (render/entity_state.hpp;
+    // hidden, skin), indexed like BspFile::entities. Until this is
+    // called, entities with StartHidden are hidden unless named in CharacterOptions::shown.
+    void set_entity_states(const std::vector<EntityState>& states);
     void draw_opaque(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
                      const CharacterDrawSettings& settings);
     // The translucent pass in the original's order (render/translucent.hpp):
@@ -183,6 +188,8 @@ private:
         std::array<float, 16> transform{};
         ModelLighting lighting;
         std::unique_ptr<StyledLighting> styled; // Set when styled lights reach it.
+        std::int32_t entity = -1;               // Its map entity.
+        bool hidden = false;
         std::optional<anim::AnimationPlayer> player; // Empty: bind pose.
         std::vector<float> flex_deltas; // Per flex slot: position and normal offsets (2 float4); empty when no flex is active.
         std::vector<formats::MdlMatrix> skinning;    // Updated by update().

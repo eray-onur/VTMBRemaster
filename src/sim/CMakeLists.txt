@@ -1,4 +1,6 @@
 add_library(openbl_sim
+    classes.cpp
+    effects.cpp
     entity.cpp
     logic.cpp
     world.cpp)

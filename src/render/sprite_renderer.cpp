@@ -80,10 +80,9 @@ SpriteRenderer::SpriteRenderer(rhi::Device& device, MaterialSystem& materials, c
         }
         const bool named = std::find(shown.begin(), shown.end(), value(e, "targetname")) != shown.end();
         const int flags = std::atoi(value(e, "spawnflags").c_str());
-        if (!named && (!(flags & 1) || value(e, "StartHidden") == "1")) {
-            ++stats_.off; // "Start on" unset: a script switches it on.
-            continue;
-        }
+        // "Start on" unset: a script switches it on.
+        const bool off = !named && (!(flags & 1) || value(e, "StartHidden") == "1");
+        stats_.off += off;
         // "materials/sprites/glowa.vmt" (or an old-style "sprites/x.spr") -> material "sprites/glowa".
         std::string name = formats::normalize_game_path(value(e, "model"));
         if (name.starts_with("materials/")) {
@@ -120,9 +119,12 @@ SpriteRenderer::SpriteRenderer(rhi::Device& device, MaterialSystem& materials, c
         s.leaves = formats::leaves_in_box(bsp, {s.origin[0] - r, s.origin[1] - r, s.origin[2] - r},
                                           {s.origin[0] + r, s.origin[1] + r, s.origin[2] + r});
         s.phase = static_cast<float>(&e - bsp.entities.data()) * 363.0f; // Pulses desynchronised per entity.
+        s.entity = static_cast<std::int32_t>(&e - bsp.entities.data());
+        s.hidden = off;
         sprites_.push_back(s);
     }
-    stats_.sprites = sprites_.size();
+    stats_.sprites = static_cast<std::size_t>(
+        std::count_if(sprites_.begin(), sprites_.end(), [](const Sprite& s) { return !s.hidden; }));
 
     rhi::PipelineDesc pd;
     pd.vertex.spirv = openbl_sprite_vs;
@@ -157,12 +159,19 @@ const rhi::BindGroup& SpriteRenderer::bind_group(const rhi::Texture* texture) {
     return *g;
 }
 
+void SpriteRenderer::set_entity_states(const std::vector<EntityState>& states) {
+    for (Sprite& s : sprites_) {
+        s.hidden = s.entity >= 0 && static_cast<std::size_t>(s.entity) < states.size() &&
+                   states[static_cast<std::size_t>(s.entity)].hidden;
+    }
+}
+
 void SpriteRenderer::collect_translucent(const formats::BspDrawOrder& order, const std::array<float, 3>& eye,
                                          bool skybox, std::uint32_t source, std::vector<TranslucentItem>& out,
                                          const formats::ViewVisibility* visibility) const {
     for (std::size_t i = 0; i < sprites_.size(); ++i) {
         const Sprite& s = sprites_[i];
-        if (s.skybox != skybox || (visibility && !visibility->any_leaf(s.leaves))) {
+        if (s.hidden || s.skybox != skybox || (visibility && !visibility->any_leaf(s.leaves))) {
             continue;
         }
         TranslucentItem item;

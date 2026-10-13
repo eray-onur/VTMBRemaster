@@ -280,7 +280,10 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
     // face itself (detail faces lie on no node; Source draws each in the
     // nearest leaf listing it), or their brush entity.
     enum Owner : int { kUnordered, kNode, kFace, kEntity };
-    std::map<std::tuple<std::string, int, bool, int, std::int64_t>, std::vector<FaceRef>> by_material;
+    // Last: the map entity of a named brush entity (its faces batched on
+    // their own so scripts can hide and show it), else -1.
+    std::map<std::tuple<std::string, int, bool, int, std::int64_t, std::int64_t>, std::vector<FaceRef>> by_material;
+    entity_hidden_.assign(bsp.entities.size(), 0);
     const auto nodes_of_face = formats::face_nodes(bsp);
     std::int64_t entity_number = 0;
     // Water faces at one height (within 2 units) make up one water plane.
@@ -316,10 +319,16 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
     };
     for (const ModelInstance& inst : model_instances(bsp)) {
         int monitor = -1;
+        const std::int64_t entity_index = inst.entity ? inst.entity - bsp.entities.data() : -1;
+        const std::int64_t own_batches =
+            inst.entity && !entity_value(*inst.entity, "targetname").empty() ? entity_index : -1;
         if (inst.entity && entity_value(*inst.entity, "StartHidden") == "1" &&
             std::find(shown.begin(), shown.end(), entity_value(*inst.entity, "targetname")) == shown.end()) {
             ++stats_.hidden_entities;
-            continue;
+            if (own_batches < 0) {
+                continue; // Unnamed: nothing can show it.
+            }
+            entity_hidden_[static_cast<std::size_t>(entity_index)] = 1;
         }
         if (inst.entity && entity_value(*inst.entity, "classname") == "func_monitor") {
             if (const auto cam = cameras.find(entity_value(*inst.entity, "target")); cam != cameras.end()) {
@@ -394,7 +403,7 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
                     owner_id = static_cast<std::int64_t>(f);
                 }
             }
-            by_material[{name, screen, skybox, owner, owner_id}].push_back({f, inst.origin});
+            by_material[{name, screen, skybox, owner, owner_id, own_batches}].push_back({f, inst.origin});
         }
     }
 
@@ -476,6 +485,7 @@ WorldRenderer::WorldRenderer(rhi::Device& device, MaterialSystem& materials, con
         batch.skybox = std::get<2>(key);
         const int owner = std::get<3>(key);
         batch.node = owner == kNode ? static_cast<std::int32_t>(std::get<4>(key)) : -1;
+        batch.entity_index = static_cast<std::int32_t>(std::get<5>(key));
         batch.entity = owner == kEntity;
         batch.first_index = static_cast<std::uint32_t>(indices.size());
         const std::size_t first_vertex = vertices.size();
@@ -929,7 +939,7 @@ const rhi::Pipeline& WorldRenderer::pipeline_for(const RenderMaterial& m) const 
 }
 
 std::size_t WorldRenderer::build_shader_data(const WorldDrawSettings& settings) {
-    auto values = styles_.values(settings.time);
+    auto values = settings.style_values ? *settings.style_values : styles_.values(settings.time);
     if (!settings.light_styles) {
         std::fill(values.begin() + 1, values.end(), 0.0f);
     }
@@ -957,7 +967,7 @@ std::size_t WorldRenderer::build_shader_data(const WorldDrawSettings& settings) 
 void WorldRenderer::draw_batch(rhi::CommandList& cmd, const Batch& batch, const std::array<float, 16>& vp,
                                const WorldDrawSettings& settings, std::size_t rows, const rhi::Pipeline*& bound,
                                const rhi::ShaderDataRef* data) {
-    if ((batch.monitor >= 0 && !settings.draw_monitors) || batch.skybox != settings.skybox) {
+    if ((batch.monitor >= 0 && !settings.draw_monitors) || batch.skybox != settings.skybox || hidden(batch)) {
         return;
     }
     const RenderMaterial& m = *batch.material;
@@ -1071,12 +1081,18 @@ void WorldRenderer::draw_water_surfaces(rhi::CommandList& cmd, const std::array<
     draw_water(cmd, view_projection, settings);
 }
 
+void WorldRenderer::set_entity_states(const std::vector<EntityState>& states) {
+    for (std::size_t i = 0; i < entity_hidden_.size(); ++i) {
+        entity_hidden_[i] = i < states.size() && states[i].hidden;
+    }
+}
+
 void WorldRenderer::collect_translucent(const formats::BspDrawOrder& order, const WorldDrawSettings& settings,
                                         std::uint32_t source, std::vector<TranslucentItem>& out) const {
     const auto& eye = settings.camera_position;
     for (std::size_t i = 0; i < translucent_.size(); ++i) {
         const Batch& b = translucent_[i];
-        if (b.skybox != settings.skybox || (b.monitor >= 0 && !settings.draw_monitors)) {
+        if (b.skybox != settings.skybox || (b.monitor >= 0 && !settings.draw_monitors) || hidden(b)) {
             continue;
         }
         if (settings.visibility && !settings.visibility->object(b.leaves, b.mins, b.maxs)) {
@@ -1136,7 +1152,7 @@ void WorldRenderer::draw_water(rhi::CommandList& cmd, const std::array<float, 16
     cmd.set_shader_data(water_data_.data(), water_data_.size() * sizeof(float));
     WaterPushConstants pc{};
     for (const Batch& batch : water_) {
-        if (batch.skybox != settings.skybox) {
+        if (batch.skybox != settings.skybox || hidden(batch)) {
             continue;
         }
         // From below the surface (the faces face up), with the $bottommaterial.

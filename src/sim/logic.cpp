@@ -1,6 +1,7 @@
 // Entity classes that are pure logic: map-load events, relays, timers, and
 // lights that scripts switch on and off.
 
+#include "classes.hpp"
 #include "openbl/sim/world.hpp"
 
 #include <algorithm>
@@ -158,25 +159,14 @@ public:
     }
 };
 
-template <typename T>
-EntityFactory make() {
-    return [](EntityId id, formats::BspEntityPairs kv) -> std::unique_ptr<Entity> {
-        return std::make_unique<T>(id, std::move(kv));
-    };
-}
-
 } // namespace
 
-const std::map<std::string, EntityFactory, std::less<>>& entity_classes() {
-    // Lowercase classnames.
-    static const std::map<std::string, EntityFactory, std::less<>> classes = {
-        {"logic_auto", make<LogicAuto>()},
-        {"logic_relay", make<LogicRelay>()},
-        {"logic_timer", make<LogicTimer>()},
-        {"light", make<SwitchableLight>()},
-        {"light_spot", make<SwitchableLight>()},
-    };
-    return classes;
+void add_logic_classes(EntityClasses& classes) {
+    classes["logic_auto"] = make<LogicAuto>();
+    classes["logic_relay"] = make<LogicRelay>();
+    classes["logic_timer"] = make<LogicTimer>();
+    classes["light"] = make<SwitchableLight>();
+    classes["light_spot"] = make<SwitchableLight>();
 }
 
 } // namespace openbl::sim

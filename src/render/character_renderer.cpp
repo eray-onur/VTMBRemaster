@@ -282,11 +282,12 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
         if (cls == e.end() || model_key == e.end() || !cls->second.starts_with("npc_")) {
             continue;
         }
-        if (auto hidden = e.find("StartHidden"); hidden != e.end() && hidden->second == "1") {
+        // StartHidden: invisible until a script shows it.
+        bool hidden = false;
+        if (auto h = e.find("StartHidden"); h != e.end() && h->second == "1") {
             const auto name = e.find("targetname");
-            if (name == e.end() || std::find(options.shown.begin(), options.shown.end(), name->second) == options.shown.end()) {
-                continue; // Invisible until a script shows it.
-            }
+            hidden = name == e.end() ||
+                     std::find(options.shown.begin(), options.shown.end(), name->second) == options.shown.end();
         }
         const std::string path = formats::normalize_game_path(model_key->second);
         if (!path.ends_with(".mdl")) {
@@ -410,6 +411,8 @@ CharacterRenderer::CharacterRenderer(rhi::Device& device, MaterialSystem& materi
             create_shadow(inst, bsp, origin);
             stats_.with_shadow += inst.shadow != nullptr;
         }
+        inst.entity = static_cast<std::int32_t>(&e - bsp.entities.data());
+        inst.hidden = hidden;
         instances_.push_back(std::move(inst));
     }
     stats_.instances = instances_.size();
@@ -500,6 +503,10 @@ void CharacterRenderer::draw_shadow_textures(rhi::CommandList& cmd, const Charac
             continue;
         }
         Shadow& s = *inst.shadow;
+        if (inst.hidden) {
+            s.ready = false;
+            continue;
+        }
         s.ready = !settings.visibility || settings.visibility->object(s.leaves, s.mins, s.maxs);
         if (!s.ready) {
             continue;
@@ -726,6 +733,13 @@ const CharacterRenderer::Model* CharacterRenderer::load_model(const std::string&
     return models_.emplace(path, std::move(model)).first->second.get();
 }
 
+void CharacterRenderer::set_entity_states(const std::vector<EntityState>& states) {
+    for (Instance& inst : instances_) {
+        inst.hidden = inst.entity >= 0 && static_cast<std::size_t>(inst.entity) < states.size() &&
+                      states[static_cast<std::size_t>(inst.entity)].hidden;
+    }
+}
+
 void CharacterRenderer::update_lighting(const std::array<float, LightStyles::kCount>& styles) {
     for (Instance& inst : instances_) {
         if (inst.styled) {
@@ -795,7 +809,7 @@ void CharacterRenderer::update_cloth(Instance& inst, float dt) {
 void CharacterRenderer::draw_pass(rhi::CommandList& cmd, const std::array<float, 16>& vp,
                                   const CharacterDrawSettings& settings, bool translucent) {
     for (const Instance& inst : instances_) {
-        if (!settings.visibility || settings.visibility->object(inst.leaves, inst.mins, inst.maxs)) {
+        if (!inst.hidden && (!settings.visibility || settings.visibility->object(inst.leaves, inst.mins, inst.maxs))) {
             draw_instance(cmd, vp, settings, inst, translucent);
         }
     }
@@ -936,7 +950,7 @@ void CharacterRenderer::collect_translucent(const formats::BspDrawOrder& order, 
                                             std::uint32_t source, std::vector<TranslucentItem>& out) const {
     for (std::size_t i = 0; i < instances_.size(); ++i) {
         const Instance& inst = instances_[i];
-        if (!inst.has_translucent ||
+        if (inst.hidden || !inst.has_translucent ||
             (settings.visibility && !settings.visibility->object(inst.leaves, inst.mins, inst.maxs))) {
             continue;
         }

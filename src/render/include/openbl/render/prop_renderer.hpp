@@ -4,6 +4,7 @@
 // and prop_* entities. Each model is loaded once; every placement is drawn
 // with its own transform, skin and light tint.
 
+#include "openbl/render/entity_state.hpp"
 #include "openbl/formats/bsp.hpp"
 #include "openbl/formats/visibility.hpp"
 #include "openbl/formats/draw_order.hpp"
@@ -63,6 +64,10 @@ public:
     // This frame's light styles (LightStyles::values): props lit by styled
     // lights choose their lights again when one changes, as the original does.
     void update_lighting(const std::array<float, LightStyles::kCount>& styles);
+    // What the simulation says of each map entity (render/entity_state.hpp;
+    // hidden, skin), indexed like BspFile::entities. Until this is
+    // called, entities with StartHidden are hidden unless named in `shown`.
+    void set_entity_states(const std::vector<EntityState>& states);
 
     // Props that are fading are left out here and drawn whole as translucent items.
     void draw_opaque(rhi::CommandList& cmd, const std::array<float, 16>& view_projection,
@@ -114,6 +119,8 @@ private:
         std::array<float, 16> transform{}; // Column-major model matrix.
         ModelLighting lighting;            // Model space.
         std::unique_ptr<StyledLighting> styled; // Set when styled lights reach it.
+        std::int32_t entity = -1;          // Its map entity (prop_* entities); -1: a static prop.
+        bool hidden = false;
         std::vector<Decal> decals;
         bool skybox = false;               // In the 3D skybox's area.
         bool envmapped = false;            // Some mesh of its skin has an environment map.

@@ -141,6 +141,30 @@ TEST_CASE("Entity I/O: timers and oscillators") {
     CHECK(std::none_of(scripts.calls.begin(), scripts.calls.end(), [](const auto& c) { return c.statement != "tick()"; }));
 }
 
+TEST_CASE("Entity I/O: sprites and model skins") {
+    World world(map_from(R"(
+{ "classname" "env_sprite" "targetname" "lit" "spawnflags" "1" }
+{ "classname" "env_sprite" "targetname" "dark" }
+{ "classname" "prop_dynamic" "targetname" "lamp" "model" "models/a/lamp.mdl" "skin" "1" }
+{ "classname" "logic_relay" "targetname" "r" "skin" "3" }
+)"));
+    world.start();
+    const EntityId lit = named(world, "lit"), dark = named(world, "dark"), lamp = named(world, "lamp");
+    CHECK_FALSE(world.entity(lit)->hidden()); // "Start on".
+    CHECK(world.entity(dark)->hidden());
+    CHECK(world.entity(lamp)->skin() == 1);
+    CHECK(world.entity(named(world, "r"))->skin() == -1); // Not a model.
+    const auto before = world.revision();
+    world.queue_input("lit", "HideSprite", "", 0, kNoEntity, kNoEntity);
+    world.queue_input("dark", "ToggleSprite", "", 0, kNoEntity, kNoEntity);
+    world.queue_input("lamp", "Skin", "2", 0, kNoEntity, kNoEntity);
+    world.advance(0.1);
+    CHECK(world.entity(lit)->hidden());
+    CHECK_FALSE(world.entity(dark)->hidden());
+    CHECK(world.entity(lamp)->skin() == 2);
+    CHECK(world.revision() > before);
+}
+
 TEST_CASE("Entity I/O: every shipped map runs") {
     const auto dir = test::game_dir();
     if (!dir) {

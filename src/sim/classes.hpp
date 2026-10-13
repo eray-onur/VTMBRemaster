@@ -1,0 +1,21 @@
+#pragma once
+
+// The entity class registry's parts: each source file of classes adds its own.
+
+#include "openbl/sim/world.hpp"
+
+#include <memory>
+
+namespace openbl::sim {
+
+template <typename T>
+EntityFactory make() {
+    return [](EntityId id, formats::BspEntityPairs kv) -> std::unique_ptr<Entity> {
+        return std::make_unique<T>(id, std::move(kv));
+    };
+}
+
+void add_logic_classes(EntityClasses& classes);  // logic.cpp
+void add_effect_classes(EntityClasses& classes); // effects.cpp
+
+} // namespace openbl::sim

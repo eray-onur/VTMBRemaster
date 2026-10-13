@@ -40,6 +40,8 @@ public:
     bool hidden() const { return hidden_; }
     // Killed entities stay in the world's table until the end of the tick.
     bool removed() const { return removed_; }
+    // Model entities: the skin to draw ("skin", the Skin input); -1 for others.
+    std::int32_t skin() const { return skin_; }
 
     // After every entity of the map exists, in map order.
     virtual void spawn(World& world);
@@ -54,7 +56,7 @@ public:
     std::optional<double> next_think() const { return next_think_; }
 
     // The inputs every entity has: Kill, ScriptHide, ScriptUnhide,
-    // FireUser1..4 (fire OnUser1..4) and AddOutput.
+    // FireUser1..4 (fire OnUser1..4) and AddOutput; Skin on model entities.
     bool common_input(World& world, std::string_view name, std::string_view parameter, EntityId activator);
 
     // Fires every connection of output `name`: their inputs are queued on
@@ -82,6 +84,7 @@ private:
     std::optional<double> next_think_;
     bool hidden_ = false;
     bool removed_ = false;
+    std::int32_t skin_ = -1;
 };
 
 // Case-insensitive comparison, as entity names, classes and inputs use.

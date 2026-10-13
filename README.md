@@ -73,6 +73,7 @@ openbl-cli mdl info character/npc/common/cop/cop        # bones, textures, meshe
 openbl-cli mdl export character/npc/common/cop/cop cop.obj  # geometry to OBJ (LOD 0)
 openbl-cli bsp info sm_pier_1                           # faces, props, materials, entity classes
 openbl-cli bsp export sm_pier_1 pier.obj                # world geometry to OBJ
+openbl-cli sim sm_hub_1 20                             # run a map's entity I/O for 20 s, printing each input
 ```
 
 ## Using openbl-viewer

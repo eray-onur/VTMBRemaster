@@ -205,18 +205,23 @@ PropRenderer::PropRenderer(rhi::Device& device, MaterialSystem& materials, const
             !formats::normalize_game_path(model->second).ends_with(".mdl")) {
             continue;
         }
-        if (auto hidden = e.find("StartHidden"); hidden != e.end() && hidden->second == "1") {
+        // StartHidden: invisible until a script shows it.
+        bool hidden = false;
+        if (auto h = e.find("StartHidden"); h != e.end() && h->second == "1") {
             const auto name = e.find("targetname");
-            if (name == e.end() || std::find(shown.begin(), shown.end(), name->second) == shown.end()) {
-                continue; // Invisible until a script shows it.
-            }
+            hidden = name == e.end() || std::find(shown.begin(), shown.end(), name->second) == shown.end();
         }
+        const std::size_t before = instances_.size();
         std::size_t skin = 0;
         if (auto s = e.find("skin"); s != e.end()) {
             skin = static_cast<std::size_t>(std::max(0, std::atoi(s->second.c_str())));
         }
         const auto origin = parse_vec3(e, "origin");
         add(formats::normalize_game_path(model->second), origin, parse_vec3(e, "angles"), skin, std::nullopt, nullptr);
+        if (instances_.size() > before) {
+            instances_.back().entity = static_cast<std::int32_t>(&e - bsp.entities.data());
+            instances_.back().hidden = hidden;
+        }
     }
     stats_.instances = instances_.size();
     place_decals(bsp);
@@ -474,7 +479,7 @@ void PropRenderer::draw_instance(rhi::CommandList& cmd, const std::array<float, 
                                  const PropDrawSettings& settings, std::size_t rows, std::size_t index,
                                  bool translucent, Bound& bound, const rhi::ShaderDataRef* data) {
     const Instance& inst = instances_[index];
-    if (inst.skybox != settings.skybox || inst.alpha <= 0.0f ||
+    if (inst.hidden || inst.skybox != settings.skybox || inst.alpha <= 0.0f ||
         (settings.visibility && !settings.visibility->object(inst.leaves, inst.mins, inst.maxs))) {
         return;
     }
@@ -580,6 +585,30 @@ void PropRenderer::update_fades(const std::array<float, 3>& eye) {
     }
 }
 
+void PropRenderer::set_entity_states(const std::vector<EntityState>& states) {
+    for (Instance& inst : instances_) {
+        if (inst.entity < 0 || static_cast<std::size_t>(inst.entity) >= states.size()) {
+            continue;
+        }
+        const EntityState& state = states[static_cast<std::size_t>(inst.entity)];
+        inst.hidden = state.hidden;
+        if (state.skin >= 0 && static_cast<std::size_t>(state.skin) < inst.model->skins.size() &&
+            static_cast<std::size_t>(state.skin) != inst.skin) {
+            inst.skin = static_cast<std::size_t>(state.skin);
+            inst.envmapped = inst.has_translucent = false;
+            for (const Mesh& mesh : inst.model->skins[inst.skin]) {
+                inst.envmapped = inst.envmapped || mesh.material->envmap;
+                inst.has_translucent = inst.has_translucent || mesh.material->translucent;
+            }
+            if (inst.envmapped && !inst.cubemap) {
+                const formats::Vec3 c{(inst.mins[0] + inst.maxs[0]) * 0.5f, (inst.mins[1] + inst.maxs[1]) * 0.5f,
+                                      (inst.mins[2] + inst.maxs[2]) * 0.5f};
+                inst.cubemap = materials_.nearest_cubemap(c);
+            }
+        }
+    }
+}
+
 void PropRenderer::update_lighting(const std::array<float, LightStyles::kCount>& styles) {
     for (Instance& inst : instances_) {
         if (inst.styled) {
@@ -606,7 +635,7 @@ void PropRenderer::collect_translucent(const formats::BspDrawOrder& order, const
                                        std::uint32_t source, std::vector<TranslucentItem>& out) const {
     for (std::size_t i = 0; i < instances_.size(); ++i) {
         const Instance& inst = instances_[i];
-        if (inst.skybox != settings.skybox || inst.alpha <= 0.0f ||
+        if (inst.hidden || inst.skybox != settings.skybox || inst.alpha <= 0.0f ||
             !(inst.has_translucent || !inst.decals.empty() || inst.alpha < 1.0f) ||
             (settings.visibility && !settings.visibility->object(inst.leaves, inst.mins, inst.maxs))) {
             continue;

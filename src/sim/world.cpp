@@ -185,21 +185,32 @@ void World::cancel_pending(EntityId caller) {
 void World::deliver(const Event& event) {
     if (event.script) {
         ++stats_.scripts;
+        if (trace_) {
+            trace_({time_, true, kNoEntity, {}, event.input, {}, event.caller, scripts_ != nullptr});
+        }
         if (scripts_) {
             scripts_->run(event.input, {event.caller, event.activator});
         }
         return;
     }
-    for (EntityId id : resolve(event.target, event.activator, event.caller)) {
+    const auto targets = resolve(event.target, event.activator, event.caller);
+    if (targets.empty() && trace_) {
+        trace_({time_, false, kNoEntity, event.target, event.input, event.parameter, event.caller, false});
+    }
+    for (EntityId id : targets) {
         Entity& e = *entities_[id];
         if (e.removed()) {
             continue;
         }
         ++stats_.inputs;
-        if (!e.input(*this, event.input, event.parameter, event.activator, event.caller) &&
-            !e.common_input(*this, event.input, event.parameter, event.activator)) {
+        const bool handled = e.input(*this, event.input, event.parameter, event.activator, event.caller) ||
+                             e.common_input(*this, event.input, event.parameter, event.activator);
+        if (!handled) {
             ++stats_.unhandled;
             ++stats_.unhandled_inputs[lower(e.classname()) + "." + event.input];
+        }
+        if (trace_) {
+            trace_({time_, false, id, event.target, event.input, event.parameter, event.caller, handled});
         }
     }
 }

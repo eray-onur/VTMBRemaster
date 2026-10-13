@@ -19,6 +19,10 @@ Entity::Entity(EntityId id, formats::BspEntityPairs keyvalues) : id_(id), keyval
     classname_ = std::string(value("classname"));
     targetname_ = std::string(value("targetname"));
     hidden_ = value("StartHidden") == "1";
+    const std::string_view model = value("model");
+    if (model.size() > 4 && iequals(model.substr(model.size() - 4), ".mdl")) {
+        skin_ = static_cast<std::int32_t>(number("skin"));
+    }
     for (const auto& [key, val] : keyvalues_) {
         if (key.size() > 2 && (key[0] == 'O' || key[0] == 'o') && (key[1] == 'n' || key[1] == 'N')) {
             if (auto output = formats::parse_entity_output(val)) {
@@ -77,6 +81,14 @@ bool Entity::common_input(World& world, std::string_view name, std::string_view 
             fire_output(world, "OnUser" + std::to_string(n), activator, parameter);
             return true;
         }
+    }
+    if (iequals(name, "Skin") && skin_ >= 0) {
+        const auto skin = static_cast<std::int32_t>(std::strtol(std::string(parameter).c_str(), nullptr, 10));
+        if (skin != skin_ && skin >= 0) {
+            skin_ = skin;
+            world.touch();
+        }
+        return true;
     }
     if (iequals(name, "AddOutput")) {
         // "key value" sets a keyvalue; "OnOutput target:input:param:delay:times"

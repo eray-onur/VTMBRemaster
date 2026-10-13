@@ -22,6 +22,8 @@ This document records decisions that are expensive to change later. Smaller deci
 
 The game simulation runs as an authoritative server, and the client talks to it through the same replication interface in single-player as in multiplayer. Cut multiplayer is a Phase 5 feature, but adding this split later would mean rewriting every entity, so it exists from Phase 2 onward.
 
+**Current shape.** The server is `sim::World` (`src/sim`): an entity per map entity, a clock, and the entity I/O queue; classes register by classname, the rest stay inert. The client never reads entity state from the map once the server runs: after each step it takes, per map entity, a `render::EntityState` (hidden, skin) and the switchable light styles, and hands them to the renderers (`set_entity_states`, `WorldDrawSettings::style_values`, `update_lighting`). Named brush entities have batches of their own so they can be hidden. Today both sides share a process and the state is copied when `World::revision()` changes; the copy is where replication will go. `openbl-cli sim MAP [seconds]` prints the I/O as it runs.
+
 ### 2. Content lives in open registries
 
 The original game stores clans, disciplines, feats and item types in fixed tables. OpenBL replaces each table with a registry:
