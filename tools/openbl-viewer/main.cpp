@@ -508,6 +508,14 @@ public:
         player.move(*simulation_, cmd, dt);
         const auto eye = player.eye();
         camera.position = {eye[0], eye[1], eye[2]};
+        if (input.pressed(Key::E)) {
+            const glm::vec3 f = camera.forward();
+            const sim::EntityId used = simulation_->use(player.id(), eye, {f.x, f.y, f.z});
+            if (const sim::Entity* e = simulation_->entity(used)) {
+                std::cout << "used " << (e->targetname().empty() ? e->classname() : e->targetname() + " (" + e->classname() + ")")
+                          << "\n";
+            }
+        }
     }
 
     // Player start, or the middle of the world bounds.
@@ -1000,7 +1008,7 @@ int run(const Options& options) {
         const bool interactive = !options.screenshot && shots.empty();
         if (interactive) {
             std::cout << "controls: right mouse look, WASD move, E/Q or Space/Ctrl up and down, Shift fast, wheel speed,\n"
-                         "          V walk (Space jump, Ctrl crouch, Shift walk slowly) or fly again,\n"
+                         "          V walk (Space jump, Ctrl crouch, Shift walk slowly, E use) or fly again,\n"
                          "          C copy the view as --pos/--angles, P pause the scene clock, Esc quit\n";
         }
         const std::string title = options.map ? "OpenBL Viewer - " + *options.map : "OpenBL Viewer";

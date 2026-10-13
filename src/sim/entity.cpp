@@ -72,6 +72,10 @@ bool Entity::input(World&, std::string_view, std::string_view, EntityId, EntityI
     return false;
 }
 
+bool Entity::use(World&, EntityId) {
+    return false;
+}
+
 void Entity::think(World&) {
     next_think_.reset();
 }

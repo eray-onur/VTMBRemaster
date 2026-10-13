@@ -113,6 +113,10 @@ public:
     // Fires the touch triggers the player has entered, is in, or has left
     // (after each move).
     void update_touches();
+    // `activator` presses use looking from `eye` along unit `direction`: the
+    // nearest usable thing within reach, a brush entity the ray hits or a
+    // small prop it passes close to. Returns what was used, or kNoEntity.
+    EntityId use(EntityId activator, const formats::Vec3& eye, const formats::Vec3& direction);
 
     // Area portals by portalnumber: open or closed (func_areaportal, and the
     // doors they name as their target).

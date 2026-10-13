@@ -305,6 +305,42 @@ Player& World::spawn_player() {
     return *player_;
 }
 
+EntityId World::use(EntityId activator, const formats::Vec3& eye, const formats::Vec3& direction) {
+    constexpr float kReach = 96.0f; // Source's use distance is about 80 units.
+    const formats::Vec3 end{eye[0] + direction[0] * kReach, eye[1] + direction[1] * kReach,
+                            eye[2] + direction[2] * kReach};
+    // What the ray hits first: a wall stops it.
+    const Trace hit = trace(eye, end, {0, 0, 0}, {0, 0, 0}, contents::PlayerSolid, activator);
+    float best = hit.fraction * kReach;
+    EntityId target = hit.entity >= 0 ? static_cast<EntityId>(hit.entity) : kNoEntity;
+    // Small props near the ray, nearer than what it hit.
+    for (const auto& e : entities_) {
+        const float radius = e->use_radius();
+        if (radius <= 0 || e->removed() || e->hidden()) {
+            continue;
+        }
+        formats::Vec3 o = e->origin();
+        if (const auto moved = render_transform(e->id())) {
+            o = moved->apply(o);
+        }
+        const formats::Vec3 w{o[0] - eye[0], o[1] - eye[1], o[2] - eye[2]};
+        const float along = w[0] * direction[0] + w[1] * direction[1] + w[2] * direction[2];
+        if (along < 0 || along > best + radius) {
+            continue;
+        }
+        const float off = w[0] * w[0] + w[1] * w[1] + w[2] * w[2] - along * along;
+        if (off <= radius * radius) {
+            best = along;
+            target = e->id();
+        }
+    }
+    Entity* e = entity(target);
+    if (!e || !e->use(*this, activator)) {
+        return kNoEntity;
+    }
+    return target;
+}
+
 void World::update_touches() {
     if (!player_) {
         return;

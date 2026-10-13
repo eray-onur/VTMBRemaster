@@ -9,6 +9,7 @@ const EntityClasses& entity_classes() {
         add_effect_classes(c);
         add_mover_classes(c);
         add_trigger_classes(c);
+        add_usable_classes(c);
         return c;
     }();
     return classes;

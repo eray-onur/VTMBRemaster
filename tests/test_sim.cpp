@@ -477,3 +477,63 @@ TEST_CASE("Triggers: the player standing in a trigger_once fires it") {
     CHECK(fired >= (candidates - kept_out) * 9 / 10);
 }
 
+TEST_CASE("Use: buttons") {
+    RecordingScriptHost scripts;
+    World world(map_from(R"(
+{ "classname" "func_button" "targetname" "b" "wait" "2"
+  "OnPressed" ",,,0,-1,pressed()," "OnOut" ",,,0,-1,out()," "OnUseLocked" ",,,0,-1,locked()," }
+)"),
+                &scripts);
+    world.start();
+    Entity& button = *world.entity(named(world, "b"));
+    CHECK(button.use(world, kNoEntity));
+    CHECK(button.use(world, kNoEntity)); // Still in: no second press.
+    world.advance(2.1);
+    world.queue_input("b", "Lock", "", 0, kNoEntity, kNoEntity);
+    world.advance(0.1);
+    button.use(world, kNoEntity);
+    world.advance(0.1);
+    std::vector<std::string> calls;
+    for (const auto& c : scripts.calls) {
+        calls.push_back(c.statement);
+    }
+    CHECK(calls == std::vector<std::string>{"pressed()", "out()", "locked()"});
+}
+
+TEST_CASE("Use: the player opens a door away from where they stand, and not a locked one") {
+    const auto dir = test::game_dir();
+    if (!dir) {
+        return;
+    }
+    vfs::GameFileSystem fs(*dir);
+    const auto bsp = formats::parse_bsp(*fs.read("maps/sp_tutorial_1.bsp"));
+    // tutchopdoord: hinged at (116.5, 579.5), its knob at x = 160; a wall along y = 579.5.
+    for (const float side : {-1.0f, 1.0f}) {
+        World world(bsp);
+        world.start();
+        Player& player = world.spawn_player();
+        REQUIRE(player.teleport(world, {140, 579.5f + side * 40, 150}));
+        for (int i = 0; i < 60; ++i) {
+            player.move(world, {}, 1.0f / 60.0f); // Settle on the floor.
+        }
+        const auto eye = player.eye();
+        const formats::Vec3 to{140 - eye[0], 579.5f - eye[1], 150 - eye[2]};
+        const float len = std::sqrt(to[0] * to[0] + to[1] * to[1] + to[2] * to[2]);
+        const EntityId used = world.use(player.id(), eye, {to[0] / len, to[1] / len, to[2] / len});
+        REQUIRE(used != kNoEntity);
+        world.advance(1.5);
+        const EntityId door = named(world, "tutchopdoord");
+        const auto t = world.render_transform(door);
+        REQUIRE(t);
+        const auto moved = t->apply({140, 579.5f, 150}); // A point on the closed door.
+        CHECK((moved[1] - 579.5f) * side < -10); // It went to the far side.
+    }
+    World world(bsp);
+    world.start();
+    Player& player = world.spawn_player();
+    const EntityId locked = named(world, "tutchopdoorc");
+    CHECK(world.entity(locked)->use(world, player.id())); // Answers (locked)...
+    world.advance(1.5);
+    CHECK_FALSE(world.render_transform(locked)); // ...and stays shut.
+}
+

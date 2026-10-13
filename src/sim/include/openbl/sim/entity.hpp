@@ -60,6 +60,11 @@ public:
                        EntityId caller);
     // Called when the world's clock reaches next_think().
     virtual void think(World& world);
+    // The player pressed use on it; false if this class cannot be used.
+    virtual bool use(World& world, EntityId activator);
+    // Usable from a distance without solid geometry (props): within this
+    // radius of its origin. 0: only brush entities hit by the use ray.
+    virtual float use_radius() const { return 0.0f; }
     std::optional<double> next_think() const { return next_think_; }
 
     // The inputs every entity has: Kill, ScriptHide, ScriptUnhide,

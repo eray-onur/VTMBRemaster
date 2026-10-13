@@ -2,6 +2,7 @@
 // the area portals doors open and close.
 
 #include "classes.hpp"
+#include "openbl/sim/player.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -102,8 +103,26 @@ public:
 
     bool locked() const { return locked_; }
 
+    // Doors with "use opens" (spawnflag 256): toggled by the player, unless
+    // locked (the original then plays the locked sound).
+    bool use(World& world, EntityId activator) override {
+        if (!(spawnflags() & kUseOpens)) {
+            return false;
+        }
+        if (locked_) {
+            fire_output(world, "OnLockedUse", activator);
+            return true;
+        }
+        move(world, target_ > 0.5 ? 0.0 : 1.0, activator);
+        return true;
+    }
+
 protected:
     static constexpr int kStartsOpen = 1;
+    static constexpr int kOneWay = 16;
+    static constexpr int kUseOpens = 256;
+    // Before opening from closed: which way, given who opens it.
+    virtual void choose_direction(World&, EntityId) {}
     static constexpr int kToggle = 32;
     static constexpr int kStartsLocked = 2048;
 
@@ -116,6 +135,9 @@ private:
     void move(World& world, double target, EntityId activator) {
         if (target == target_) {
             return;
+        }
+        if (target == 1.0 && position_ == 0.0) {
+            choose_direction(world, activator);
         }
         target_ = target;
         activator_ = activator;
@@ -196,6 +218,34 @@ private:
 class FuncDoorRotating final : public Door {
 public:
     using Door::Door;
+
+    // Swings away from whoever opens it (the player), unless one-way: the
+    // side its centre would move to is checked against where they stand.
+    void choose_direction(World& world, EntityId activator) override {
+        const Entity* who = world.entity(activator);
+        if (!who || (spawnflags() & kOneWay)) {
+            return;
+        }
+        const std::string_view model = value("model");
+        if (model.size() < 2 || model[0] != '*') {
+            return;
+        }
+        const auto index = static_cast<std::size_t>(std::strtoul(std::string(model.substr(1)).c_str(), nullptr, 10));
+        if (index >= world.bsp().models.size()) {
+            return;
+        }
+        const auto& m = world.bsp().models[index];
+        const formats::Vec3 o = origin();
+        const formats::Vec3 centre{o[0] + (m.mins[0] + m.maxs[0]) * 0.5f, o[1] + (m.mins[1] + m.maxs[1]) * 0.5f,
+                                   o[2] + (m.mins[2] + m.maxs[2]) * 0.5f};
+        const formats::Vec3 arm{centre[0] - pivot_[0], centre[1] - pivot_[1], centre[2] - pivot_[2]};
+        // Where the centre goes when the angle grows: axis x arm.
+        const formats::Vec3 swing{axis_[1] * arm[2] - axis_[2] * arm[1], axis_[2] * arm[0] - axis_[0] * arm[2],
+                                  axis_[0] * arm[1] - axis_[1] * arm[0]};
+        const formats::Vec3 p = world.player() && activator == world.player()->id() ? world.player()->feet() : who->origin();
+        const float toward = swing[0] * (p[0] - centre[0]) + swing[1] * (p[1] - centre[1]);
+        degrees_ = (toward > 0 ? -1.0f : 1.0f) * std::abs(degrees_);
+    }
 
 protected:
     double travel(World&) const override {
