@@ -19,6 +19,7 @@ int key_index(SDL_Scancode code) {
     case SDL_SCANCODE_E: return static_cast<int>(Key::E);
     case SDL_SCANCODE_C: return static_cast<int>(Key::C);
     case SDL_SCANCODE_P: return static_cast<int>(Key::P);
+    case SDL_SCANCODE_V: return static_cast<int>(Key::V);
     case SDL_SCANCODE_SPACE: return static_cast<int>(Key::Space);
     case SDL_SCANCODE_LCTRL: return static_cast<int>(Key::Ctrl);
     case SDL_SCANCODE_LSHIFT: return static_cast<int>(Key::Shift);

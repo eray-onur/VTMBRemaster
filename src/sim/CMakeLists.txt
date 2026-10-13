@@ -5,6 +5,7 @@ add_library(openbl_sim
     entity.cpp
     logic.cpp
     movers.cpp
+    player.cpp
     world.cpp)
 add_library(openbl::sim ALIAS openbl_sim)
 

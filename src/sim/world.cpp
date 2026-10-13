@@ -1,5 +1,7 @@
 #include "openbl/sim/world.hpp"
 
+#include "openbl/sim/player.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -182,8 +184,11 @@ std::vector<EntityId> World::resolve(std::string_view target, EntityId activator
     if (iequals(target, "!activator")) {
         return alive(activator);
     }
+    if (iequals(target, "!player") || iequals(target, "!playercontroller")) {
+        return player_ ? alive(player_->id()) : std::vector<EntityId>{};
+    }
     if (!target.empty() && target.front() == '!') {
-        return {}; // !player, !playercontroller: no player yet.
+        return {};
     }
     return find(target);
 }
@@ -267,6 +272,26 @@ std::optional<Transform> World::render_transform(EntityId id) const {
         id = e->parent();
     }
     return out;
+}
+
+Player& World::spawn_player() {
+    if (player_) {
+        return *player_;
+    }
+    formats::Vec3 feet{};
+    for (const auto& e : entities_) {
+        if (e->classname() == "info_player_start") {
+            feet = e->origin();
+            break;
+        }
+    }
+    auto player = std::make_unique<Player>(static_cast<EntityId>(entities_.size()), feet);
+    player_ = player.get();
+    entities_.push_back(std::move(player));
+    stats_.entities = entities_.size();
+    player_->teleport(*this, {feet[0], feet[1], feet[2] + 1.0f});
+    touch();
+    return *player_;
 }
 
 Trace World::trace(const formats::Vec3& start, const formats::Vec3& end, const formats::Vec3& mins,

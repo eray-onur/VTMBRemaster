@@ -14,7 +14,7 @@ struct SDL_Window;
 namespace openbl::platform {
 
 enum class Key : std::uint8_t {
-    W, A, S, D, Q, E, C, P, Space, Ctrl, Shift, Escape, Tab, F1, F2, F3, F4,
+    W, A, S, D, Q, E, C, P, V, Space, Ctrl, Shift, Escape, Tab, F1, F2, F3, F4,
     Count
 };
 

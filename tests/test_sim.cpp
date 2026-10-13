@@ -1,5 +1,6 @@
 #include "openbl/formats/bsp.hpp"
 #include "openbl/formats/entity_io.hpp"
+#include "openbl/sim/player.hpp"
 #include "openbl/sim/world.hpp"
 #include "openbl/vfs/game_filesystem.hpp"
 #include "test_support.hpp"
@@ -358,3 +359,80 @@ TEST_CASE("Collision: player starts, floors, walls, and agreement with line-of-s
     CHECK(floors == starts);
     CHECK(missed == 0);
 }
+
+TEST_CASE("Player: standing, falling, jumping, and walking every map without passing into solid") {
+    const auto dir = test::game_dir();
+    if (!dir) {
+        return;
+    }
+    vfs::GameFileSystem fs(*dir);
+    {
+        const auto bsp = formats::parse_bsp(*fs.read("maps/sp_tutorial_1.bsp"));
+        World world(bsp);
+        world.start();
+        Player& player = world.spawn_player();
+        CHECK(world.find("!player").empty()); // A keyword, not a name...
+        world.queue_input("!player", "FireUser1", "", 0, kNoEntity, kNoEntity);
+        world.advance(0.1);
+        CHECK(world.stats().inputs >= 1); // ...that reaches the player.
+        auto run = [&](const UserCommand& cmd, float seconds) {
+            for (float t = 0; t < seconds; t += 1.0f / 60.0f) {
+                player.move(world, cmd, 1.0f / 60.0f);
+            }
+        };
+        // The start floats 8 units above its floor; the player settles on it.
+        const formats::Vec3 spawn = player.feet();
+        const Trace floor = world.trace(spawn, {spawn[0], spawn[1], spawn[2] - 256}, player.mins(), player.maxs());
+        run({}, 1.0f);
+        CHECK(player.on_ground());
+        CHECK(player.feet()[2] == doctest::Approx(floor.end[2]).epsilon(0.001));
+        const formats::Vec3 start = player.feet();
+        // Dropped from 40 units, it lands where it stood.
+        REQUIRE(player.teleport(world, {start[0], start[1], start[2] + 40}));
+        CHECK_FALSE(player.on_ground());
+        run({}, 2.0f);
+        CHECK(player.on_ground());
+        CHECK(std::abs(player.feet()[2] - start[2]) < 0.5f);
+        // A jump rises about 45 units.
+        float top = player.feet()[2];
+        UserCommand jump;
+        jump.jump = true;
+        for (int i = 0; i < 90; ++i) {
+            player.move(world, jump, 1.0f / 60.0f);
+            top = std::max(top, player.feet()[2]);
+        }
+        CHECK(top - start[2] == doctest::Approx(45).epsilon(0.15));
+    }
+    std::size_t maps = 0, walks = 0, inside = 0, moved = 0;
+    for (const std::string& path : fs.list_files()) {
+        if (!path.starts_with("maps/") || !path.ends_with(".bsp")) {
+            continue;
+        }
+        const auto bsp = formats::parse_bsp(*fs.read(path));
+        World world(bsp);
+        world.start();
+        Player& player = world.spawn_player();
+        const formats::Vec3 start = player.feet();
+        ++maps;
+        for (int d = 0; d < 8; ++d) {
+            player.teleport(world, start);
+            UserCommand cmd;
+            cmd.forward = 1;
+            cmd.yaw = d * 45.0f;
+            for (int i = 0; i < 120; ++i) {
+                player.move(world, cmd, 1.0f / 60.0f);
+            }
+            ++walks;
+            const auto p = player.feet();
+            moved += std::hypot(p[0] - start[0], p[1] - start[1]) > 16;
+            if (world.trace(p, p, player.mins(), player.maxs()).start_solid) {
+                ++inside;
+                MESSAGE("inside solid after walking: " << path << " yaw " << d * 45 << " at " << p[0] << " " << p[1] << " " << p[2]);
+            }
+        }
+    }
+    MESSAGE(maps << " maps, " << walks << " walks of 2 s: " << moved << " moved more than 16 units, " << inside
+                 << " ended inside solid");
+    CHECK(inside == 0);
+}
+

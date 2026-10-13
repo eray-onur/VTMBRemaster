@@ -22,6 +22,8 @@ struct Camera {
     // Right mouse: look (the caller captures the cursor). WASD: move. E/Q or Space/Ctrl: up/down. Shift: fast.
     // Wheel: speed.
     void update(const platform::Input& input, float dt);
+    // Only the mouse look (while walking, the player moves the camera).
+    void look(const platform::Input& input);
 };
 
 } // namespace openbl::viewer

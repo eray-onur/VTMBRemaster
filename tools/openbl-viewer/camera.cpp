@@ -25,12 +25,16 @@ glm::mat4 Camera::projection(float aspect) const {
     return p;
 }
 
-void Camera::update(const platform::Input& input, float dt) {
+void Camera::look(const platform::Input& input) {
     if (input.down(platform::MouseButton::Right)) {
         constexpr float kSensitivity = 0.15f;
         yaw -= input.mouse_dx() * kSensitivity;
         pitch = std::clamp(pitch - input.mouse_dy() * kSensitivity, -89.0f, 89.0f);
     }
+}
+
+void Camera::update(const platform::Input& input, float dt) {
+    look(input);
     if (input.wheel() != 0) {
         speed = std::clamp(speed * std::pow(1.25f, input.wheel()), 25.0f, 10000.0f);
     }

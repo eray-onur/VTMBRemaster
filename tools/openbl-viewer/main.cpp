@@ -25,6 +25,7 @@
 #include "openbl/render/sprite_renderer.hpp"
 #include "openbl/render/world_renderer.hpp"
 #include "openbl/rhi/vulkan.hpp"
+#include "openbl/sim/player.hpp"
 #include "openbl/sim/world.hpp"
 #include "openbl/vfs/game_filesystem.hpp"
 
@@ -53,7 +54,7 @@ using namespace openbl;
 namespace {
 
 constexpr const char* kUsage =
-    "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--show TARGETNAME]... [--input TARGET,INPUT[,PARAM[,DELAY]]]... [--npc-sequence NAME] [--pose NAME=VALUE]... [--flex CONTROLLER=VALUE]... [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
+    "usage: openbl-viewer [--game DIR] [--mod NAME]... [--map NAME] [--show TARGETNAME]... [--input TARGET,INPUT[,PARAM[,DELAY]]]... [--walk] [--npc-sequence NAME] [--pose NAME=VALUE]... [--flex CONTROLLER=VALUE]... [--pos X Y Z] [--angles PITCH YAW] [--fov DEG] [--size WxH]\n"
     "                     [--light-scale F] [--fullbright] [--no-fog] [--no-water] [--no-envmap] [--no-bump] [--no-sprites] [--no-ropes] [--no-detail-props] [--no-cull] [--no-area-portals] [--no-prop-fade] [--no-cloth] [--no-shadows] [--no-light-styles] [--no-props] [--no-characters] [--screenshot out.png [--frames N]] [--time T] [--sequence N [--fps F]] [--shots FILE --out DIR]\n"
     "                     [--validation] [--no-vsync]";
 
@@ -62,6 +63,7 @@ struct Options {
     std::vector<std::string> mods; // Mod folders mounted over the game, e.g. Unofficial_Patch.
     std::vector<std::string> shown; // Targetnames of StartHidden brush entities to draw anyway.
     std::vector<std::string> inputs; // "target,Input,param,delay" sent to the map's entities at the start.
+    bool walk = false; // Start walking at the player start instead of flying.
     render::CharacterOptions characters_options; // --npc-sequence, --pose.
     std::optional<std::string> map;
     std::optional<glm::vec3> position;
@@ -117,6 +119,8 @@ Options parse_args(int argc, char** argv) {
         } else if (a == "--show") {
             o.shown.push_back(next());
             o.characters_options.shown.push_back(o.shown.back());
+        } else if (a == "--walk") {
+            o.walk = true;
         } else if (a == "--input") {
             o.inputs.push_back(next());
         } else if (a == "--flex") {
@@ -264,6 +268,11 @@ public:
     virtual ~Scene() = default;
     virtual void draw(rhi::CommandList& cmd, const glm::mat4& projection, const glm::mat4& view,
                       const viewer::Camera& camera, float time) = 0;
+    // Walking: the player moves through the map's collision and carries the
+    // camera; otherwise the camera flies freely.
+    virtual bool walking() const { return false; }
+    virtual void set_walking(bool, viewer::Camera&) {}
+    virtual void walk(const platform::Input&, viewer::Camera&, float) {}
 };
 
 // --- Test cube -------------------------------------------------------------
@@ -466,6 +475,39 @@ public:
                   << st.generic_classes.size() << " classes without behaviour yet), " << st.outputs << " outputs\n";
         std::cout << "loaded in " << std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count()
                   << " s\n";
+    }
+
+    bool walking() const override { return walking_; }
+
+    void set_walking(bool walking, viewer::Camera& camera) override {
+        if (!walking) {
+            walking_ = false;
+            return;
+        }
+        // Down to where the camera is: feet 64 units below the eye.
+        sim::Player& player = simulation_->spawn_player();
+        if (!player.teleport(*simulation_, {camera.position.x, camera.position.y, camera.position.z - 64.0f})) {
+            std::cout << "no room to stand here; still flying\n";
+            return;
+        }
+        walking_ = true;
+        const auto eye = player.eye();
+        camera.position = {eye[0], eye[1], eye[2]};
+    }
+
+    void walk(const platform::Input& input, viewer::Camera& camera, float dt) override {
+        using platform::Key;
+        sim::UserCommand cmd;
+        cmd.forward = (input.down(Key::W) ? 1.0f : 0.0f) - (input.down(Key::S) ? 1.0f : 0.0f);
+        cmd.side = (input.down(Key::D) ? 1.0f : 0.0f) - (input.down(Key::A) ? 1.0f : 0.0f);
+        cmd.yaw = camera.yaw;
+        cmd.jump = input.down(Key::Space);
+        cmd.crouch = input.down(Key::Ctrl);
+        cmd.walk = input.down(Key::Shift);
+        sim::Player& player = simulation_->spawn_player();
+        player.move(*simulation_, cmd, dt);
+        const auto eye = player.eye();
+        camera.position = {eye[0], eye[1], eye[2]};
     }
 
     // Player start, or the middle of the world bounds.
@@ -884,6 +926,7 @@ private:
     std::unique_ptr<sim::World> simulation_;
     std::optional<float> simulation_clock_ = 0.0f; // Scene time it has run to (it starts at 0).
     std::uint64_t simulation_revision_ = UINT64_MAX;
+    bool walking_ = false;
     std::vector<render::TranslucentItem> translucent_;
 };
 
@@ -923,6 +966,9 @@ int run(const Options& options) {
             camera.pitch = options.angles->x;
             camera.yaw = options.angles->y;
         }
+        if (options.walk) {
+            scene->set_walking(true, camera);
+        }
 
         const auto start_time = std::chrono::steady_clock::now();
         struct Shot {
@@ -954,6 +1000,7 @@ int run(const Options& options) {
         const bool interactive = !options.screenshot && shots.empty();
         if (interactive) {
             std::cout << "controls: right mouse look, WASD move, E/Q or Space/Ctrl up and down, Shift fast, wheel speed,\n"
+                         "          V walk (Space jump, Ctrl crouch, Shift walk slowly) or fly again,\n"
                          "          C copy the view as --pos/--angles, P pause the scene clock, Esc quit\n";
         }
         const std::string title = options.map ? "OpenBL Viewer - " + *options.map : "OpenBL Viewer";
@@ -983,8 +1030,16 @@ int run(const Options& options) {
             if (!paused) {
                 scene_clock += dt;
             }
+            if (input.pressed(platform::Key::V)) {
+                scene->set_walking(!scene->walking(), camera);
+            }
             // A long frame (loading, dragging the window) must not throw the camera across the map.
-            camera.update(input, std::min(dt, 0.1f));
+            if (scene->walking()) {
+                camera.look(input);
+                scene->walk(input, camera, std::min(dt, 0.1f));
+            } else {
+                camera.update(input, std::min(dt, 0.1f));
+            }
             if (input.pressed(platform::Key::C)) {
                 char args[128];
                 std::snprintf(args, sizeof(args), "--pos %.2f %.2f %.2f --angles %.2f %.2f", camera.position.x,
@@ -998,9 +1053,10 @@ int run(const Options& options) {
             if (interactive && now - title_time >= std::chrono::milliseconds(250)) {
                 const float fps = static_cast<float>(title_frames) / std::chrono::duration<float>(now - title_time).count();
                 char status[160];
-                std::snprintf(status, sizeof(status), " - pos %.0f %.0f %.0f  angles %.0f %.0f - %.0f fps - speed %.0f%s",
+                std::snprintf(status, sizeof(status), " - pos %.0f %.0f %.0f  angles %.0f %.0f - %.0f fps - %s%s",
                               camera.position.x, camera.position.y, camera.position.z, camera.pitch, camera.yaw, fps,
-                              camera.speed, paused ? " - paused" : "");
+                              scene->walking() ? "walking" : ("speed " + std::to_string(static_cast<int>(camera.speed))).c_str(),
+                              paused ? " - paused" : "");
                 window.set_title(title + status);
                 title_time = now;
                 title_frames = 0;

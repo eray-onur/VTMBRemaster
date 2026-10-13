@@ -22,6 +22,8 @@
 
 namespace openbl::sim {
 
+class Player;
+
 // Light styles 32..63 belong to switchable lights; the map compiler gives each
 // named light (or group of lights with one name) its own.
 constexpr std::size_t kLightStyleCount = 64;
@@ -76,8 +78,8 @@ public:
     std::vector<EntityId> find(std::string_view name) const;
 
     // Queues `input` on every entity `target` names, after `delay` seconds.
-    // Keywords: !self and !caller (the caller), !activator. (!player and
-    // !playercontroller name nothing until the player exists.)
+    // Keywords: !self and !caller (the caller), !activator, !player and
+    // !playercontroller (the player, once spawned).
     void queue_input(std::string_view target, std::string_view input, std::string_view parameter, double delay,
                      EntityId activator, EntityId caller);
     // Queues a Python statement for the script host, after `delay` seconds.
@@ -101,6 +103,12 @@ public:
                 const formats::Vec3& maxs, std::int32_t mask = contents::PlayerSolid,
                 EntityId ignore = kNoEntity) const;
     const Collision& collision() const { return *collision_; }
+
+    // The player, created at the first info_player_start (a unit above it,
+    // lifted out of anything solid) the first time it is asked for.
+    Player& spawn_player();
+    Player* player() { return player_; }
+    const Player* player() const { return player_; }
 
     // Area portals by portalnumber: open or closed (func_areaportal, and the
     // doors they name as their target).
@@ -138,6 +146,7 @@ private:
     std::vector<std::unique_ptr<Entity>> entities_;
     std::map<int, bool> portals_;
     std::unique_ptr<Collision> collision_;
+    Player* player_ = nullptr; // Owned by entities_.
     // Solid brush entities and their brush models, found when the map starts.
     std::vector<std::pair<EntityId, std::size_t>> solid_brushes_;
     std::priority_queue<Event, std::vector<Event>, Later> events_;

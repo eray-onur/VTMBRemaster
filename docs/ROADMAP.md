@@ -144,7 +144,10 @@ Read every file type the game ships, and write the ones that tools will need. Ea
 - [ ] Doors: opening away from the player who uses them, the original's speed easing and sounds; `func_movelinear`, keyframed movers and elevators; moved brush entities keep their closed-pose lightmaps and decals
 - [ ] Client/server entity system, with single-player running as a local server: a replication interface between them (today the state is copied in-process)
 - [ ] Data-driven registries for clans, disciplines, feats, items and NPC types (see ARCHITECTURE.md)
-- [ ] Physics and collision
+- [x] Collision: swept-box traces through brushes (BSP tree, bevels), displacements and brush entities in their current pose; `openbl-cli bsp trace`
+- [x] The player: Source-style ground movement (friction, acceleration, gravity, sliding along walls, 18-unit steps, staying on the ground down stairs, jumping, crouching), spawned above `info_player_start`; `!player` targets it; viewer **V** walks, `--walk`. Every map's start walks 2 s in 8 directions without entering solid
+- [ ] Player: speeds and jump height measured against the original (provisional 190 run, 90 walk, 45-unit jump); static props and models as obstacles; ladders, water, doors opening away from the player who uses them
+- [ ] Physics: props, ragdolls and constraints (the `.phy` and lump 29 collision models)
 - [ ] Python scripting host that runs the game's original scripts unmodified
 - [ ] Dialogue system, with lip-sync and choreography playback
 - [ ] Input, audio, UI
