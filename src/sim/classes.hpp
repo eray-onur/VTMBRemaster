@@ -18,5 +18,6 @@ EntityFactory make() {
 void add_logic_classes(EntityClasses& classes);  // logic.cpp
 void add_effect_classes(EntityClasses& classes); // effects.cpp
 void add_mover_classes(EntityClasses& classes);  // movers.cpp
+void add_trigger_classes(EntityClasses& classes); // triggers.cpp
 
 } // namespace openbl::sim

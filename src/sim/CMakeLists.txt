@@ -6,6 +6,7 @@ add_library(openbl_sim
     logic.cpp
     movers.cpp
     player.cpp
+    triggers.cpp
     world.cpp)
 add_library(openbl::sim ALIAS openbl_sim)
 

@@ -24,6 +24,8 @@ constexpr std::int32_t PlayerClip = 0x10000;
 constexpr std::int32_t MonsterClip = 0x20000;
 // What stops the player (Source's MASK_PLAYERSOLID, without monsters).
 constexpr std::int32_t PlayerSolid = Solid | Window | Grate | Moveable | PlayerClip;
+// Every brush, whatever its contents (trigger volumes).
+constexpr std::int32_t Any = -1;
 } // namespace contents
 
 struct Trace {

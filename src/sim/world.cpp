@@ -1,6 +1,7 @@
 #include "openbl/sim/world.hpp"
 
 #include "openbl/sim/player.hpp"
+#include "openbl/sim/triggers.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -84,6 +85,16 @@ void World::start() {
             const auto found = find(parent);
             if (!found.empty() && found.front() != e->id()) {
                 e->parent_ = found.front();
+            }
+        }
+    }
+    // Touch triggers, by their brush models.
+    for (const auto& e : entities_) {
+        const std::string_view model = e->value("model");
+        if (auto* trigger = dynamic_cast<Trigger*>(e.get()); trigger && model.size() > 1 && model[0] == '*') {
+            const auto index = static_cast<std::size_t>(std::strtoul(std::string(model.substr(1)).c_str(), nullptr, 10));
+            if (index > 0 && index < bsp_.models.size()) {
+                triggers_.push_back({trigger, index});
             }
         }
     }
@@ -292,6 +303,35 @@ Player& World::spawn_player() {
     player_->teleport(*this, {feet[0], feet[1], feet[2] + 1.0f});
     touch();
     return *player_;
+}
+
+void World::update_touches() {
+    if (!player_) {
+        return;
+    }
+    const EntityId who = player_->id();
+    for (TouchVolume& v : triggers_) {
+        Trigger& t = *v.trigger;
+        bool inside = false;
+        if (t.active()) {
+            Transform pose = Transform::translate(t.origin());
+            if (const auto moved = render_transform(t.id())) {
+                pose = moved->after(pose);
+            }
+            const auto feet = player_->feet();
+            inside = collision_->trace_moved(v.model, pose, feet, feet, player_->mins(), player_->maxs(), contents::Any)
+                         .start_solid;
+        }
+        if (inside && !v.touched) {
+            v.touched = true;
+            t.start_touch(*this, who);
+        } else if (inside) {
+            t.touching(*this, who);
+        } else if (v.touched) {
+            v.touched = false;
+            t.end_touch(*this, who);
+        }
+    }
 }
 
 Trace World::trace(const formats::Vec3& start, const formats::Vec3& end, const formats::Vec3& mins,

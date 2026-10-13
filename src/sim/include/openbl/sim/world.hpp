@@ -23,6 +23,7 @@
 namespace openbl::sim {
 
 class Player;
+class Trigger;
 
 // Light styles 32..63 belong to switchable lights; the map compiler gives each
 // named light (or group of lights with one name) its own.
@@ -109,6 +110,9 @@ public:
     Player& spawn_player();
     Player* player() { return player_; }
     const Player* player() const { return player_; }
+    // Fires the touch triggers the player has entered, is in, or has left
+    // (after each move).
+    void update_touches();
 
     // Area portals by portalnumber: open or closed (func_areaportal, and the
     // doors they name as their target).
@@ -147,6 +151,13 @@ private:
     std::map<int, bool> portals_;
     std::unique_ptr<Collision> collision_;
     Player* player_ = nullptr; // Owned by entities_.
+    // Touch triggers with their brush models, and whether the player is in each.
+    struct TouchVolume {
+        Trigger* trigger;
+        std::size_t model;
+        bool touched = false;
+    };
+    std::vector<TouchVolume> triggers_;
     // Solid brush entities and their brush models, found when the map starts.
     std::vector<std::pair<EntityId, std::size_t>> solid_brushes_;
     std::priority_queue<Event, std::vector<Event>, Later> events_;

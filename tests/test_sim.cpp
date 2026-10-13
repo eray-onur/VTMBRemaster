@@ -1,6 +1,7 @@
 #include "openbl/formats/bsp.hpp"
 #include "openbl/formats/entity_io.hpp"
 #include "openbl/sim/player.hpp"
+#include "openbl/sim/triggers.hpp"
 #include "openbl/sim/world.hpp"
 #include "openbl/vfs/game_filesystem.hpp"
 #include "test_support.hpp"
@@ -434,5 +435,45 @@ TEST_CASE("Player: standing, falling, jumping, and walking every map without pas
     MESSAGE(maps << " maps, " << walks << " walks of 2 s: " << moved << " moved more than 16 units, " << inside
                  << " ended inside solid");
     CHECK(inside == 0);
+}
+
+TEST_CASE("Triggers: the player standing in a trigger_once fires it") {
+    const auto dir = test::game_dir();
+    if (!dir) {
+        return;
+    }
+    vfs::GameFileSystem fs(*dir);
+    std::size_t candidates = 0, fired = 0, kept_out = 0;
+    for (const std::string& path : fs.list_files()) {
+        if (!path.starts_with("maps/") || !path.ends_with(".bsp")) {
+            continue;
+        }
+        const auto bsp = formats::parse_bsp(*fs.read(path));
+        World world(bsp);
+        world.start();
+        Player& player = world.spawn_player();
+        for (EntityId id : world.find("trigger_once")) {
+            auto* trigger = dynamic_cast<Trigger*>(world.entity(id));
+            const std::string_view model = trigger->value("model");
+            if (!trigger->active() || model.size() < 2) {
+                continue;
+            }
+            const auto& m = bsp.models[std::strtoul(std::string(model.substr(1)).c_str(), nullptr, 10)];
+            const auto o = trigger->origin();
+            const formats::Vec3 centre{o[0] + (m.mins[0] + m.maxs[0]) * 0.5f, o[1] + (m.mins[1] + m.maxs[1]) * 0.5f,
+                                       o[2] + m.mins[2]};
+            ++candidates;
+            // Stand in it (lifted out of the floor if needed), then check touches.
+            if (!player.teleport(world, centre)) {
+                ++kept_out; // No room for the player there.
+                continue;
+            }
+            world.update_touches();
+            fired += world.entity(id)->removed();
+        }
+    }
+    MESSAGE(candidates << " touchable trigger_once: " << fired << " fired with the player in them, " << kept_out
+                       << " with no room to stand");
+    CHECK(fired >= (candidates - kept_out) * 9 / 10);
 }
 

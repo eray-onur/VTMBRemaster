@@ -8,6 +8,7 @@ const EntityClasses& entity_classes() {
         add_logic_classes(c);
         add_effect_classes(c);
         add_mover_classes(c);
+        add_trigger_classes(c);
         return c;
     }();
     return classes;

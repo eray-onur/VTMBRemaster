@@ -123,6 +123,7 @@ void Player::move(World& world, const UserCommand& cmd, float dt) {
     if (on_ground_) {
         velocity_[2] = 0;
     }
+    world.update_touches();
 }
 
 void Player::slide(World& world, float dt) {

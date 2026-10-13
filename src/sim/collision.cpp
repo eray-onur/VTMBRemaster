@@ -153,7 +153,7 @@ void Collision::trace_node(Sweep& s, std::int32_t node) const {
             continue;
         }
         brush_stamp_[brush] = stamp_;
-        if (bsp_.brushes[brush].contents & s.mask) {
+        if (s.mask == contents::Any || (bsp_.brushes[brush].contents & s.mask)) {
             trace_brush(s, brush);
         }
     }
